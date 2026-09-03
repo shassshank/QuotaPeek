@@ -148,9 +148,9 @@ def format_reset(resets_at):
     days, rem_minutes = divmod(total_minutes, 24 * 60)
     hours, minutes = divmod(rem_minutes, 60)
     if days > 0:
-        return f"{days}d {hours}h"
+        return f"{days}d{hours}h"
     if hours > 0:
-        return f"{hours}h {minutes}m"
+        return f"{hours}h{minutes}m"
     return f"{minutes}m"
 
 
@@ -172,14 +172,14 @@ def window(entry):
     return {"used_percent": used_percent, "resets_at": entry.get("resets_at")}
 
 
-def usage_line(label, entry):
+def usage_line(entry):
     if not entry or entry.get("used_percent") is None:
         return None
     pct = entry["used_percent"]
-    line = f"{label} {progress_bar(pct)} {pct:.0f}%"
+    line = f"{pct:.0f}% {progress_bar(pct)}"
     reset = format_reset(entry.get("resets_at"))
     if reset:
-        line += f" resets {reset}"
+        line += f" {reset}"
     return line
 
 
@@ -197,8 +197,8 @@ def build_status_line(payload, rate_limits, cached_claude):
         weekly = cached_claude.get("weekly")
 
     segments = [p for p in [model, location] if p]
-    five_hour_seg = usage_line("5h", five_hour)
-    weekly_seg = usage_line("wk", weekly)
+    five_hour_seg = usage_line(five_hour)
+    weekly_seg = usage_line(weekly)
     if five_hour_seg:
         segments.append(five_hour_seg)
     if weekly_seg:
