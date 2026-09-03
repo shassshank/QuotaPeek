@@ -2,19 +2,29 @@
 """
 Claude Code statusLine hook.
 
-Claude Code invokes this with a JSON payload on stdin every time it renders
-the status line during an active session, and expects a short line of text
-on stdout to display. This does two things at once:
-  1. Renders a real status line (dir, git branch, model, session cost).
-  2. Piggybacks on the same invocation to write any rate_limits block out to
+Claude Code invokes this with JSON session data on stdin every time it
+renders the status line (documented: https://code.claude.com/docs/en/statusline),
+and displays whatever this prints to stdout - it fully replaces the built-in
+status line row (though not the footer badges). This does two things:
+  1. Renders a real status line (dir, git branch, model, cost, context %,
+     rate-limit usage) so nothing is lost versus the default.
+  2. Piggybacks on the same invocation to write the rate_limits block out to
      the shared usage cache the AIUsageWidget menu bar app reads.
 
 Everything below is defensive on purpose: if this script ever throws before
 printing something, Claude Code's status line goes blank for the user (this
-happened once already - an earlier version assumed `model` was always a
-nested dict, which crashed when a captured real payload didn't match). A
-debug dump of the raw payload is also written on every invocation so the
-real field shapes can be inspected and this can be tightened further.
+happened once already, from a bad field-name assumption). A debug dump of
+the raw payload is also written on every invocation.
+
+Confirmed field names (official docs, not guessed):
+  model.display_name
+  workspace.current_dir / cwd
+  cost.total_cost_usd
+  context_window.used_percentage
+  rate_limits.five_hour.used_percentage, .resets_at
+  rate_limits.seven_day.used_percentage, .resets_at
+  rate_limits.* is absent until the session's first API response, and absent
+  entirely for API-key (non-subscription) auth.
 """
 import json
 import os
@@ -57,12 +67,11 @@ def as_str(value):
 
 
 def find_cwd(payload):
-    for key in ("cwd",):
-        if isinstance(payload.get(key), str) and payload[key]:
-            return payload[key]
+    if isinstance(payload.get("cwd"), str) and payload["cwd"]:
+        return payload["cwd"]
     workspace = payload.get("workspace")
     if isinstance(workspace, dict):
-        for key in ("current_dir", "cwd", "project_dir"):
+        for key in ("current_dir", "project_dir"):
             if isinstance(workspace.get(key), str) and workspace[key]:
                 return workspace[key]
     elif isinstance(workspace, str) and workspace:
@@ -86,23 +95,27 @@ def git_branch(cwd):
 
 def session_cost(payload):
     cost = payload.get("cost")
-    if isinstance(cost, dict):
-        usd = cost.get("total_cost_usd")
-        if isinstance(usd, (int, float)):
-            return f"${usd:.2f}"
+    if isinstance(cost, dict) and isinstance(cost.get("total_cost_usd"), (int, float)):
+        return f"${cost['total_cost_usd']:.2f}"
+    return None
+
+
+def context_percent(payload):
+    ctx = payload.get("context_window")
+    if isinstance(ctx, dict):
+        pct = ctx.get("used_percentage")
+        if isinstance(pct, (int, float)):
+            return int(pct)
     return None
 
 
 def window(entry):
     if not isinstance(entry, dict):
         return None
-    used_percent = entry.get("utilization")
+    used_percent = entry.get("used_percentage")
     if used_percent is None:
-        used_percent = entry.get("used_percent")
-    return {
-        "used_percent": used_percent,
-        "resets_at": entry.get("resets_at"),
-    }
+        used_percent = entry.get("used_percent")  # tolerate older/alt naming
+    return {"used_percent": used_percent, "resets_at": entry.get("resets_at")}
 
 
 def usage_summary(rate_limits, cached_claude):
@@ -127,13 +140,16 @@ def build_status_line(payload, rate_limits, cached_claude):
     branch = git_branch(cwd)
     model = as_str(payload.get("model"))
     cost = session_cost(payload)
+    ctx_pct = context_percent(payload)
     usage = usage_summary(rate_limits, cached_claude)
 
     segments = []
-    if dirname:
-        segments.append(f"{dirname}" + (f" ({branch})" if branch else ""))
     if model:
         segments.append(model)
+    if dirname:
+        segments.append(dirname + (f" ({branch})" if branch else ""))
+    if ctx_pct is not None:
+        segments.append(f"ctx {ctx_pct}%")
     if cost:
         segments.append(cost)
     if usage:
@@ -164,9 +180,10 @@ def main():
         rate_limits = {}
 
     try:
+        prev_claude = cache.get("claude") or {}
         cache["claude"] = {
-            "five_hour": window(rate_limits.get("five_hour")) or (cache.get("claude") or {}).get("five_hour"),
-            "weekly": window(rate_limits.get("seven_day")) or (cache.get("claude") or {}).get("weekly"),
+            "five_hour": window(rate_limits.get("five_hour")) or prev_claude.get("five_hour"),
+            "weekly": window(rate_limits.get("seven_day")) or prev_claude.get("weekly"),
             "updated_at": int(time.time()),
         }
         save_cache(cache)
