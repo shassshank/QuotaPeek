@@ -6,8 +6,9 @@ Claude Code invokes this with JSON session data on stdin every time it
 renders the status line (documented: https://code.claude.com/docs/en/statusline),
 and displays whatever this prints to stdout - it fully replaces the built-in
 status line row (though not the footer badges). This does two things:
-  1. Renders a real status line (dir, git branch, model, cost, context %,
-     rate-limit usage) so nothing is lost versus the default.
+  1. Renders a multi-line status line: model + current git repo, a 5-hour
+     usage bar with reset time, a weekly usage bar with reset time, and
+     context window %.
   2. Piggybacks on the same invocation to write the rate_limits block out to
      the shared usage cache the AIUsageWidget menu bar app reads.
 
@@ -79,25 +80,57 @@ def find_cwd(payload):
     return None
 
 
-def git_branch(cwd):
+def git_remote_repo_name(cwd):
     if not cwd or not os.path.isdir(cwd):
         return None
     try:
         result = subprocess.run(
-            ["git", "-C", cwd, "branch", "--show-current"],
+            ["git", "-C", cwd, "remote", "get-url", "origin"],
             capture_output=True, text=True, timeout=2,
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    branch = result.stdout.strip()
-    return branch or None
+    url = result.stdout.strip()
+    if not url:
+        return None
+    name = url.rstrip("/").rsplit("/", 1)[-1]
+    if name.endswith(".git"):
+        name = name[: -len(".git")]
+    return name or None
 
 
-def session_cost(payload):
-    cost = payload.get("cost")
-    if isinstance(cost, dict) and isinstance(cost.get("total_cost_usd"), (int, float)):
-        return f"${cost['total_cost_usd']:.2f}"
-    return None
+def repo_name(payload, cwd):
+    workspace = payload.get("workspace")
+    if isinstance(workspace, dict):
+        repo = workspace.get("repo")
+        if isinstance(repo, dict) and isinstance(repo.get("name"), str) and repo["name"]:
+            return repo["name"]
+    remote_name = git_remote_repo_name(cwd)
+    if remote_name:
+        return remote_name
+    return os.path.basename(cwd) if cwd else None
+
+
+def progress_bar(pct, width=10):
+    pct = max(0, min(100, pct))
+    filled = round(pct * width / 100)
+    return "▓" * filled + "░" * (width - filled)
+
+
+def format_reset(resets_at):
+    if not isinstance(resets_at, (int, float)):
+        return None
+    delta = resets_at - time.time()
+    if delta <= 0:
+        return "now"
+    total_minutes = int(delta // 60)
+    days, rem_minutes = divmod(total_minutes, 24 * 60)
+    hours, minutes = divmod(rem_minutes, 60)
+    if days > 0:
+        return f"{days}d {hours}h"
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
 
 
 def context_percent(payload):
@@ -118,7 +151,23 @@ def window(entry):
     return {"used_percent": used_percent, "resets_at": entry.get("resets_at")}
 
 
-def usage_summary(rate_limits, cached_claude):
+def usage_line(label, entry):
+    if not entry or entry.get("used_percent") is None:
+        return None
+    pct = entry["used_percent"]
+    line = f"{label} {progress_bar(pct)} {pct:.0f}%"
+    reset = format_reset(entry.get("resets_at"))
+    if reset:
+        line += f" resets {reset}"
+    return line
+
+
+def build_status_line(payload, rate_limits, cached_claude):
+    cwd = find_cwd(payload)
+    model = as_str(payload.get("model"))
+    repo = repo_name(payload, cwd)
+    ctx_pct = context_percent(payload)
+
     five_hour = window(rate_limits.get("five_hour")) if rate_limits else None
     weekly = window(rate_limits.get("seven_day")) if rate_limits else None
     if not five_hour and cached_claude:
@@ -126,36 +175,20 @@ def usage_summary(rate_limits, cached_claude):
     if not weekly and cached_claude:
         weekly = cached_claude.get("weekly")
 
-    parts = []
-    if five_hour and five_hour.get("used_percent") is not None:
-        parts.append(f"5h {int(five_hour['used_percent'])}%")
-    if weekly and weekly.get("used_percent") is not None:
-        parts.append(f"wk {int(weekly['used_percent'])}%")
-    return " ".join(parts) if parts else None
+    header_parts = [p for p in [model, repo] if p]
+    lines = [" | ".join(header_parts)] if header_parts else []
 
+    five_hour_line = usage_line("5h", five_hour)
+    weekly_line = usage_line("wk", weekly)
+    if five_hour_line:
+        lines.append(five_hour_line)
+    if weekly_line:
+        lines.append(weekly_line)
 
-def build_status_line(payload, rate_limits, cached_claude):
-    cwd = find_cwd(payload)
-    dirname = os.path.basename(cwd) if cwd else None
-    branch = git_branch(cwd)
-    model = as_str(payload.get("model"))
-    cost = session_cost(payload)
-    ctx_pct = context_percent(payload)
-    usage = usage_summary(rate_limits, cached_claude)
-
-    segments = []
-    if model:
-        segments.append(model)
-    if dirname:
-        segments.append(dirname + (f" ({branch})" if branch else ""))
     if ctx_pct is not None:
-        segments.append(f"ctx {ctx_pct}%")
-    if cost:
-        segments.append(cost)
-    if usage:
-        segments.append(usage)
+        lines.append(f"ctx {ctx_pct}%")
 
-    return " | ".join(segments) if segments else "Claude Code"
+    return "\n".join(lines) if lines else "Claude Code"
 
 
 def main():
