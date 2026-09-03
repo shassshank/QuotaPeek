@@ -27,7 +27,7 @@ chmod +x "$BIN_DIR"/*.py "$BIN_DIR/AIUsageWidget"
 
 echo "==> Wiring Claude Code statusLine hook (~/.claude/settings.json)"
 "$PYTHON3" - "$BIN_DIR/claude-statusline-hook.py" <<'EOF'
-import json, os, sys
+import json, os, shlex, sys
 hook_path = sys.argv[1]
 path = os.path.expanduser("~/.claude/settings.json")
 try:
@@ -35,7 +35,12 @@ try:
         settings = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError):
     settings = {}
-settings["statusLine"] = {"type": "command", "command": hook_path}
+# statusLine.command runs as a raw shell command line (it supports inline
+# shell snippets like `jq -r '...'`), so a bare path is NOT shell-quoted for
+# you. "Application Support" has a space in it, which silently breaks
+# execution (shell treats it as two words -> "command not found", the
+# status line just goes blank) unless the path itself is quoted here.
+settings["statusLine"] = {"type": "command", "command": shlex.quote(hook_path)}
 with open(path, "w") as f:
     json.dump(settings, f, indent=2)
     f.write("\n")
@@ -44,7 +49,7 @@ EOF
 
 echo "==> Wiring Antigravity statusLine hook (~/.gemini/antigravity-cli/settings.json)"
 "$PYTHON3" - "$BIN_DIR/antigravity-statusline-hook.py" <<'EOF'
-import json, os, sys
+import json, os, shlex, sys
 hook_path = sys.argv[1]
 path = os.path.expanduser("~/.gemini/antigravity-cli/settings.json")
 try:
@@ -52,7 +57,7 @@ try:
         settings = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError):
     settings = {}
-settings["statusLine"] = {"type": "command", "command": hook_path, "enabled": True}
+settings["statusLine"] = {"type": "command", "command": shlex.quote(hook_path), "enabled": True}
 with open(path, "w") as f:
     json.dump(settings, f, indent=2)
     f.write("\n")
