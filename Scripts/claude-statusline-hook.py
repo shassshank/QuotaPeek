@@ -6,9 +6,10 @@ Claude Code invokes this with JSON session data on stdin every time it
 renders the status line (documented: https://code.claude.com/docs/en/statusline),
 and displays whatever this prints to stdout - it fully replaces the built-in
 status line row (though not the footer badges). This does two things:
-  1. Renders a multi-line status line: model + current git repo, a 5-hour
-     usage bar with reset time, a weekly usage bar with reset time, and
-     context window %.
+  1. Renders a single-line status line: model, then "git: <repo>" or
+     "dir: <folder>" depending on whether cwd is inside a git repo, a
+     5-hour usage bar with reset time, a weekly usage bar with reset time,
+     and context window %.
   2. Piggybacks on the same invocation to write the rate_limits block out to
      the shared usage cache the AIUsageWidget menu bar app reads.
 
@@ -80,6 +81,19 @@ def find_cwd(payload):
     return None
 
 
+def is_git_repo(cwd):
+    if not cwd or not os.path.isdir(cwd):
+        return False
+    try:
+        result = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--is-inside-work-tree"],
+            capture_output=True, text=True, timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
 def git_remote_repo_name(cwd):
     if not cwd or not os.path.isdir(cwd):
         return None
@@ -99,16 +113,23 @@ def git_remote_repo_name(cwd):
     return name or None
 
 
-def repo_name(payload, cwd):
+def location_segment(payload, cwd):
+    """'git: <repo-name>' inside a git repo, 'dir: <folder-name>' otherwise."""
+    dirname = os.path.basename(cwd) if cwd else None
+    if not is_git_repo(cwd):
+        return f"dir: {dirname}" if dirname else None
+
     workspace = payload.get("workspace")
+    name = None
     if isinstance(workspace, dict):
         repo = workspace.get("repo")
         if isinstance(repo, dict) and isinstance(repo.get("name"), str) and repo["name"]:
-            return repo["name"]
-    remote_name = git_remote_repo_name(cwd)
-    if remote_name:
-        return remote_name
-    return os.path.basename(cwd) if cwd else None
+            name = repo["name"]
+    if not name:
+        name = git_remote_repo_name(cwd)
+    if not name:
+        name = dirname
+    return f"git: {name}" if name else None
 
 
 def progress_bar(pct, width=10):
@@ -165,7 +186,7 @@ def usage_line(label, entry):
 def build_status_line(payload, rate_limits, cached_claude):
     cwd = find_cwd(payload)
     model = as_str(payload.get("model"))
-    repo = repo_name(payload, cwd)
+    location = location_segment(payload, cwd)
     ctx_pct = context_percent(payload)
 
     five_hour = window(rate_limits.get("five_hour")) if rate_limits else None
@@ -175,20 +196,17 @@ def build_status_line(payload, rate_limits, cached_claude):
     if not weekly and cached_claude:
         weekly = cached_claude.get("weekly")
 
-    header_parts = [p for p in [model, repo] if p]
-    lines = [" | ".join(header_parts)] if header_parts else []
-
-    five_hour_line = usage_line("5h", five_hour)
-    weekly_line = usage_line("wk", weekly)
-    if five_hour_line:
-        lines.append(five_hour_line)
-    if weekly_line:
-        lines.append(weekly_line)
-
+    segments = [p for p in [model, location] if p]
+    five_hour_seg = usage_line("5h", five_hour)
+    weekly_seg = usage_line("wk", weekly)
+    if five_hour_seg:
+        segments.append(five_hour_seg)
+    if weekly_seg:
+        segments.append(weekly_seg)
     if ctx_pct is not None:
-        lines.append(f"ctx {ctx_pct}%")
+        segments.append(f"ctx {ctx_pct}%")
 
-    return "\n".join(lines) if lines else "Claude Code"
+    return " | ".join(segments) if segments else "Claude Code"
 
 
 def main():
