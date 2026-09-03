@@ -22,13 +22,14 @@ that three independent collector scripts keep updated:
   guesses at usage/reset fields by key-name matching. If usage doesn't show
   up for Antigravity, inspect that debug file and tighten the field mapping
   in the script.
-- **Codex**: has no equivalent free push hook, so
-  `Scripts/codex-usage-poll.py` runs a minimal `codex exec` turn every 15
-  minutes (via a LaunchAgent) purely to capture the `codex.rate_limits` event
-  that rides along on every response. This does cost a small amount of the
-  usage it's measuring — increase `StartInterval` in
-  `LaunchAgents/com.aiusagewidget.codexpoll.plist.template` if that matters
-  to you.
+- **Codex** (`Scripts/codex-usage-poll.py`): has no equivalent statusLine push
+  hook, but does expose a proper JSON-RPC method, `account/rateLimits/read`,
+  over its app-server protocol. The script spawns a fresh, short-lived
+  `codex app-server` process (stdio transport, not the persistent daemon's
+  control socket — that speaks a different, admin-only protocol), sends
+  `initialize` then `account/rateLimits/read`, and gets an instant answer at
+  **no token/usage cost**. Polled every 2 minutes via a LaunchAgent
+  (`StartInterval` in `LaunchAgents/com.aiusagewidget.codexpoll.plist.template`).
 
 ## Install
 
@@ -62,7 +63,8 @@ else.
 - macOS menu bar app: working (SwiftUI popover, per-provider progress bars,
   reset countdowns, manual refresh).
 - Claude Code usage: confirmed schema, wired up.
-- Codex usage: confirmed schema, wired up, polling-based.
+- Codex usage: confirmed schema and protocol, wired up, free on-demand polling
+  every 2 minutes via `codex app-server` JSON-RPC.
 - Antigravity usage: hook wired up, exact field names unconfirmed — needs a
   live payload capture to finish.
 - iOS/iPhone widget: not started. Would reuse the same `usage.json` schema

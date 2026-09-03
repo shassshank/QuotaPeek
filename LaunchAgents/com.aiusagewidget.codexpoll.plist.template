@@ -12,7 +12,7 @@
     <key>WorkingDirectory</key>
     <string>__HOME__</string>
     <key>StartInterval</key>
-    <integer>900</integer>
+    <integer>120</integer>
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>

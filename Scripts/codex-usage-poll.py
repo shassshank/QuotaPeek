@@ -1,24 +1,30 @@
 #!/usr/bin/env python3
 """
-Codex CLI has no free push-based usage hook (unlike Claude Code / Antigravity's
-statusLine), so this runs a minimal `codex exec` turn periodically (via
-LaunchAgent, see LaunchAgents/com.aiusagewidget.codexpoll.plist) purely to
-capture the `codex.rate_limits` event that rides along on every response,
-confirmed live from ~/.codex/logs_2.sqlite:
+Fetches Codex's live rate-limit data via the app-server JSON-RPC protocol,
+run fresh over stdio (`codex app-server`, default `--listen stdio://`) rather
+than the persistent daemon's control socket (which speaks a different,
+admin-only protocol and isn't meant for this).
 
-  {"type":"codex.rate_limits","plan_type":"plus","rate_limits":{
-    "primary":   {"used_percent":4,  "window_minutes":300,   "reset_at":...},
-    "secondary": {"used_percent":48, "window_minutes":10080, "reset_at":...}
-  }}
+Confirmed live: sending newline-delimited JSON-RPC `initialize` then
+`account/rateLimits/read` to a freshly spawned `codex app-server` process
+returns immediately, at no token/usage cost:
 
-window_minutes 300 = 5 hour window, 10080 = 7 day (weekly) window.
+  {"id":2,"result":{"rateLimits":{
+    "primary":   {"usedPercent":4, "windowDurationMins":300,   "resetsAt":...},
+    "secondary": {"usedPercent":3, "windowDurationMins":10080, "resetsAt":...},
+    "planType":"plus"
+  }}}
 
-Note this itself costs a small amount of the very usage it measures - keep
-the poll interval long (LaunchAgent default: 15 min).
+windowDurationMins 300 = 5 hour window, 10080 = 7 day (weekly) window.
+
+This replaces an earlier version of this script that polled via
+`codex exec --json`, which turned out not to carry rate-limit data at all
+(that only ever came from a since-removed feature, `responses_websockets`).
 """
 import json
 import os
 import subprocess
+import threading
 import time
 
 CACHE_DIR = os.path.expanduser("~/Library/Application Support/AIUsageWidget")
@@ -44,7 +50,67 @@ def save_cache(cache):
 def window(entry):
     if not entry:
         return None
-    return {"used_percent": entry.get("used_percent"), "resets_at": entry.get("reset_at")}
+    return {"used_percent": entry.get("usedPercent"), "resets_at": entry.get("resetsAt")}
+
+
+def fetch_rate_limits(codex_bin, timeout=10):
+    proc = subprocess.Popen(
+        [codex_bin, "app-server"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        bufsize=0,
+    )
+    responses = {}
+    lock = threading.Lock()
+
+    def reader():
+        buf = b""
+        while True:
+            chunk = proc.stdout.read(4096)
+            if not chunk:
+                break
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                if not line.strip():
+                    continue
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if "id" in msg:
+                    with lock:
+                        responses[msg["id"]] = msg
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+
+    def send(obj):
+        proc.stdin.write((json.dumps(obj) + "\n").encode())
+        proc.stdin.flush()
+
+    try:
+        send({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "aiusagewidget", "version": "0.1.0"}}})
+        send({"id": 2, "method": "account/rateLimits/read", "params": None})
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with lock:
+                if 2 in responses:
+                    break
+            time.sleep(0.1)
+
+        with lock:
+            result = responses.get(2)
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    if not result or "result" not in result:
+        return None, (result or {}).get("error")
+    return result["result"].get("rateLimits"), None
 
 
 def main():
@@ -52,40 +118,19 @@ def main():
     if not os.path.exists(codex_bin):
         codex_bin = "codex"
 
-    try:
-        result = subprocess.run(
-            [codex_bin, "exec", "--json", "ok"],
-            capture_output=True, text=True, timeout=120,
-        )
-    except (subprocess.TimeoutExpired, OSError) as e:
-        cache = load_cache()
-        cache["codex"] = {"error": str(e), "updated_at": int(time.time())}
-        save_cache(cache)
-        return
-
-    rate_limits = None
-    plan_type = None
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if event.get("type") == "codex.rate_limits":
-            rate_limits = event.get("rate_limits") or {}
-            plan_type = event.get("plan_type")
-            break
-
     cache = load_cache()
+    try:
+        rate_limits, err = fetch_rate_limits(codex_bin)
+    except (OSError, subprocess.SubprocessError) as e:
+        rate_limits, err = None, str(e)
+
     if rate_limits is None:
-        cache["codex"] = {"error": "no rate_limits event in codex output", "updated_at": int(time.time())}
+        cache["codex"] = {"error": err or "no response from codex app-server", "updated_at": int(time.time())}
     else:
         cache["codex"] = {
             "five_hour": window(rate_limits.get("primary")),
             "weekly": window(rate_limits.get("secondary")),
-            "plan_type": plan_type,
+            "plan_type": rate_limits.get("planType"),
             "updated_at": int(time.time()),
         }
     save_cache(cache)
