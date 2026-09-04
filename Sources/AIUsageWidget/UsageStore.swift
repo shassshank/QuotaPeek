@@ -1,40 +1,72 @@
 import Foundation
 import Combine
 
-/// Reads the shared usage.json file that the per-provider collector scripts write to.
-/// The app never talks to any provider directly — it only polls this local cache.
+/// Holds the latest state fetched from the Go daemon. This replaces the old file-watching cache
+/// reader entirely - the daemon is the single source of truth and the only thing this app talks to.
+@MainActor
 final class UsageStore: ObservableObject {
-    @Published var snapshot = UsageSnapshot()
-    @Published var lastReadError: String?
+    @Published var providers: [Provider: ProviderStatus] = [:]
+    @Published var isDaemonReachable = true
+    @Published var isRefreshing = false
+    @Published var errors: [ErrorLogEntry] = []
+    @Published var config: DaemonConfig?
 
-    static let cacheDirectory: URL = {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return appSupport.appendingPathComponent("AIUsageWidget", isDirectory: true)
-    }()
-
-    static let cacheFile = cacheDirectory.appendingPathComponent("usage.json")
-
+    private let client = DaemonClient()
     private var timer: Timer?
 
-    func start(pollInterval: TimeInterval = 15) {
-        reload()
+    func start(pollInterval: TimeInterval = 8) {
+        Task { await reload() }
         timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
-            self?.reload()
+            guard let self else { return }
+            Task { await self.reload() }
         }
     }
 
-    func reload() {
-        do {
-            let data = try Data(contentsOf: Self.cacheFile)
-            let decoded = try JSONDecoder().decode(UsageSnapshot.self, from: data)
-            DispatchQueue.main.async {
-                self.snapshot = decoded
-                self.lastReadError = nil
+    func reload() async {
+        switch await client.status() {
+        case .success(let response):
+            isDaemonReachable = true
+            for provider in response.providers {
+                providers[provider.provider] = provider
             }
-        } catch {
-            DispatchQueue.main.async {
-                self.lastReadError = "No usage data yet"
+        case .failure:
+            isDaemonReachable = false
+        }
+    }
+
+    func refresh() async {
+        isRefreshing = true
+        defer { isRefreshing = false }
+        switch await client.refresh() {
+        case .success(let response):
+            isDaemonReachable = true
+            for provider in response.providers {
+                providers[provider.provider] = provider
             }
+        case .failure:
+            isDaemonReachable = false
+        }
+    }
+
+    func loadConfig() async {
+        if case .success(let cfg) = await client.config() {
+            config = cfg
+        }
+    }
+
+    func saveConfig(_ newConfig: DaemonConfig) async -> Bool {
+        switch await client.updateConfig(newConfig) {
+        case .success(let cfg):
+            config = cfg
+            return true
+        case .failure:
+            return false
+        }
+    }
+
+    func loadErrors() async {
+        if case .success(let response) = await client.errors() {
+            errors = response.errors
         }
     }
 }

@@ -3,96 +3,184 @@ import SwiftUI
 
 struct PopoverView: View {
     private enum Layout {
-        static let width: CGFloat = 280
+        static let width: CGFloat = 300
     }
 
     @ObservedObject var store: UsageStore
+    var openSettings: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("AI Usage")
-                .font(.headline)
+        VStack(alignment: .leading, spacing: 12) {
+            header
 
-            ForEach(Provider.allCases) { provider in
-                ProviderRow(provider: provider, usage: usage(for: provider))
-                if provider != Provider.allCases.last {
-                    Divider()
+            if !store.isDaemonReachable {
+                disconnectedBanner
+            }
+
+            VStack(spacing: 10) {
+                ForEach(Provider.allCases) { provider in
+                    ProviderCard(status: store.providers[provider])
                 }
             }
 
             Divider()
 
-            HStack {
-                Button("Refresh") { store.reload() }
-                Spacer()
-                Button("Quit", action: quitApplication)
-            }
+            footer
         }
         .padding(16)
         .frame(width: Layout.width, alignment: .topLeading)
         .fixedSize(horizontal: false, vertical: true)
     }
 
+    private var header: some View {
+        HStack {
+            Label("AI Usage", systemImage: "gauge.with.dots.needle.67percent")
+                .font(.headline)
+            Spacer()
+            Button(action: openSettings) {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(.borderless)
+            .help("Settings")
+        }
+    }
+
+    private var disconnectedBanner: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text("Background service not reachable")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var footer: some View {
+        HStack {
+            Button {
+                Task { await store.refresh() }
+            } label: {
+                HStack(spacing: 4) {
+                    if store.isRefreshing {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    Text("Refresh")
+                }
+            }
+            .disabled(store.isRefreshing)
+
+            Spacer()
+
+            Button("Quit", action: quitApplication)
+        }
+    }
+
     private func quitApplication() {
         NSApp.terminate(nil)
     }
-
-    private func usage(for provider: Provider) -> ProviderUsage? {
-        switch provider {
-        case .claude: return store.snapshot.claude
-        case .codex: return store.snapshot.codex
-        case .antigravity: return store.snapshot.antigravity
-        }
-    }
 }
 
-private struct ProviderRow: View {
-    let provider: Provider
-    let usage: ProviderUsage?
+private struct ProviderCard: View {
+    let status: ProviderStatus?
+
+    private var provider: Provider { status?.provider ?? .claude }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(provider.displayName).font(.subheadline).bold()
+                Label(provider.displayName, systemImage: provider.symbolName)
+                    .font(.subheadline).bold()
                 Spacer()
-                if let updatedAt = usage?.updatedAt {
-                    Text(relativeAge(updatedAt))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                routeBadge
             }
 
-            if let error = usage?.error {
-                Text(error).font(.caption).foregroundStyle(.orange)
-            } else if usage == nil {
-                Text("No data yet").font(.caption).foregroundStyle(.secondary)
+            if let error = status?.lastError {
+                errorLine(error)
+            } else if let data = status?.data {
+                windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
+                windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
+                if let asOf = status?.asOf {
+                    Text("Updated \(relativeAge(asOf))")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             } else {
-                windowRow(label: "5h", window: usage?.fiveHour)
-                windowRow(label: "Weekly", window: usage?.weekly)
+                Text("No data yet")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private var routeBadge: some View {
+        switch status?.activeRoute {
+        case .injection:
+            badge(text: "Live", color: .green)
+        case .keychain:
+            badge(text: "Polled", color: .blue)
+        default:
+            badge(text: "No data", color: .gray)
         }
     }
 
-    private func windowRow(label: String, window: WindowUsage?) -> AnyView {
-        guard let window else { return AnyView(EmptyView()) }
+    private func badge(text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.15), in: Capsule())
+            .foregroundStyle(color)
+    }
+
+    private func errorLine(_ error: ProviderError) -> some View {
+        HStack(alignment: .top, spacing: 4) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+                .font(.caption)
+            Text(error.message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func windowRow(label: String, percent: Double?, resetsAt: Int?) -> some View {
+        guard let percent else { return AnyView(EmptyView()) }
+        let clamped = min(max(percent, 0), 100)
         return AnyView(
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(label).font(.caption).frame(width: 48, alignment: .leading)
-                    ProgressView(value: min(max(window.usedPercent, 0), 100), total: 100)
-                    Text("\(Int(window.usedPercent))%")
-                        .font(.caption)
-                        .monospacedDigit()
-                        .frame(width: 36, alignment: .trailing)
-                }
-                if let resetsAt = window.resetsAt {
-                    Text("resets \(resetCountdown(resetsAt))")
+            HStack(spacing: 8) {
+                Text(label)
+                    .font(.caption)
+                    .frame(width: 46, alignment: .leading)
+                    .foregroundStyle(.secondary)
+                ProgressView(value: clamped, total: 100)
+                    .tint(colorForPercent(clamped))
+                Text("\(Int(clamped))%")
+                    .font(.caption.monospacedDigit())
+                    .frame(width: 34, alignment: .trailing)
+                if let resetsAt {
+                    Text(resetCountdown(resetsAt))
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 52)
+                        .foregroundStyle(.tertiary)
                 }
             }
         )
+    }
+
+    private func colorForPercent(_ percent: Double) -> Color {
+        switch percent {
+        case ..<60: return .green
+        case ..<85: return .yellow
+        default: return .red
+        }
     }
 
     private func relativeAge(_ unixSeconds: Int) -> String {

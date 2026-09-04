@@ -1,41 +1,45 @@
 # AI Usage Widget
 
 A lightweight macOS menu bar app showing live 5-hour and weekly usage limits
-(and reset times) for Claude Code, Codex, and Antigravity — read from the same
-already-authenticated CLIs you have installed, no separate login or API keys.
+(and reset times) for Claude Code, Codex, and Antigravity.
 
-**The app never edits any other tool's config or settings file.** Everything
-it needs comes either from a credential the CLI already stored in the macOS
-Keychain (with macOS's own per-app access prompt) or from a protocol the CLI
-already exposes for other processes to talk to.
+## Architecture
 
-## How it works
+Two pieces:
 
-The app writes to its own local cache file
-(`~/Library/Application Support/AIUsageWidget/usage.json`) and the menu bar
-UI just reads that. Three independent collectors keep it updated:
+- **`Backend/` — `aiusaged`**, a small Go daemon that owns everything:
+  credential access, provider polling, config, and error state. It listens
+  on `127.0.0.1:47831` (loopback only — nothing here ever leaves the Mac) and
+  serves a small HTTP API described in full in `API_CONTRACT.md`.
+- **`Sources/AIUsageWidget/` — the menu bar app**, a thin Swift/SwiftUI shell
+  (status bar icon, popover, Settings window). It never touches Keychain or
+  any provider API directly — it only talks to the daemon over that local
+  API.
 
-- **Claude Code** (`Sources/AIUsageWidget/ClaudeUsageCollector.swift`, runs
-  in-process): reads Claude Code's OAuth token from the Keychain (service
-  `"Claude Code-credentials"` — macOS prompts once per app to allow this,
-  "Always Allow" persists it), then makes one minimal (`max_tokens: 1`)
-  authenticated request to `https://api.anthropic.com/v1/messages`. The
-  response headers carry the same numbers Claude Code's own status line
-  shows: `anthropic-ratelimit-unified-5h-utilization` /
-  `-5h-reset` / `-7d-utilization` / `-7d-reset` (utilization is a 0–1
-  fraction used, reset is a unix timestamp). Polled every 5 minutes.
-- **Codex** (`Scripts/codex-usage-poll.py`): has a proper JSON-RPC method,
-  `account/rateLimits/read`, over its app-server protocol. The script spawns
-  a fresh, short-lived `codex app-server` process (stdio transport, not the
-  persistent daemon's control socket — that speaks a different, admin-only
-  protocol), sends `initialize` then `account/rateLimits/read`, and gets an
-  instant answer at **no token/usage cost**. Polled every 2 minutes via a
-  LaunchAgent (`StartInterval` in
-  `LaunchAgents/com.aiusagewidget.codexpoll.plist.template`).
-- **Antigravity**: not wired up yet. Antigravity's OAuth token lives in the
-  Keychain too (service `"gemini"`, account `"antigravity"`, base64-encoded
-  Google-style token), but which Google/Gemini API endpoint exposes quota
-  from that token hasn't been determined yet.
+Each provider can be collected two ways, selectable per-provider in the
+app's Settings window (gear icon in the popover):
+
+- **Keychain** — the daemon reads the OAuth credential the provider's own
+  CLI already stored in the macOS Keychain, and polls that provider's API
+  directly on a timer. This is how Claude and Antigravity work by default.
+- **Injection** — the provider's own CLI pushes live usage data to the
+  daemon in real time, via its documented `statusLine` hook (Claude Code and
+  Antigravity both support one; the hook script piggybacks on it — see
+  `Scripts/claude-statusline-hook.py` / `Scripts/antigravity-statusline-hook.py`).
+  Codex has no such hook, so its "Injection" route is instead a free local
+  JSON-RPC call (`account/rateLimits/read` via a freshly spawned
+  `codex app-server`) that the daemon runs itself on a timer — no OAuth
+  involved either way.
+
+If both routes are enabled for a provider, the daemon prefers the freshest
+Injection sample and automatically falls back to the last Keychain poll once
+Injection data goes stale (e.g. Claude Code hasn't rendered a status line
+recently) — this is real fallback, not an either/or choice.
+
+The daemon never silently drops a failure: every collector error is recorded
+with the redacted message (tokens/secrets/full response bodies are always
+stripped or truncated before anything is stored) and surfaced in the app's
+Settings → Diagnostics tab.
 
 ## Install
 
@@ -43,13 +47,16 @@ UI just reads that. Three independent collectors keep it updated:
 ./install.sh
 ```
 
-This builds the release binary, copies it plus the Codex collector script to
-`~/Library/Application Support/AIUsageWidget/bin`, and installs two
-LaunchAgents so the app and the Codex poller start automatically at login.
+This builds the Go daemon and the Swift app, installs both plus the two
+statusLine hook scripts to `~/Library/Application Support/AIUsageWidget/bin`,
+installs LaunchAgents so the daemon and the app start at login, and merges a
+`statusLine` entry into `~/.claude/settings.json` and
+`~/.gemini/antigravity-cli/settings.json` (existing settings preserved) so
+the Injection route works out of the box.
 
-The first time the app runs, macOS will show its own permission dialog
-asking whether AIUsageWidget may read the "Claude Code-credentials" Keychain
-item — choose "Always Allow" so it doesn't ask again.
+The first time the daemon runs, macOS will show its own permission dialog
+asking whether it may read the "Claude Code-credentials" and "gemini"
+Keychain items — choose "Always Allow" so it doesn't ask again.
 
 Safe to re-run.
 
@@ -57,27 +64,21 @@ Safe to re-run.
 
 ```
 launchctl unload ~/Library/LaunchAgents/com.aiusagewidget.app.plist
-launchctl unload ~/Library/LaunchAgents/com.aiusagewidget.codexpoll.plist
+launchctl unload ~/Library/LaunchAgents/com.aiusagewidget.daemon.plist
 rm ~/Library/LaunchAgents/com.aiusagewidget.*.plist
 rm -rf ~/Library/Application\ Support/AIUsageWidget
 ```
 
-Nothing else needs cleaning up — no other tool's files were ever touched.
+Then remove the `"statusLine"` key from `~/.claude/settings.json` and
+`~/.gemini/antigravity-cli/settings.json` if you don't use it for anything
+else.
 
-## Status / next steps
+## Development
 
-- macOS menu bar app: working (SwiftUI popover, per-provider progress bars,
-  reset countdowns, manual refresh).
-- Claude Code usage: confirmed real header schema, wired up in-app
-  (Keychain read + direct Anthropic API call). Verified against a real
-  account (200 response, correct headers) — needs a full end-to-end run of
-  the built app to confirm the menu bar UI renders it correctly.
-- Codex usage: confirmed schema and protocol, wired up, free on-demand
-  polling every 2 minutes via `codex app-server` JSON-RPC.
-- Antigravity usage: not started. Need to identify which Google/Gemini API
-  endpoint, called with the Keychain-stored `ya29...` access token, returns
-  quota/rate-limit data.
-- iOS/iPhone widget: not started. Would reuse the same `usage.json` schema
-  via an App Group container synced from the Mac (e.g. iCloud Key-Value
-  store or a small sync helper), since a phone can't read the Mac's local
-  CLI state directly.
+- `Backend/README.md` — how to build/run/test the daemon standalone.
+- `API_CONTRACT.md` — the HTTP API contract between the daemon and the app;
+  the single source of truth for every endpoint and field name.
+- `swift build` builds the menu bar app; `go build ./...` (from `Backend/`)
+  builds the daemon. Running the daemon standalone (`go run .` from
+  `Backend/`) is the fastest way to iterate on the app's UI against real
+  data without a full `swift build -c release` + reinstall cycle.

@@ -2,6 +2,7 @@ import AppKit
 import Darwin
 import SwiftUI
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private enum PopoverLayout {
         // Seeds the very first show before SwiftUI has measured real content, so the popover
@@ -15,16 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover!
     private var preferredSizeObservation: NSKeyValueObservation?
     private let store = UsageStore()
-    private let claudeCollector = ClaudeUsageCollector()
-    private let antigravityCollector = AntigravityUsageCollector()
-    private var claudeTimer: Timer?
-    private var antigravityTimer: Timer?
-
-    /// Every provider's own API has its own quota just for us checking usage, so this stays
-    /// well spaced out (default 5 min) rather than syncing on the same cadence as the local
-    /// cache-file poll.
-    private let claudePollInterval: TimeInterval = 300
-    private let antigravityPollInterval: TimeInterval = 300
+    private var settingsWindow: NSWindow?
 
     fileprivate init(instanceLock: SingleInstanceLock) {
         self.instanceLock = instanceLock
@@ -41,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.target = self
         }
 
-        let hostingController = NSHostingController(rootView: PopoverView(store: store))
+        let hostingController = NSHostingController(rootView: PopoverView(store: store, openSettings: { [weak self] in self?.openSettings() }))
         hostingController.sizingOptions = [.preferredContentSize]
         hostingController.preferredContentSize = PopoverLayout.initialContentSize
 
@@ -59,36 +51,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         store.start()
-        startClaudePolling()
-        startAntigravityPolling()
-    }
-
-    private func startClaudePolling() {
-        refreshClaudeUsage()
-        claudeTimer = Timer.scheduledTimer(withTimeInterval: claudePollInterval, repeats: true) { [weak self] _ in
-            self?.refreshClaudeUsage()
-        }
-    }
-
-    private func refreshClaudeUsage() {
-        Task {
-            await claudeCollector.refreshCache()
-            store.reload()
-        }
-    }
-
-    private func startAntigravityPolling() {
-        refreshAntigravityUsage()
-        antigravityTimer = Timer.scheduledTimer(withTimeInterval: antigravityPollInterval, repeats: true) { [weak self] _ in
-            self?.refreshAntigravityUsage()
-        }
-    }
-
-    private func refreshAntigravityUsage() {
-        Task {
-            await antigravityCollector.refreshCache()
-            store.reload()
-        }
     }
 
     @objc private func togglePopover() {
@@ -96,11 +58,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            store.reload()
+            Task { await store.reload() }
             NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
+    }
+
+    private func openSettings() {
+        if popover.isShown {
+            popover.performClose(nil)
+        }
+        if settingsWindow == nil {
+            let hostingController = NSHostingController(rootView: SettingsView(store: store))
+            let window = NSWindow(contentViewController: hostingController)
+            window.title = "AI Usage Widget Settings"
+            window.styleMask = [.titled, .closable]
+            window.isReleasedWhenClosed = false
+            settingsWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
 }
@@ -184,7 +162,9 @@ guard let instanceLock = SingleInstanceLock.acquire() else {
     exit(0)
 }
 
-let app = NSApplication.shared
-let delegate = AppDelegate(instanceLock: instanceLock)
-app.delegate = delegate
-app.run()
+MainActor.assumeIsolated {
+    let app = NSApplication.shared
+    let delegate = AppDelegate(instanceLock: instanceLock)
+    app.delegate = delegate
+    app.run()
+}

@@ -3,21 +3,18 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.aiusagewidget.codexpoll</string>
+    <string>com.aiusagewidget.daemon</string>
     <key>ProgramArguments</key>
     <array>
-        <string>__PYTHON3__</string>
-        <string>__BIN_DIR__/codex-usage-poll.py</string>
+        <string>__BIN_DIR__/aiusaged</string>
     </array>
-    <key>WorkingDirectory</key>
-    <string>__HOME__</string>
-    <key>StartInterval</key>
-    <integer>120</integer>
     <key>RunAtLoad</key>
     <true/>
+    <key>KeepAlive</key>
+    <true/>
     <key>StandardOutPath</key>
-    <string>__APP_SUPPORT__/codexpoll.log</string>
+    <string>__APP_SUPPORT__/daemon.log</string>
     <key>StandardErrorPath</key>
-    <string>__APP_SUPPORT__/codexpoll.log</string>
+    <string>__APP_SUPPORT__/daemon.log</string>
 </dict>
 </plist>

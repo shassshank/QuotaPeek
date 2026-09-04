@@ -1,4 +1,7 @@
 .build/
+.build-go/
+Backend/.gocache/
+Backend/aiusaged
 *.pyc
 __pycache__/
 .DS_Store
