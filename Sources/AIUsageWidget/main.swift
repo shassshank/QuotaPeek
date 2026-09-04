@@ -6,12 +6,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover!
     private let store = UsageStore()
     private let claudeCollector = ClaudeUsageCollector()
+    private let antigravityCollector = AntigravityUsageCollector()
     private var claudeTimer: Timer?
+    private var antigravityTimer: Timer?
 
     /// Every provider's own API has its own quota just for us checking usage, so this stays
     /// well spaced out (default 5 min) rather than syncing on the same cadence as the local
     /// cache-file poll.
     private let claudePollInterval: TimeInterval = 300
+    private let antigravityPollInterval: TimeInterval = 300
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -29,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         store.start()
         startClaudePolling()
+        startAntigravityPolling()
     }
 
     private func startClaudePolling() {
@@ -41,6 +45,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshClaudeUsage() {
         Task {
             await claudeCollector.refreshCache()
+            store.reload()
+        }
+    }
+
+    private func startAntigravityPolling() {
+        refreshAntigravityUsage()
+        antigravityTimer = Timer.scheduledTimer(withTimeInterval: antigravityPollInterval, repeats: true) { [weak self] _ in
+            self?.refreshAntigravityUsage()
+        }
+    }
+
+    private func refreshAntigravityUsage() {
+        Task {
+            await antigravityCollector.refreshCache()
             store.reload()
         }
     }
