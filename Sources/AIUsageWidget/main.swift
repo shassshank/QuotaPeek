@@ -4,12 +4,16 @@ import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private enum PopoverLayout {
-        static let contentSize = NSSize(width: 280, height: 420)
+        // Seeds the very first show before SwiftUI has measured real content, so the popover
+        // never anchors against a stale/zero size. Actual height then tracks content via the
+        // preferredContentSize observation below.
+        static let initialContentSize = NSSize(width: 280, height: 420)
     }
 
     private let instanceLock: SingleInstanceLock
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
+    private var preferredSizeObservation: NSKeyValueObservation?
     private let store = UsageStore()
     private let claudeCollector = ClaudeUsageCollector()
     private let antigravityCollector = AntigravityUsageCollector()
@@ -39,12 +43,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let hostingController = NSHostingController(rootView: PopoverView(store: store))
         hostingController.sizingOptions = [.preferredContentSize]
-        hostingController.preferredContentSize = PopoverLayout.contentSize
+        hostingController.preferredContentSize = PopoverLayout.initialContentSize
 
         popover = NSPopover()
         popover.behavior = .transient
         popover.contentViewController = hostingController
-        popover.contentSize = PopoverLayout.contentSize
+        popover.contentSize = PopoverLayout.initialContentSize
+
+        // NSHostingController keeps preferredContentSize in sync with SwiftUI's own ideal size
+        // (sizingOptions above); mirror it onto the popover so height tracks real content instead
+        // of staying pinned to the initial seed size.
+        preferredSizeObservation = hostingController.observe(\.preferredContentSize, options: [.new]) { [weak self] _, change in
+            guard let self, let newSize = change.newValue, newSize.width > 0, newSize.height > 0 else { return }
+            self.popover.contentSize = newSize
+        }
 
         store.start()
         startClaudePolling()

@@ -3,7 +3,7 @@ import SwiftUI
 
 struct PopoverView: View {
     private enum Layout {
-        static let size = CGSize(width: 280, height: 420)
+        static let width: CGFloat = 280
     }
 
     @ObservedObject var store: UsageStore
@@ -29,7 +29,8 @@ struct PopoverView: View {
             }
         }
         .padding(16)
-        .frame(width: Layout.size.width, height: Layout.size.height, alignment: .topLeading)
+        .frame(width: Layout.width, alignment: .topLeading)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func quitApplication() {
