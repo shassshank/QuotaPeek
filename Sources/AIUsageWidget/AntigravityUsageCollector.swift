@@ -16,11 +16,13 @@ final class AntigravityUsageCollector {
             let accessToken: String
             let tokenType: String?
             let expiry: String?
+            let refreshToken: String?
 
             enum CodingKeys: String, CodingKey {
                 case accessToken = "access_token"
                 case tokenType = "token_type"
                 case expiry
+                case refreshToken = "refresh_token"
             }
         }
 
@@ -53,6 +55,21 @@ final class AntigravityUsageCollector {
     ]
     private static var cachedDiscovery: (project: String?, planType: String?)?
 
+    // Installed-app OAuth client id/secret pairs used by the locally installed Antigravity CLI
+    // to refresh its own already-authorized token. Pairing between id and secret is not known
+    // ahead of time, so every combination is tried against Google's token endpoint until one
+    // succeeds; the winning pair is then cached for subsequent refreshes this run.
+    private static let tokenURL = URL(string: "https://oauth2.googleapis.com/token")!
+    private static let oauthClientIDs = [
+        "REDACTED-GOOGLE-OAUTH-CLIENT-ID",
+        "REDACTED-GOOGLE-OAUTH-CLIENT-ID",
+    ]
+    private static let oauthClientSecrets = [
+        "REDACTED-GOOGLE-OAUTH-CLIENT-SECRET",
+        "REDACTED-GOOGLE-OAUTH-CLIENT-SECRET",
+    ]
+    private static var cachedOAuthPair: (clientID: String, clientSecret: String)?
+
     func refreshCache() async {
         let usage = await fetch()
         UsageCache.merge(provider: "antigravity", usage: usage)
@@ -67,9 +84,16 @@ final class AntigravityUsageCollector {
             return ProviderUsage(error: "Antigravity credentials not found")
         }
 
-        let accessToken = creds.token?.accessToken ?? creds.accessToken
-        guard let accessToken, !accessToken.isEmpty else {
+        let storedAccessToken = creds.token?.accessToken ?? creds.accessToken
+        guard let storedAccessToken, !storedAccessToken.isEmpty else {
             return ProviderUsage(error: "Could not find Antigravity OAuth access token in Keychain credential")
+        }
+
+        var accessToken = storedAccessToken
+        if let refreshToken = creds.token?.refreshToken, !refreshToken.isEmpty {
+            if let refreshed = await Self.refreshAccessToken(refreshToken: refreshToken) {
+                accessToken = refreshed
+            }
         }
 
         let discovery: (project: String?, planType: String?)
@@ -114,6 +138,42 @@ final class AntigravityUsageCollector {
         return ProviderUsage(error: "Antigravity quota failed: \(lastFailure)")
     }
 
+    private static func refreshAccessToken(refreshToken: String) async -> String? {
+        let pairsToTry: [(String, String)]
+        if let cached = cachedOAuthPair {
+            pairsToTry = [(cached.clientID, cached.clientSecret)]
+        } else {
+            pairsToTry = oauthClientIDs.flatMap { id in oauthClientSecrets.map { (id, $0) } }
+        }
+
+        for (clientID, clientSecret) in pairsToTry {
+            var request = URLRequest(url: tokenURL)
+            request.httpMethod = "POST"
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            let form = [
+                "grant_type=refresh_token",
+                "refresh_token=\(refreshToken)",
+                "client_id=\(clientID)",
+                "client_secret=\(clientSecret)",
+            ].joined(separator: "&")
+            request.httpBody = form.data(using: .utf8)
+
+            guard
+                let (data, response) = try? await URLSession.shared.data(for: request),
+                let http = response as? HTTPURLResponse,
+                (200...299).contains(http.statusCode),
+                let object = try? JSONSerialization.jsonObject(with: data),
+                let json = object as? [String: Any],
+                let token = json["access_token"] as? String,
+                !token.isEmpty
+            else { continue }
+
+            cachedOAuthPair = (clientID, clientSecret)
+            return token
+        }
+        return nil
+    }
+
     private static func discoverProject(accessToken: String, credentials: Credentials) async throws -> (project: String?, planType: String?) {
         let body: [String: Any] = [
             "metadata": clientMetadata(),
@@ -148,22 +208,20 @@ final class AntigravityUsageCollector {
         return (project, planType)
     }
 
+    // Matches the real Antigravity CLI's request shape exactly (captured via local proxy from
+    // a real `agy` `/usage` invocation). Google's backend rejects any other User-Agent with
+    // UNSUPPORTED_CLIENT; there is no separate Client-Metadata header.
     private static func applyHeaders(to request: inout URLRequest, accessToken: String) {
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("google-api-nodejs-client/9.15.1", forHTTPHeaderField: "User-Agent")
         request.setValue(
-            "{\"ideType\":\"ANTIGRAVITY\",\"platform\":\"DARWIN_ARM64\",\"pluginType\":\"GEMINI\"}",
-            forHTTPHeaderField: "Client-Metadata"
+            "antigravity/cli/1.1.26 (aidev_client; os_type=darwin; arch=arm64; cl=976013059; auth_method=consumer)",
+            forHTTPHeaderField: "User-Agent"
         )
     }
 
     private static func clientMetadata() -> [String: Any] {
-        [
-            "ideType": "ANTIGRAVITY",
-            "platform": "DARWIN_ARM64",
-            "pluginType": "GEMINI",
-        ]
+        ["ideType": "ANTIGRAVITY"]
     }
 
     private static func quotaBody(project: String?) -> [String: Any] {

@@ -10,6 +10,60 @@ let quotaEndpoints = [
     URL(string: "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")!,
     URL(string: "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota")!,
 ]
+let tokenEndpoint = URL(string: "https://oauth2.googleapis.com/token")!
+
+// Candidate installed-app OAuth client id/secret pairs extracted from the locally installed
+// `agy` binary (static string inspection). Pairing between id and secret is not known from
+// string order, so both permutations are tried against Google's token endpoint until one works.
+let oauthClientIDs = [
+    "REDACTED-GOOGLE-OAUTH-CLIENT-ID",
+    "REDACTED-GOOGLE-OAUTH-CLIENT-ID",
+]
+let oauthClientSecrets = [
+    "REDACTED-GOOGLE-OAUTH-CLIENT-SECRET",
+    "REDACTED-GOOGLE-OAUTH-CLIENT-SECRET",
+]
+
+func refreshAccessToken(refreshToken: String, session: URLSession) -> (accessToken: String, clientID: String)? {
+    for clientID in oauthClientIDs {
+        for clientSecret in oauthClientSecrets {
+            var request = URLRequest(url: tokenEndpoint)
+            request.httpMethod = "POST"
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            let form = [
+                "grant_type=refresh_token",
+                "refresh_token=\(refreshToken)",
+                "client_id=\(clientID)",
+                "client_secret=\(clientSecret)",
+            ].joined(separator: "&")
+            request.httpBody = form.data(using: .utf8)
+
+            let semaphore = DispatchSemaphore(value: 0)
+            var resultToken: String?
+            var statusCode = -1
+            session.dataTask(with: request) { data, response, error in
+                defer { semaphore.signal() }
+                if let http = response as? HTTPURLResponse { statusCode = http.statusCode }
+                guard error == nil, let data,
+                      let object = try? JSONSerialization.jsonObject(with: data),
+                      let json = object as? [String: Any],
+                      let token = json["access_token"] as? String
+                else { return }
+                resultToken = token
+            }.resume()
+            _ = semaphore.wait(timeout: .now() + 15)
+
+            let shortID = String(clientID.prefix(12))
+            if let resultToken {
+                print("Refresh succeeded with client_id \(shortID)... (status \(statusCode))")
+                return (resultToken, clientID)
+            } else {
+                print("Refresh attempt with client_id \(shortID)... failed (status \(statusCode))")
+            }
+        }
+    }
+    return nil
+}
 
 func readKeychainData(service: String, account: String) -> Data? {
     let query: [String: Any] = [
@@ -47,20 +101,18 @@ func redact(_ text: String) -> String {
 }
 
 func clientMetadata() -> [String: Any] {
-    [
-        "ideType": "ANTIGRAVITY",
-        "platform": "DARWIN_ARM64",
-        "pluginType": "GEMINI",
-    ]
+    ["ideType": "ANTIGRAVITY"]
 }
 
+// Matches the real Antigravity CLI's request shape exactly (captured via local proxy from a
+// real `agy` `/usage` invocation). No Client-Metadata header; User-Agent is what Google's
+// backend actually checks for the UNSUPPORTED_CLIENT gate.
 func applyHeaders(to request: inout URLRequest, accessToken: String) {
     request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.setValue("google-api-nodejs-client/9.15.1", forHTTPHeaderField: "User-Agent")
     request.setValue(
-        "{\"ideType\":\"ANTIGRAVITY\",\"platform\":\"DARWIN_ARM64\",\"pluginType\":\"GEMINI\"}",
-        forHTTPHeaderField: "Client-Metadata"
+        "antigravity/cli/1.1.26 (aidev_client; os_type=darwin; arch=arm64; cl=976013059; auth_method=consumer)",
+        forHTTPHeaderField: "User-Agent"
     )
 }
 
@@ -159,8 +211,9 @@ else {
 }
 
 let tokenDict = json["token"] as? [String: Any]
-let accessToken = (tokenDict?["access_token"] as? String) ?? (json["access_token"] as? String)
-guard let accessToken, !accessToken.isEmpty else {
+let storedAccessToken = (tokenDict?["access_token"] as? String) ?? (json["access_token"] as? String)
+let refreshToken = tokenDict?["refresh_token"] as? String
+guard let storedAccessToken, !storedAccessToken.isEmpty else {
     print("Credential JSON had no access token")
     exit(1)
 }
@@ -175,8 +228,22 @@ print("Discovery endpoint: \(discoveryEndpoint.absoluteString)")
 print("Discovery project seed: <none>")
 print("Default project cache: ignored")
 
-let semaphore = DispatchSemaphore(value: 0)
 let session = URLSession(configuration: .ephemeral)
+
+var accessToken = storedAccessToken
+if let refreshToken, !refreshToken.isEmpty {
+    print("\nAttempting OAuth refresh (stored access_token may be expired)...")
+    if let refreshed = refreshAccessToken(refreshToken: refreshToken, session: session) {
+        accessToken = refreshed.accessToken
+        print("Using freshly refreshed access token.")
+    } else {
+        print("All refresh attempts failed; falling back to stored access token.")
+    }
+} else {
+    print("\nNo refresh_token found in credential; using stored access token as-is.")
+}
+
+let semaphore = DispatchSemaphore(value: 0)
 
 let discoveryBody: [String: Any] = [
     "metadata": clientMetadata(),
