@@ -5,7 +5,8 @@ import Security
 let keychainService = "gemini"
 let keychainAccount = "antigravity"
 let keyringPrefix = "go-keyring-base64:"
-let endpoints = [
+let discoveryEndpoint = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")!
+let quotaEndpoints = [
     URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")!,
     URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota")!,
 ]
@@ -45,6 +46,87 @@ func redact(_ text: String) -> String {
     return redacted
 }
 
+func clientMetadata(duetProject: String? = nil) -> [String: Any] {
+    var metadata: [String: Any] = [
+        "ideType": "IDE_UNSPECIFIED",
+        "platform": "PLATFORM_UNSPECIFIED",
+        "pluginType": "GEMINI",
+    ]
+    if let duetProject {
+        metadata["duetProject"] = duetProject
+    }
+    return metadata
+}
+
+func applyHeaders(to request: inout URLRequest, accessToken: String) {
+    request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("google-api-nodejs-client/9.15.1", forHTTPHeaderField: "User-Agent")
+    request.setValue(
+        "{\"ideType\":\"IDE_UNSPECIFIED\",\"platform\":\"PLATFORM_UNSPECIFIED\",\"pluginType\":\"GEMINI\"}",
+        forHTTPHeaderField: "Client-Metadata"
+    )
+}
+
+func jsonString(_ object: Any) -> String {
+    guard
+        let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+        let string = String(data: data, encoding: .utf8)
+    else { return "{}" }
+    return string
+}
+
+@discardableResult
+func performRequest(
+    label: String,
+    endpoint: URL,
+    body: [String: Any],
+    accessToken: String,
+    session: URLSession,
+    semaphore: DispatchSemaphore
+) -> [String: Any]? {
+    var request = URLRequest(url: endpoint)
+    request.httpMethod = "POST"
+    applyHeaders(to: &request, accessToken: accessToken)
+    request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+    print("\n=== \(label): \(endpoint.absoluteString)")
+    print("Request body: \(jsonString(body))")
+
+    var parsedJSON: [String: Any]?
+    session.dataTask(with: request) { data, response, error in
+        defer { semaphore.signal() }
+        if let error {
+            print("Error: \(error.localizedDescription)")
+            return
+        }
+        guard let http = response as? HTTPURLResponse else {
+            print("No HTTP response")
+            return
+        }
+        print("Status: \(http.statusCode)")
+        print("Headers:")
+        for key in http.allHeaderFields.keys.sorted(by: { "\($0)" < "\($1)" }) {
+            print("  \(key): \(http.allHeaderFields[key] ?? "")")
+        }
+        if let data, !data.isEmpty {
+            let text = String(data: data, encoding: .utf8) ?? "<non-UTF8 body, \(data.count) bytes>"
+            print("Body preview:")
+            print(String(redact(text).prefix(4000)))
+            if (200...299).contains(http.statusCode),
+               let object = try? JSONSerialization.jsonObject(with: data),
+               let json = object as? [String: Any] {
+                parsedJSON = json
+            }
+        } else {
+            print("Body preview: <empty>")
+        }
+    }.resume()
+
+    _ = semaphore.wait(timeout: .now() + 30)
+    return parsedJSON
+}
+
 guard
     let rawData = readKeychainData(service: keychainService, account: keychainAccount),
     let raw = String(data: rawData, encoding: .utf8)
@@ -81,46 +163,51 @@ if let tokenDict {
 print("Token present: yes (redacted)")
 
 let project = (json["project"] as? String) ?? (json["project_id"] as? String) ?? (json["quota_project"] as? String)
-let requestBodies: [[String: Any]] = project.map { [[:], ["project": $0]] } ?? [[:]]
-
 let semaphore = DispatchSemaphore(value: 0)
 let session = URLSession(configuration: .ephemeral)
 
-for endpoint in endpoints {
-    for body in requestBodies {
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+var discoveryBody: [String: Any] = [
+    "metadata": clientMetadata(duetProject: project),
+]
+if let project {
+    discoveryBody["cloudaicompanionProject"] = project
+}
 
-        print("\n=== \(endpoint.absoluteString)")
-        print("Request body: \(body.isEmpty ? "{}" : String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "{}")")
+let discoveryJSON = performRequest(
+    label: "Discovery loadCodeAssist",
+    endpoint: discoveryEndpoint,
+    body: discoveryBody,
+    accessToken: accessToken,
+    session: session,
+    semaphore: semaphore
+)
 
-        session.dataTask(with: request) { data, response, error in
-            defer { semaphore.signal() }
-            if let error {
-                print("Error: \(error.localizedDescription)")
-                return
-            }
-            guard let http = response as? HTTPURLResponse else {
-                print("No HTTP response")
-                return
-            }
-            print("Status: \(http.statusCode)")
-            print("Headers:")
-            for key in http.allHeaderFields.keys.sorted(by: { "\($0)" < "\($1)" }) {
-                print("  \(key): \(http.allHeaderFields[key] ?? "")")
-            }
-            if let data, !data.isEmpty {
-                let text = String(data: data, encoding: .utf8) ?? "<non-UTF8 body, \(data.count) bytes>"
-                print("Body preview:")
-                print(String(redact(text).prefix(4000)))
-            } else {
-                print("Body preview: <empty>")
-            }
-        }.resume()
+let discoveredProject = (discoveryJSON?["cloudaicompanionProject"] as? String)
+    ?? ((discoveryJSON?["cloudaicompanionProject"] as? [String: Any])?["id"] as? String)
+    ?? project
 
-        _ = semaphore.wait(timeout: .now() + 30)
-    }
+guard let discoveredProject, !discoveredProject.isEmpty else {
+    print("\nNo cloudaicompanionProject discovered; skipping quota calls.")
+    exit(2)
+}
+
+print("\nDiscovered cloudaicompanionProject: \(discoveredProject)")
+if let currentTier = discoveryJSON?["currentTier"] as? [String: Any] {
+    print("Current tier keys: \(currentTier.keys.sorted())")
+    print("Current tier id: \(currentTier["id"] ?? "<missing>")")
+}
+if let paidTier = discoveryJSON?["paidTier"] as? [String: Any] {
+    print("Paid tier keys: \(paidTier.keys.sorted())")
+    print("Paid tier id: \(paidTier["id"] ?? "<missing>")")
+}
+
+for endpoint in quotaEndpoints {
+    performRequest(
+        label: "Quota using discovered project",
+        endpoint: endpoint,
+        body: ["project": discoveredProject],
+        accessToken: accessToken,
+        session: session,
+        semaphore: semaphore
+    )
 }

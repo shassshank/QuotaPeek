@@ -6,8 +6,8 @@ import Foundation
 ///
 /// Public Antigravity docs confirm that its `/usage` command refreshes quota from a backend
 /// service and that status-line quota buckets carry remaining_fraction/reset_time values. The
-/// raw Code Assist RPC URL is inferred from Antigravity/Gemini CLI static symbols and community
-/// implementations, so parsing is intentionally defensive and live verification is still needed.
+/// Code Assist RPC URLs and the loadCodeAssist project-discovery flow match the public Gemini CLI
+/// implementation. Antigravity-specific metadata is still inferred, so parsing remains defensive.
 final class AntigravityUsageCollector {
     private struct CredentialError: Error {
         let message: String
@@ -54,10 +54,12 @@ final class AntigravityUsageCollector {
     private static let keychainService = "gemini"
     private static let keychainAccount = "antigravity"
     private static let keyringPrefix = "go-keyring-base64:"
+    private static let discoveryURL = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")!
     private static let quotaURLs = [
         URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")!,
         URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota")!,
     ]
+    private static var cachedDiscovery: (project: String, planType: String?)?
 
     func refreshCache() async {
         let usage = await fetch()
@@ -78,17 +80,24 @@ final class AntigravityUsageCollector {
             return ProviderUsage(error: "Could not find Antigravity OAuth access token in Keychain credential")
         }
 
-        let project = [creds.project, creds.projectId, creds.quotaProject].compactMap { $0 }.first
-        let body: [String: Any] = project.map { ["project": $0] } ?? [:]
-        let httpBody = try? JSONSerialization.data(withJSONObject: body)
+        let discovery: (project: String, planType: String?)
+        if let cached = Self.cachedDiscovery {
+            discovery = cached
+        } else {
+            do {
+                discovery = try await Self.discoverProject(accessToken: accessToken, credentials: creds)
+                Self.cachedDiscovery = discovery
+            } catch {
+                return ProviderUsage(error: "Antigravity discovery failed: \(Self.errorMessage(error))")
+            }
+        }
 
         var lastFailure = "No quota endpoint attempted"
         for url in Self.quotaURLs {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
-            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = httpBody
+            Self.applyHeaders(to: &request, accessToken: accessToken)
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["project": discovery.project])
 
             do {
                 let (data, response) = try await URLSession.shared.data(for: request)
@@ -97,20 +106,109 @@ final class AntigravityUsageCollector {
                     continue
                 }
                 guard (200...299).contains(http.statusCode) else {
-                    lastFailure = "\(url.lastPathComponent) returned status \(http.statusCode)"
+                    lastFailure = "\(url.lastPathComponent) returned status \(http.statusCode): \(Self.bodyPreview(data))"
                     continue
                 }
-                guard let usage = Self.parse(data: data, planType: creds.planTier) else {
+                guard let usage = Self.parse(data: data, planType: discovery.planType ?? creds.planTier) else {
                     lastFailure = "\(url.lastPathComponent) returned no parseable quota buckets"
                     continue
                 }
                 return usage
             } catch {
-                lastFailure = "Request failed: \(error.localizedDescription)"
+                lastFailure = "\(url.lastPathComponent) request failed: \(error.localizedDescription)"
             }
         }
 
-        return ProviderUsage(error: "Antigravity quota unavailable: \(lastFailure)")
+        return ProviderUsage(error: "Antigravity quota failed: \(lastFailure)")
+    }
+
+    private static func discoverProject(accessToken: String, credentials: Credentials) async throws -> (project: String, planType: String?) {
+        let existingProject = [credentials.project, credentials.projectId, credentials.quotaProject].compactMap { $0 }.first
+        var body: [String: Any] = [
+            "metadata": clientMetadata(duetProject: existingProject),
+        ]
+        if let existingProject {
+            body["cloudaicompanionProject"] = existingProject
+        }
+
+        var request = URLRequest(url: discoveryURL)
+        request.httpMethod = "POST"
+        applyHeaders(to: &request, accessToken: accessToken)
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw CredentialError(message: "No HTTP response from loadCodeAssist")
+        }
+        guard (200...299).contains(http.statusCode) else {
+            throw CredentialError(message: "loadCodeAssist returned status \(http.statusCode): \(bodyPreview(data))")
+        }
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data),
+            let json = object as? [String: Any]
+        else {
+            throw CredentialError(message: "loadCodeAssist returned non-JSON response")
+        }
+
+        let project = stringValue(json["cloudaicompanionProject"])
+            ?? nestedString(json["cloudaicompanionProject"], key: "id")
+            ?? existingProject
+        guard let project, !project.isEmpty else {
+            throw CredentialError(message: "loadCodeAssist returned no cloudaicompanionProject")
+        }
+
+        let planType = tierDescription(json["paidTier"])
+            ?? tierDescription(json["currentTier"])
+            ?? credentials.planTier
+
+        return (project, planType)
+    }
+
+    private static func applyHeaders(to request: inout URLRequest, accessToken: String) {
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("google-api-nodejs-client/9.15.1", forHTTPHeaderField: "User-Agent")
+        request.setValue(
+            "{\"ideType\":\"IDE_UNSPECIFIED\",\"platform\":\"PLATFORM_UNSPECIFIED\",\"pluginType\":\"GEMINI\"}",
+            forHTTPHeaderField: "Client-Metadata"
+        )
+    }
+
+    private static func clientMetadata(duetProject: String? = nil) -> [String: Any] {
+        var metadata: [String: Any] = [
+            "ideType": "IDE_UNSPECIFIED",
+            "platform": "PLATFORM_UNSPECIFIED",
+            "pluginType": "GEMINI",
+        ]
+        if let duetProject {
+            metadata["duetProject"] = duetProject
+        }
+        return metadata
+    }
+
+    private static func tierDescription(_ value: Any?) -> String? {
+        guard let tier = value as? [String: Any] else { return nil }
+        let id = stringValue(tier["id"])
+        let name = stringValue(tier["name"])
+        return [name, id].compactMap { $0 }.first
+    }
+
+    private static func nestedString(_ value: Any?, key: String) -> String? {
+        guard let dict = value as? [String: Any] else { return nil }
+        return stringValue(dict[key])
+    }
+
+    private static func bodyPreview(_ data: Data) -> String {
+        guard !data.isEmpty else { return "<empty body>" }
+        let text = String(data: data, encoding: .utf8) ?? "<non-UTF8 body, \(data.count) bytes>"
+        return String(text.prefix(600))
+    }
+
+    private static func errorMessage(_ error: Error) -> String {
+        if let credentialError = error as? CredentialError {
+            return credentialError.message
+        }
+        return error.localizedDescription
     }
 
     private static func loadCredentials() -> Result<Credentials, CredentialError> {
