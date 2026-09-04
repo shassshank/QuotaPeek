@@ -2,6 +2,10 @@ import AppKit
 import SwiftUI
 
 struct PopoverView: View {
+    private enum Layout {
+        static let size = CGSize(width: 280, height: 420)
+    }
+
     @ObservedObject var store: UsageStore
 
     var body: some View {
@@ -25,7 +29,7 @@ struct PopoverView: View {
             }
         }
         .padding(16)
-        .frame(width: 280)
+        .frame(width: Layout.size.width, height: Layout.size.height, alignment: .topLeading)
     }
 
     private func quitApplication() {

@@ -3,6 +3,11 @@ import Darwin
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private enum PopoverLayout {
+        static let contentSize = NSSize(width: 280, height: 420)
+    }
+
+    private let instanceLock: SingleInstanceLock
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private let store = UsageStore()
@@ -17,12 +22,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let claudePollInterval: TimeInterval = 300
     private let antigravityPollInterval: TimeInterval = 300
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        guard !isAnotherInstanceRunning() else {
-            NSApp.terminate(nil)
-            return
-        }
+    fileprivate init(instanceLock: SingleInstanceLock) {
+        self.instanceLock = instanceLock
+        super.init()
+    }
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -33,13 +38,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let hostingController = NSHostingController(rootView: PopoverView(store: store))
+        hostingController.sizingOptions = [.preferredContentSize]
+        hostingController.preferredContentSize = PopoverLayout.contentSize
+
         popover = NSPopover()
         popover.behavior = .transient
         popover.contentViewController = hostingController
-        // NSPopover anchors itself using contentSize at the moment show(...) is called. Without
-        // a concrete size up front, the first show can compute the anchor against a stale/zero
-        // size and visually jut up past the button before correcting itself.
-        popover.contentSize = hostingController.view.fittingSize
+        popover.contentSize = PopoverLayout.contentSize
 
         store.start()
         startClaudePolling()
@@ -80,28 +85,94 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.performClose(nil)
         } else {
             store.reload()
-            if let contentView = popover.contentViewController?.view {
-                contentView.layoutSubtreeIfNeeded()
-                popover.contentSize = contentView.fittingSize
-            }
             NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
     }
 
-    private func isAnotherInstanceRunning() -> Bool {
-        let currentPID = getpid()
-        let executableName = URL(fileURLWithPath: CommandLine.arguments[0]).lastPathComponent
+}
 
-        return NSWorkspace.shared.runningApplications.contains { application in
-            guard application.processIdentifier != currentPID else { return false }
-            return application.executableURL?.lastPathComponent == executableName
+private final class SingleInstanceLock {
+    private enum LockAttempt {
+        case acquired(SingleInstanceLock)
+        case held
+        case unavailable
+    }
+
+    private var fileDescriptor: Int32
+
+    private init(fileDescriptor: Int32) {
+        self.fileDescriptor = fileDescriptor
+    }
+
+    static func acquire() -> SingleInstanceLock? {
+        for directory in lockDirectories() {
+            switch acquire(in: directory) {
+            case .acquired(let lock):
+                return lock
+            case .held:
+                return nil
+            case .unavailable:
+                continue
+            }
+        }
+
+        return nil
+    }
+
+    private static func acquire(in directory: URL) -> LockAttempt {
+        let lockURL = directory.appendingPathComponent("app.lock")
+
+        do {
+            try FileManager.default.createDirectory(
+                at: lockURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+        } catch {
+            return .unavailable
+        }
+
+        let fd = open(lockURL.path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR)
+        guard fd >= 0 else { return .unavailable }
+
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+            close(fd)
+            return .held
+        }
+
+        let pid = "\(getpid())\n"
+        _ = ftruncate(fd, 0)
+        _ = pid.withCString { write(fd, $0, strlen($0)) }
+
+        return .acquired(SingleInstanceLock(fileDescriptor: fd))
+    }
+
+    private static func lockDirectories() -> [URL] {
+        let appSupport = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Application Support", isDirectory: true)
+            .appendingPathComponent("AIUsageWidget", isDirectory: true)
+        let temp = URL(fileURLWithPath: "/tmp", isDirectory: true)
+            .appendingPathComponent("AIUsageWidget-\(getuid())", isDirectory: true)
+
+        return [appSupport, temp]
+    }
+
+    deinit {
+        if fileDescriptor >= 0 {
+            flock(fileDescriptor, LOCK_UN)
+            close(fileDescriptor)
+            fileDescriptor = -1
         }
     }
 }
 
+guard let instanceLock = SingleInstanceLock.acquire() else {
+    exit(0)
+}
+
 let app = NSApplication.shared
-let delegate = AppDelegate()
+let delegate = AppDelegate(instanceLock: instanceLock)
 app.delegate = delegate
 app.run()
