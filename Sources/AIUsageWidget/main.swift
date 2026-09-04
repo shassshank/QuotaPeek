@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -17,6 +18,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let antigravityPollInterval: TimeInterval = 300
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !isAnotherInstanceRunning() else {
+            NSApp.terminate(nil)
+            return
+        }
+
         NSApp.setActivationPolicy(.accessory)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -69,8 +75,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.performClose(nil)
         } else {
             store.reload()
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
+        }
+    }
+
+    private func isAnotherInstanceRunning() -> Bool {
+        let currentPID = getpid()
+        let executableName = URL(fileURLWithPath: CommandLine.arguments[0]).lastPathComponent
+
+        return NSWorkspace.shared.runningApplications.contains { application in
+            guard application.processIdentifier != currentPID else { return false }
+            return application.executableURL?.lastPathComponent == executableName
         }
     }
 }

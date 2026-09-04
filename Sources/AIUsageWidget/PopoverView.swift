@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct PopoverView: View {
@@ -20,11 +21,15 @@ struct PopoverView: View {
             HStack {
                 Button("Refresh") { store.reload() }
                 Spacer()
-                Button("Quit") { NSApp.terminate(nil) }
+                Button("Quit", action: quitApplication)
             }
         }
         .padding(16)
         .frame(width: 280)
+    }
+
+    private func quitApplication() {
+        NSApp.terminate(nil)
     }
 
     private func usage(for provider: Provider) -> ProviderUsage? {
