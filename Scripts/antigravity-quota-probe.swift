@@ -5,10 +5,11 @@ import Security
 let keychainService = "gemini"
 let keychainAccount = "antigravity"
 let keyringPrefix = "go-keyring-base64:"
-let discoveryEndpoint = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")!
+let antigravityDefaultProjectPath = ".gemini/antigravity-cli/cache/default_project_id.txt"
+let discoveryEndpoint = URL(string: "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")!
 let quotaEndpoints = [
-    URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")!,
-    URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota")!,
+    URL(string: "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")!,
+    URL(string: "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota")!,
 ]
 
 func readKeychainData(service: String, account: String) -> Data? {
@@ -48,8 +49,8 @@ func redact(_ text: String) -> String {
 
 func clientMetadata(duetProject: String? = nil) -> [String: Any] {
     var metadata: [String: Any] = [
-        "ideType": "IDE_UNSPECIFIED",
-        "platform": "PLATFORM_UNSPECIFIED",
+        "ideType": "ANTIGRAVITY",
+        "platform": "DARWIN_ARM64",
         "pluginType": "GEMINI",
     ]
     if let duetProject {
@@ -63,9 +64,42 @@ func applyHeaders(to request: inout URLRequest, accessToken: String) {
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue("google-api-nodejs-client/9.15.1", forHTTPHeaderField: "User-Agent")
     request.setValue(
-        "{\"ideType\":\"IDE_UNSPECIFIED\",\"platform\":\"PLATFORM_UNSPECIFIED\",\"pluginType\":\"GEMINI\"}",
+        "{\"ideType\":\"ANTIGRAVITY\",\"platform\":\"DARWIN_ARM64\",\"pluginType\":\"GEMINI\"}",
         forHTTPHeaderField: "Client-Metadata"
     )
+}
+
+func trimmedNonEmpty(_ value: String?) -> String? {
+    guard let value else { return nil }
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}
+
+func antigravityDefaultProject() -> String? {
+    let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(antigravityDefaultProjectPath)
+    guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+    return trimmedNonEmpty(text)
+}
+
+func environmentProject() -> String? {
+    let env = ProcessInfo.processInfo.environment
+    return trimmedNonEmpty(env["GOOGLE_CLOUD_PROJECT"]) ?? trimmedNonEmpty(env["GOOGLE_CLOUD_PROJECT_ID"])
+}
+
+func projectCandidate(from json: [String: Any]) -> (value: String, source: String)? {
+    let candidates: [(String?, String)] = [
+        (json["project"] as? String, "Keychain project"),
+        (json["project_id"] as? String, "Keychain project_id"),
+        (json["quota_project"] as? String, "Keychain quota_project"),
+        (antigravityDefaultProject(), "~/.gemini/antigravity-cli/cache/default_project_id.txt"),
+        (environmentProject(), "GOOGLE_CLOUD_PROJECT/GOOGLE_CLOUD_PROJECT_ID"),
+    ]
+    for (value, source) in candidates {
+        if let value = trimmedNonEmpty(value) {
+            return (value, source)
+        }
+    }
+    return nil
 }
 
 func jsonString(_ object: Any) -> String {
@@ -161,8 +195,16 @@ if let tokenDict {
     print("Decoded token object keys: \(tokenDict.keys.sorted())")
 }
 print("Token present: yes (redacted)")
+print("Client metadata: \(jsonString(clientMetadata()))")
+print("Discovery endpoint: \(discoveryEndpoint.absoluteString)")
 
-let project = (json["project"] as? String) ?? (json["project_id"] as? String) ?? (json["quota_project"] as? String)
+let projectInfo = projectCandidate(from: json)
+let project = projectInfo?.value
+if let projectInfo {
+    print("Project candidate: \(projectInfo.value) (source: \(projectInfo.source))")
+} else {
+    print("Project candidate: <none>")
+}
 let semaphore = DispatchSemaphore(value: 0)
 let session = URLSession(configuration: .ephemeral)
 

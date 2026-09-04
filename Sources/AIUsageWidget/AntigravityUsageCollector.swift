@@ -2,12 +2,13 @@ import Foundation
 
 /// Fetches Antigravity quota usage from Google's Code Assist backend using the OAuth token
 /// Antigravity already stored in the macOS Keychain (service "gemini", account "antigravity").
-/// This never reads or writes Antigravity config/settings files.
+/// This reads Antigravity's local default project cache when the Keychain credential does
+/// not include a project, but never writes Antigravity config/settings files.
 ///
 /// Public Antigravity docs confirm that its `/usage` command refreshes quota from a backend
 /// service and that status-line quota buckets carry remaining_fraction/reset_time values. The
-/// Code Assist RPC URLs and the loadCodeAssist project-discovery flow match the public Gemini CLI
-/// implementation. Antigravity-specific metadata is still inferred, so parsing remains defensive.
+/// Code Assist RPC URLs and the loadCodeAssist project-discovery flow are based on the public
+/// Gemini CLI implementation plus Antigravity's local binary/logs. Parsing remains defensive.
 final class AntigravityUsageCollector {
     private struct CredentialError: Error {
         let message: String
@@ -54,10 +55,11 @@ final class AntigravityUsageCollector {
     private static let keychainService = "gemini"
     private static let keychainAccount = "antigravity"
     private static let keyringPrefix = "go-keyring-base64:"
-    private static let discoveryURL = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")!
+    private static let antigravityDefaultProjectPath = ".gemini/antigravity-cli/cache/default_project_id.txt"
+    private static let discoveryURL = URL(string: "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")!
     private static let quotaURLs = [
-        URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")!,
-        URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota")!,
+        URL(string: "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")!,
+        URL(string: "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota")!,
     ]
     private static var cachedDiscovery: (project: String, planType: String?)?
 
@@ -123,7 +125,13 @@ final class AntigravityUsageCollector {
     }
 
     private static func discoverProject(accessToken: String, credentials: Credentials) async throws -> (project: String, planType: String?) {
-        let existingProject = [credentials.project, credentials.projectId, credentials.quotaProject].compactMap { $0 }.first
+        let existingProject = [
+            credentials.project,
+            credentials.projectId,
+            credentials.quotaProject,
+            antigravityDefaultProject(),
+            environmentProject(),
+        ].compactMap { $0 }.first
         var body: [String: Any] = [
             "metadata": clientMetadata(duetProject: existingProject),
         ]
@@ -169,21 +177,38 @@ final class AntigravityUsageCollector {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("google-api-nodejs-client/9.15.1", forHTTPHeaderField: "User-Agent")
         request.setValue(
-            "{\"ideType\":\"IDE_UNSPECIFIED\",\"platform\":\"PLATFORM_UNSPECIFIED\",\"pluginType\":\"GEMINI\"}",
+            "{\"ideType\":\"ANTIGRAVITY\",\"platform\":\"DARWIN_ARM64\",\"pluginType\":\"GEMINI\"}",
             forHTTPHeaderField: "Client-Metadata"
         )
     }
 
     private static func clientMetadata(duetProject: String? = nil) -> [String: Any] {
         var metadata: [String: Any] = [
-            "ideType": "IDE_UNSPECIFIED",
-            "platform": "PLATFORM_UNSPECIFIED",
+            "ideType": "ANTIGRAVITY",
+            "platform": "DARWIN_ARM64",
             "pluginType": "GEMINI",
         ]
         if let duetProject {
             metadata["duetProject"] = duetProject
         }
         return metadata
+    }
+
+    private static func antigravityDefaultProject() -> String? {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(antigravityDefaultProjectPath)
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        return trimmedNonEmpty(text)
+    }
+
+    private static func environmentProject() -> String? {
+        let env = ProcessInfo.processInfo.environment
+        return trimmedNonEmpty(env["GOOGLE_CLOUD_PROJECT"]) ?? trimmedNonEmpty(env["GOOGLE_CLOUD_PROJECT_ID"])
+    }
+
+    private static func trimmedNonEmpty(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func tierDescription(_ value: Any?) -> String? {
