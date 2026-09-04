@@ -5,6 +5,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private let store = UsageStore()
+    private let claudeCollector = ClaudeUsageCollector()
+    private var claudeTimer: Timer?
+
+    /// Every provider's own API has its own quota just for us checking usage, so this stays
+    /// well spaced out (default 5 min) rather than syncing on the same cadence as the local
+    /// cache-file poll.
+    private let claudePollInterval: TimeInterval = 300
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -21,6 +28,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentViewController = NSHostingController(rootView: PopoverView(store: store))
 
         store.start()
+        startClaudePolling()
+    }
+
+    private func startClaudePolling() {
+        refreshClaudeUsage()
+        claudeTimer = Timer.scheduledTimer(withTimeInterval: claudePollInterval, repeats: true) { [weak self] _ in
+            self?.refreshClaudeUsage()
+        }
+    }
+
+    private func refreshClaudeUsage() {
+        Task {
+            await claudeCollector.refreshCache()
+            store.reload()
+        }
     }
 
     @objc private func togglePopover() {
