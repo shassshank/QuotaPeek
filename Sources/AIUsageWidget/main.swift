@@ -32,9 +32,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.target = self
         }
 
+        let hostingController = NSHostingController(rootView: PopoverView(store: store))
         popover = NSPopover()
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: PopoverView(store: store))
+        popover.contentViewController = hostingController
+        // NSPopover anchors itself using contentSize at the moment show(...) is called. Without
+        // a concrete size up front, the first show can compute the anchor against a stale/zero
+        // size and visually jut up past the button before correcting itself.
+        popover.contentSize = hostingController.view.fittingSize
 
         store.start()
         startClaudePolling()
@@ -75,6 +80,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.performClose(nil)
         } else {
             store.reload()
+            if let contentView = popover.contentViewController?.view {
+                contentView.layoutSubtreeIfNeeded()
+                popover.contentSize = contentView.fittingSize
+            }
             NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
