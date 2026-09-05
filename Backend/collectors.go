@@ -20,7 +20,9 @@ import (
 const antigravityUserAgent = "antigravity/cli/1.1.26 (aidev_client; os_type=darwin; arch=arm64; cl=976013059; auth_method=consumer)"
 
 type Collector struct {
-	client *http.Client
+	client            *http.Client
+	codexTokens       oauthTokenCache
+	antigravityTokens oauthTokenCache
 
 	mu                    sync.Mutex
 	cachedAntigravityPair *oauthPair
@@ -77,12 +79,16 @@ func (c *Collector) FetchClaude(ctx context.Context) (UsageData, error) {
 	var creds struct {
 		ClaudeAIOAuth struct {
 			AccessToken      string `json:"accessToken"`
+			ExpiresAt        int64  `json:"expiresAt"`
 			SubscriptionType string `json:"subscriptionType"`
 			RateLimitTier    string `json:"rateLimitTier"`
 		} `json:"claudeAiOauth"`
 	}
 	if err := json.Unmarshal(raw, &creds); err != nil || creds.ClaudeAIOAuth.AccessToken == "" {
 		return UsageData{}, errors.New("could not parse Claude Code Keychain credentials")
+	}
+	if creds.ClaudeAIOAuth.ExpiresAt > 0 && time.Now().UnixMilli() >= creds.ClaudeAIOAuth.ExpiresAt {
+		return UsageData{}, errors.New("Claude credentials expired, run claude CLI to refresh")
 	}
 	body := map[string]any{
 		"model":      "claude-haiku-4-5-20251001",
@@ -103,10 +109,6 @@ func (c *Collector) FetchClaude(ctx context.Context) (UsageData, error) {
 		return UsageData{}, errors.New("anthropic request failed: " + err.Error())
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return UsageData{}, errors.New("anthropic API returned status " + resp.Status + ": " + redactMessage(string(preview)))
-	}
 	data := UsageData{}
 	if v, ok := parseHeaderFloat(resp.Header, "anthropic-ratelimit-unified-5h-utilization"); ok {
 		used := round1(v * 100)
@@ -121,6 +123,18 @@ func (c *Collector) FetchClaude(ctx context.Context) (UsageData, error) {
 	}
 	if v, ok := parseHeaderInt(resp.Header, "anthropic-ratelimit-unified-7d-reset"); ok {
 		data.ResetsAtWeekly = &v
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return data, errors.New("Claude credentials expired, run claude CLI to refresh")
+	}
+	// Quota headers remain useful on errors (especially 429). Return the
+	// snapshot as a successful collection so the poller actually stores it.
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		if !data.quotaEmpty() {
+			return data, nil
+		}
+		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return data, errors.New("anthropic API returned status " + resp.Status + ": " + redactMessage(string(preview)))
 	}
 	if data.empty() {
 		return UsageData{}, errors.New("anthropic response had no rate-limit headers")
@@ -157,7 +171,8 @@ func (c *Collector) FetchAntigravity(ctx context.Context) (UsageData, error) {
 		token = creds.AccessToken
 	}
 	if creds.Token.RefreshToken != "" {
-		refreshed, err := c.refreshAntigravityToken(ctx, creds.Token.RefreshToken)
+		expiry, _ := time.Parse(time.RFC3339Nano, creds.Token.Expiry)
+		refreshed, err := c.antigravityTokens.token(ctx, token, creds.Token.RefreshToken, expiry, c.refreshAntigravityToken)
 		if err != nil {
 			return UsageData{}, err
 		}
@@ -227,7 +242,7 @@ var antigravityOAuthPairs = []oauthPair{
 	{"REDACTED-GOOGLE-OAUTH-CLIENT-ID", "REDACTED-GOOGLE-OAUTH-CLIENT-SECRET"},
 }
 
-func (c *Collector) refreshAntigravityToken(ctx context.Context, refreshToken string) (string, error) {
+func (c *Collector) refreshAntigravityToken(ctx context.Context, refreshToken string) (oauthTokenResponse, error) {
 	c.mu.Lock()
 	cached := c.cachedAntigravityPair
 	c.mu.Unlock()
@@ -248,10 +263,10 @@ func (c *Collector) refreshAntigravityToken(ctx context.Context, refreshToken st
 			return token, nil
 		}
 	}
-	return "", errors.New("antigravity token refresh failed")
+	return oauthTokenResponse{}, errors.New("antigravity token refresh failed")
 }
 
-func (c *Collector) tryRefreshPair(ctx context.Context, refreshToken string, pair oauthPair) (string, error) {
+func (c *Collector) tryRefreshPair(ctx context.Context, refreshToken string, pair oauthPair) (oauthTokenResponse, error) {
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
@@ -259,24 +274,22 @@ func (c *Collector) tryRefreshPair(ctx context.Context, refreshToken string, pai
 	form.Set("client_secret", pair.clientSecret)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", err
+		return oauthTokenResponse{}, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return "", err
+		return oauthTokenResponse{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return "", errors.New("token endpoint status " + resp.Status)
+		return oauthTokenResponse{}, errors.New("token endpoint status " + resp.Status)
 	}
-	var out struct {
-		AccessToken string `json:"access_token"`
-	}
+	var out oauthTokenResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil || out.AccessToken == "" {
-		return "", errors.New("token endpoint returned no access token")
+		return oauthTokenResponse{}, errors.New("token endpoint returned no access token")
 	}
-	return out.AccessToken, nil
+	return out, nil
 }
 
 func (c *Collector) antigravityDiscovery(ctx context.Context, token string, fallbackPlan string) (antigravityDiscovery, error) {

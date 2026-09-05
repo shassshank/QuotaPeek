@@ -16,11 +16,11 @@ func parseClaudeIngest(raw []byte) (UsageData, bool, error) {
 	data := UsageData{}
 	if rl, ok := payload["rate_limits"].(map[string]any); ok {
 		if w, ok := rl["five_hour"].(map[string]any); ok {
-			data.UsedPercent5H = floatPtr(numberFromAny(w["used_percentage"]))
+			data.UsedPercent5H = floatPtr(claudeUsedPercentage(w))
 			data.ResetsAt5H = intPtr(int64FromAny(w["resets_at"]))
 		}
 		if w, ok := rl["seven_day"].(map[string]any); ok {
-			data.UsedPercentWeekly = floatPtr(numberFromAny(w["used_percentage"]))
+			data.UsedPercentWeekly = floatPtr(claudeUsedPercentage(w))
 			data.ResetsAtWeekly = intPtr(int64FromAny(w["resets_at"]))
 		}
 	}
@@ -51,6 +51,10 @@ func parseAntigravityIngest(raw []byte) (UsageData, bool, error) {
 			}
 			used := round1((1 - remaining) * 100)
 			reset := parseReset(entry["reset_time"])
+			if seconds, ok := numberFromAny(entry["reset_in_seconds"]); ok {
+				at := time.Now().Unix() + int64(seconds)
+				reset = &at
+			}
 			label := key
 			switch classifyQuotaLabel(label) {
 			case "weekly":
@@ -135,4 +139,11 @@ func intPtr(v int64, ok bool) *int64 {
 
 func round1(v float64) float64 {
 	return math.Round(v*10) / 10
+}
+
+func claudeUsedPercentage(window map[string]any) (float64, bool) {
+	if value, ok := numberFromAny(window["used_percentage"]); ok {
+		return value, true
+	}
+	return numberFromAny(window["used_percent"])
 }

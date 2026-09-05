@@ -36,7 +36,7 @@ func (s *Store) SetConfig(cfg Config) {
 }
 
 func (s *Store) SetSample(provider ProviderID, route Route, data UsageData, asOf int64) {
-	if data.empty() {
+	if data.quotaEmpty() {
 		return
 	}
 	s.mu.Lock()
@@ -100,13 +100,21 @@ func (s *Store) providerStatusLocked(id ProviderID, cfg ProviderConfig, now int6
 	// A one-off error (e.g. a request aborted by an unrelated config save) should
 	// not permanently hide valid data once a later poll has succeeded - only
 	// surface it if it happened after the sample currently being shown.
-	lastErr := s.lastErrorLocked(id)
+	errorRoute := active
+	if errorRoute == RouteNone {
+		if hasRoute(cfg.RoutesEnabled, RouteInjection) {
+			errorRoute = RouteInjection
+		} else if hasRoute(cfg.RoutesEnabled, RouteKeychain) {
+			errorRoute = RouteKeychain
+		}
+	}
+	lastErr := s.lastErrorLocked(id, errorRoute)
 	if lastErr != nil && active != RouteNone && lastErr.At <= sample.asOf {
 		lastErr = nil
 	}
 	return ProviderStatus{
 		ID:            id,
-		RoutesEnabled: append([]Route(nil), cfg.RoutesEnabled...),
+		RoutesEnabled: append([]Route{}, cfg.RoutesEnabled...),
 		ActiveRoute:   active,
 		Data:          data,
 		AsOf:          asOf,
@@ -137,10 +145,10 @@ func chooseSample(cfg ProviderConfig, samples map[Route]routeSample, now int64) 
 
 	for _, route := range orderedRoutes {
 		sample, ok := samples[route]
-		if !ok || sample.data.empty() {
+		if !ok || sample.data.quotaEmpty() {
 			continue
 		}
-		if route == RouteInjection && now-sample.asOf > maxAge {
+		if now-sample.asOf > maxAge {
 			continue
 		}
 		return sample, route
@@ -154,7 +162,7 @@ func chooseSample(cfg ProviderConfig, samples map[Route]routeSample, now int64) 
 	bestRoute := RouteNone
 	for _, route := range orderedRoutes {
 		sample, ok := samples[route]
-		if !ok || sample.data.empty() {
+		if !ok || sample.data.quotaEmpty() {
 			continue
 		}
 		if bestRoute == RouteNone || sample.asOf > best.asOf {
@@ -165,9 +173,9 @@ func chooseSample(cfg ProviderConfig, samples map[Route]routeSample, now int64) 
 	return best, bestRoute
 }
 
-func (s *Store) lastErrorLocked(provider ProviderID) *ErrorEntry {
+func (s *Store) lastErrorLocked(provider ProviderID, route Route) *ErrorEntry {
 	for i := len(s.errors) - 1; i >= 0; i-- {
-		if s.errors[i].Provider == provider {
+		if s.errors[i].Provider == provider && s.errors[i].Route == route && route != RouteNone {
 			entry := s.errors[i]
 			return &entry
 		}

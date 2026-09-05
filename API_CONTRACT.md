@@ -17,7 +17,7 @@ Plain HTTP is fine; nothing here ever leaves localhost. All bodies are JSON.
 // One provider's current usage snapshot.
 Provider {
   "id": "claude" | "codex" | "antigravity",
-  "routes_enabled": ["keychain", "injection"],   // subset, in user-selected order of preference
+  "routes_enabled": ["keychain", "injection"],   // enabled subset; [] (never null) when disabled
   "active_route": "keychain" | "injection" | "none", // which one supplied `data` right now
   "data": {
     "used_percent_5h": 42.1,        // 0-100, null if this provider has no 5h window
@@ -39,10 +39,11 @@ Config {
   "codex":       { "routes_enabled": ["injection"],              "keychain_poll_interval_sec": 120 },
   "antigravity": { "routes_enabled": ["keychain"],               "keychain_poll_interval_sec": 60 }
 }
-// routes_enabled order expresses preference when both are present and both are fresh;
-// "injection" data is preferred over "keychain" data only while it is fresher than
-// max(2x its own natural update cadence, 10 minutes) old — otherwise treat it as stale
-// and fall back to keychain, per provider, independently.
+// Fresh injection quota data is preferred, independent of routes_enabled order.
+// Both routes are stale after max(2 * keychain_poll_interval_sec, 600) seconds.
+// If neither is fresh, show the newest enabled quota sample. Context-only
+// payloads never replace quota samples. Headline errors belong only to the
+// active route (or preferred enabled route when there is no sample).
 // Codex has no keychain route today (no confirmed OAuth quota API) — its "injection"
 // route is the free `codex app-server` JSON-RPC poll (no hook involved, just named the
 // same for UI/config consistency). routes_enabled for codex should only ever contain
@@ -102,6 +103,7 @@ Raw payload schemas (for the daemon's parser, not re-exposed to Swift):
 // Claude Code statusLine payload (subset actually used)
 {
   "rate_limits": {
+    // Both windows accept used_percent as an alias for used_percentage.
     "five_hour": { "used_percentage": 42.1, "resets_at": 1767561600 },
     "seven_day": { "used_percentage": 18.0, "resets_at": 1768080000 }
   },
@@ -116,7 +118,9 @@ Raw payload schemas (for the daemon's parser, not re-exposed to Swift):
   "quota": {
     "<arbitrary-window-key>": {
       "remaining_fraction": 0.9378,      // usage = (1 - remaining_fraction) * 100
-      "reset_time": "2026-07-06T07:50:32Z"
+      "reset_in_seconds": 3600          // seconds from daemon receipt; converted to unix seconds
+      // Legacy reset_time (RFC3339 or unix seconds) is also accepted.
+      // reset_in_seconds takes precedence when both fields are present.
     }
     // only one window ("gemini-weekly") is confirmed to exist; map it to
     // used_percent_weekly. If a key containing "hour" ever appears, map it

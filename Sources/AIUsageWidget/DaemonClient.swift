@@ -16,8 +16,8 @@ final class DaemonClient {
 
     init() {
         let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 8
-        config.timeoutIntervalForResource = 12
+        config.timeoutIntervalForRequest = 20
+        config.timeoutIntervalForResource = 20
         self.session = URLSession(configuration: config)
     }
 

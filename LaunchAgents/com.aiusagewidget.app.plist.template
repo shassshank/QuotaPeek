@@ -10,8 +10,6 @@
     </array>
     <key>RunAtLoad</key>
     <true/>
-    <key>KeepAlive</key>
-    <true/>
     <key>StandardOutPath</key>
     <string>__APP_SUPPORT__/app.log</string>
     <key>StandardErrorPath</key>

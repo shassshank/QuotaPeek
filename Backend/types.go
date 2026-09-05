@@ -67,3 +67,9 @@ type routeSample struct {
 	data UsageData
 	asOf int64
 }
+
+// Context usage alone cannot replace a provider's quota snapshot.
+func (u UsageData) quotaEmpty() bool {
+	return u.UsedPercent5H == nil && u.ResetsAt5H == nil &&
+		u.UsedPercentWeekly == nil && u.ResetsAtWeekly == nil
+}

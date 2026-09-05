@@ -90,7 +90,7 @@ func (c *Collector) fetchCodexUsage(ctx context.Context, rawAuthJSON []byte) (Us
 		return UsageData{}, errors.New("could not parse Codex auth credential")
 	}
 
-	accessToken, err := c.refreshCodexToken(ctx, auth.Tokens.RefreshToken)
+	accessToken, err := c.codexTokens.token(ctx, auth.Tokens.AccessToken, auth.Tokens.RefreshToken, tokenExpiry(auth.Tokens.AccessToken), c.refreshCodexToken)
 	if err != nil {
 		return UsageData{}, err
 	}
@@ -106,7 +106,7 @@ func (c *Collector) fetchCodexUsage(ctx context.Context, rawAuthJSON []byte) (Us
 	return fetchCodexUsageWithToken(ctx, c.client, accessToken, accountID)
 }
 
-func (c *Collector) refreshCodexToken(ctx context.Context, refreshToken string) (string, error) {
+func (c *Collector) refreshCodexToken(ctx context.Context, refreshToken string) (oauthTokenResponse, error) {
 	body := map[string]string{
 		"client_id":     codexOAuthClientID,
 		"grant_type":    "refresh_token",
@@ -115,25 +115,23 @@ func (c *Collector) refreshCodexToken(ctx context.Context, refreshToken string) 
 	b, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, codexOAuthRefreshURL, bytes.NewReader(b))
 	if err != nil {
-		return "", err
+		return oauthTokenResponse{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return "", errors.New("codex token refresh failed: " + err.Error())
+		return oauthTokenResponse{}, errors.New("codex token refresh failed: " + err.Error())
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return "", errors.New("codex token refresh returned status " + resp.Status + ": " + redactMessage(string(preview)))
+		return oauthTokenResponse{}, errors.New("codex token refresh returned status " + resp.Status + ": " + redactMessage(string(preview)))
 	}
-	var out struct {
-		AccessToken string `json:"access_token"`
-	}
+	var out oauthTokenResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil || out.AccessToken == "" {
-		return "", errors.New("codex token refresh returned no access token")
+		return oauthTokenResponse{}, errors.New("codex token refresh returned no access token")
 	}
-	return out.AccessToken, nil
+	return out, nil
 }
 
 func fetchCodexUsageWithToken(ctx context.Context, client *http.Client, accessToken, accountID string) (UsageData, error) {
