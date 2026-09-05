@@ -72,8 +72,11 @@ PY
 }
 
 echo "==> Registering statusLine hooks (Injection route)"
-merge_statusline "$HOME/.claude/settings.json" "$PYTHON3 $BIN_DIR/claude-statusline-hook.py"
-merge_statusline "$HOME/.gemini/antigravity-cli/settings.json" "$PYTHON3 $BIN_DIR/antigravity-statusline-hook.py"
+# BIN_DIR lives under ~/Library/Application Support, which has a space in it -
+# the command string must quote each path so a naive whitespace-splitting
+# executor (not just a real shell) doesn't tear "Application Support" in two.
+merge_statusline "$HOME/.claude/settings.json" "\"$PYTHON3\" \"$BIN_DIR/claude-statusline-hook.py\""
+merge_statusline "$HOME/.gemini/antigravity-cli/settings.json" "\"$PYTHON3\" \"$BIN_DIR/antigravity-statusline-hook.py\""
 
 echo ""
 echo "Installed. The menu bar icon should appear now (a gauge icon in the top menu bar)."
