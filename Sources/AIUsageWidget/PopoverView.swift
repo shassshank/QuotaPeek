@@ -96,6 +96,11 @@ private struct ProviderCard: View {
                 Label(provider.displayName, systemImage: provider.symbolName)
                     .font(.subheadline).bold()
                 Spacer()
+                if let asOf = status?.asOf {
+                    Text(syncAge(asOf))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
                 routeBadge
             }
 
@@ -104,11 +109,6 @@ private struct ProviderCard: View {
             } else if let data = status?.data {
                 windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
                 windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
-                if let asOf = status?.asOf {
-                    Text("Updated \(relativeAge(asOf))")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
             } else {
                 Text("No data yet")
                     .font(.caption)
@@ -124,7 +124,16 @@ private struct ProviderCard: View {
     private var routeBadge: some View {
         switch status?.activeRoute {
         case .injection:
-            badge(text: "Live", color: .green)
+            // Claude and Antigravity's "injection" route is a genuine push: their CLI
+            // invokes our statusLine hook on every render. Codex has no such hook -
+            // its "injection" route is actually us spawning `codex app-server` and
+            // polling its RPC on our own schedule, so labeling it "Live" would be a
+            // lie. Label it for what it really is.
+            if provider == .codex {
+                badge(text: "Polled (RPC)", color: .blue)
+            } else {
+                badge(text: "Live", color: .green)
+            }
         case .keychain:
             badge(text: "Polled", color: .blue)
         default:
@@ -183,11 +192,17 @@ private struct ProviderCard: View {
         }
     }
 
-    private func relativeAge(_ unixSeconds: Int) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(unixSeconds))
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+    private func syncAge(_ unixSeconds: Int) -> String {
+        let seconds = max(0, Int(Date().timeIntervalSince1970) - unixSeconds)
+        if seconds < 60 {
+            return "\(seconds)s ago"
+        }
+        let minutes = seconds / 60
+        if minutes < 60 {
+            return "\(minutes)m\(seconds % 60)s ago"
+        }
+        let hours = minutes / 60
+        return "\(hours)h\(minutes % 60)m ago"
     }
 
     private func resetCountdown(_ unixSeconds: Int) -> String {

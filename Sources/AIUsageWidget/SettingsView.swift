@@ -31,7 +31,7 @@ private struct GeneralSettingsTab: View {
                 routeToggles(for: .claude)
             }
             Section("Codex") {
-                Text("Keychain reads Codex's own OAuth token (from macOS Keychain if `codex login` uses keyring storage, otherwise from ~/.codex/auth.json) and polls OpenAI directly. Injection spawns a free local `codex app-server` RPC call instead.")
+                Text("Keychain reads Codex's own OAuth token (from macOS Keychain if `codex login` uses keyring storage, otherwise from ~/.codex/auth.json) and polls OpenAI directly. Local RPC instead polls a spawned `codex app-server` process - Codex has no push-based hook, so unlike Claude/Antigravity this is not real-time injection.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 routeToggles(for: .codex)
@@ -64,7 +64,11 @@ private struct GeneralSettingsTab: View {
         if allowKeychain {
             Toggle("Keychain (poll the provider's API directly)", isOn: routeBinding(binding, .keychain))
         }
-        Toggle("Injection (real-time push from the provider's own CLI)", isOn: routeBinding(binding, .injection))
+        if provider == .codex {
+            Toggle("Local RPC (poll `codex app-server` directly, no network call)", isOn: routeBinding(binding, .injection))
+        } else {
+            Toggle("Injection (real-time push from the provider's own CLI)", isOn: routeBinding(binding, .injection))
+        }
         Stepper(
             "Poll interval: \(binding.wrappedValue.keychainPollIntervalSec)s",
             value: Binding(
@@ -177,9 +181,11 @@ private struct AdvancedSettingsTab: View {
                 Text("Routes explained").font(.headline)
                 Text("**Keychain** - the app polls the provider's API directly, using credentials already stored by that CLI on this Mac.")
                     .font(.caption)
-                Text("**Injection** - the provider's own CLI pushes live usage data to this app in real time via a small hook, when that provider supports it.")
+                Text("**Injection** - the provider's own CLI pushes live usage data to this app in real time via a small hook, when that provider supports it (Claude, Antigravity).")
                     .font(.caption)
-                Text("If both are enabled for a provider, the freshest data wins; a stale Injection sample falls back to the last Keychain poll automatically.")
+                Text("**Local RPC** (Codex only) - Codex has no push hook, so this app instead spawns `codex app-server` and polls its RPC directly; it's labeled \"Polled\" rather than \"Live\" for that reason.")
+                    .font(.caption)
+                Text("If both routes are enabled for a provider, the freshest data wins; a stale sample falls back to the other route automatically.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
