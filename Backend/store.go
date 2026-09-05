@@ -145,7 +145,24 @@ func chooseSample(cfg ProviderConfig, samples map[Route]routeSample, now int64) 
 		}
 		return sample, route
 	}
-	return routeSample{}, RouteNone
+
+	// Nothing passed the freshness bar (e.g. Injection is the only route enabled
+	// and its last push is older than maxAge, with no Keychain fallback to try
+	// instead) - showing the most recent real sample we have beats showing
+	// nothing; the UI already surfaces its age via "Updated X ago".
+	var best routeSample
+	bestRoute := RouteNone
+	for _, route := range orderedRoutes {
+		sample, ok := samples[route]
+		if !ok || sample.data.empty() {
+			continue
+		}
+		if bestRoute == RouteNone || sample.asOf > best.asOf {
+			best = sample
+			bestRoute = route
+		}
+	}
+	return best, bestRoute
 }
 
 func (s *Store) lastErrorLocked(provider ProviderID) *ErrorEntry {

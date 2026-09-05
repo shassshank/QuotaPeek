@@ -49,3 +49,17 @@ func TestChooseSampleOrderIndependent(t *testing.T) {
 		t.Fatalf("keychain-listed-first with stale injection = %s, want keychain fallback", route)
 	}
 }
+
+// With only Injection enabled (no Keychain to fall back to), a stale-but-real
+// push should still be shown - the UI already renders "Updated X ago", so a
+// stale sample is strictly more useful than blanking to "no data".
+func TestChooseSampleStaleInjectionNoFallback(t *testing.T) {
+	cfg := ProviderConfig{RoutesEnabled: []Route{RouteInjection}, KeychainPollIntervalSec: 60}
+	now := int64(1_000)
+	stale := routeSample{data: UsageData{UsedPercent5H: f(40)}, asOf: now - 601}
+
+	got, route := chooseSample(cfg, map[Route]routeSample{RouteInjection: stale}, now)
+	if route != RouteInjection || *got.data.UsedPercent5H != 40 {
+		t.Fatalf("stale injection-only = (%v, %s), want stale injection data instead of none", got, route)
+	}
+}
