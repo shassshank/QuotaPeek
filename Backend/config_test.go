@@ -25,10 +25,10 @@ func TestConfigLoadSaveRoundTrip(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsCodexKeychain(t *testing.T) {
+func TestValidateAcceptsCodexKeychain(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Codex.RoutesEnabled = []Route{RouteKeychain}
-	if err := validateConfig(cfg); err == nil {
-		t.Fatal("validateConfig accepted codex keychain route")
+	if err := validateConfig(cfg); err != nil {
+		t.Fatalf("validateConfig rejected codex keychain route: %v", err)
 	}
 }

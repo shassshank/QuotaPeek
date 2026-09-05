@@ -31,10 +31,10 @@ private struct GeneralSettingsTab: View {
                 routeToggles(for: .claude)
             }
             Section("Codex") {
-                Text("Codex has no live Keychain quota API today - it only supports the Injection route (a free local RPC call).")
+                Text("Keychain reads Codex's own OAuth token (from macOS Keychain if `codex login` uses keyring storage, otherwise from ~/.codex/auth.json) and polls OpenAI directly. Injection spawns a free local `codex app-server` RPC call instead.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                routeToggles(for: .codex, allowKeychain: false)
+                routeToggles(for: .codex)
             }
             Section("Antigravity") {
                 routeToggles(for: .antigravity)

@@ -51,6 +51,10 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func() { defer wg.Done(); s.pollProvider(r.Context(), ProviderAntigravity) }()
 	}
+	if hasRoute(cfg.Codex.RoutesEnabled, RouteInjection) || hasRoute(cfg.Codex.RoutesEnabled, RouteKeychain) {
+		wg.Add(1)
+		go func() { defer wg.Done(); s.pollProvider(r.Context(), ProviderCodex) }()
+	}
 	wg.Wait()
 	writeJSON(w, s.store.Status(time.Now().Unix()))
 }
@@ -114,6 +118,18 @@ func (s *Server) handleIngestAntigravity(w http.ResponseWriter, r *http.Request)
 func (s *Server) pollProvider(ctx context.Context, provider ProviderID) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+
+	if provider == ProviderCodex {
+		cfg := s.store.Config().Codex
+		if hasRoute(cfg.RoutesEnabled, RouteInjection) {
+			s.pollCodexRoute(ctx, RouteInjection, FetchCodex)
+		}
+		if hasRoute(cfg.RoutesEnabled, RouteKeychain) {
+			s.pollCodexRoute(ctx, RouteKeychain, s.collector.FetchCodexKeychain)
+		}
+		return
+	}
+
 	var data UsageData
 	var err error
 	switch provider {
@@ -121,24 +137,23 @@ func (s *Server) pollProvider(ctx context.Context, provider ProviderID) {
 		data, err = s.collector.FetchClaude(ctx)
 	case ProviderAntigravity:
 		data, err = s.collector.FetchAntigravity(ctx)
-	case ProviderCodex:
-		data, err = FetchCodex(ctx)
 	default:
 		err = errUnknownProvider
 	}
 	if err != nil {
-		route := RouteKeychain
-		if provider == ProviderCodex {
-			route = RouteInjection
-		}
-		s.store.AddError(provider, route, err.Error())
+		s.store.AddError(provider, RouteKeychain, err.Error())
 		return
 	}
-	route := RouteKeychain
-	if provider == ProviderCodex {
-		route = RouteInjection
+	s.store.SetSample(provider, RouteKeychain, data, time.Now().Unix())
+}
+
+func (s *Server) pollCodexRoute(ctx context.Context, route Route, fetch func(context.Context) (UsageData, error)) {
+	data, err := fetch(ctx)
+	if err != nil {
+		s.store.AddError(ProviderCodex, route, err.Error())
+		return
 	}
-	s.store.SetSample(provider, route, data, time.Now().Unix())
+	s.store.SetSample(ProviderCodex, route, data, time.Now().Unix())
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

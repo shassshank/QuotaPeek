@@ -98,9 +98,6 @@ func validateProviderConfig(id ProviderID, pc ProviderConfig) error {
 			return errors.New(string(id) + ": duplicate route " + string(r))
 		}
 		seen[r] = true
-		if id == ProviderCodex && r == RouteKeychain {
-			return errors.New("codex: keychain route is not implemented")
-		}
 	}
 	return nil
 }
