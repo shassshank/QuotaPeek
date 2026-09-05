@@ -215,9 +215,14 @@ func (p *Poller) startProvider(ctx context.Context, provider ProviderID, cfg Pro
 	}()
 }
 
-func (p *Poller) pollOnce(ctx context.Context, provider ProviderID) {
+func (p *Poller) pollOnce(_ context.Context, provider ProviderID) {
+	// Deliberately not derived from the scheduling ctx: Reschedule() cancels
+	// that ctx on every config save (even one touching a different provider),
+	// which would otherwise abort an in-flight fetch mid-request. The
+	// scheduling ctx should only stop future ticks, never abort a fetch
+	// that's already running.
 	s := Server{store: p.store, collector: p.collector}
-	s.pollProvider(ctx, provider)
+	s.pollProvider(context.Background(), provider)
 }
 
 func (p *Poller) Stop() {

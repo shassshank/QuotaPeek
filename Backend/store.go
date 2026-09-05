@@ -97,13 +97,20 @@ func (s *Store) providerStatusLocked(id ProviderID, cfg ProviderConfig, now int6
 		data = &copyData
 		asOf = &copyAsOf
 	}
+	// A one-off error (e.g. a request aborted by an unrelated config save) should
+	// not permanently hide valid data once a later poll has succeeded - only
+	// surface it if it happened after the sample currently being shown.
+	lastErr := s.lastErrorLocked(id)
+	if lastErr != nil && active != RouteNone && lastErr.At <= sample.asOf {
+		lastErr = nil
+	}
 	return ProviderStatus{
 		ID:            id,
 		RoutesEnabled: append([]Route(nil), cfg.RoutesEnabled...),
 		ActiveRoute:   active,
 		Data:          data,
 		AsOf:          asOf,
-		LastError:     s.lastErrorLocked(id),
+		LastError:     lastErr,
 	}
 }
 
