@@ -20,6 +20,7 @@ import (
 const antigravityUserAgent = "antigravity/cli/1.1.26 (aidev_client; os_type=darwin; arch=arm64; cl=976013059; auth_method=consumer)"
 
 type Collector struct {
+	readKeychain      func(context.Context, string, string) ([]byte, error)
 	client            *http.Client
 	codexTokens       oauthTokenCache
 	antigravityTokens oauthTokenCache
@@ -46,6 +47,7 @@ type antigravityDiscovery struct {
 
 func NewCollector() *Collector {
 	return &Collector{
+		readKeychain: readKeychain,
 		client:       &http.Client{Timeout: 10 * time.Second},
 		anthropicURL: "https://api.anthropic.com/v1/messages",
 		tokenURL:     "https://oauth2.googleapis.com/token",
@@ -72,7 +74,7 @@ func readKeychain(ctx context.Context, service string, account string) ([]byte, 
 }
 
 func (c *Collector) FetchClaude(ctx context.Context) (UsageData, error) {
-	raw, err := readKeychain(ctx, "Claude Code-credentials", "")
+	raw, err := c.readKeychain(ctx, "Claude Code-credentials", "")
 	if err != nil {
 		return UsageData{}, err
 	}

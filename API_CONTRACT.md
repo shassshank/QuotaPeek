@@ -44,10 +44,12 @@ Config {
 // If neither is fresh, show the newest enabled quota sample. Context-only
 // payloads never replace quota samples. Headline errors belong only to the
 // active route (or preferred enabled route when there is no sample).
-// Codex has no keychain route today (no confirmed OAuth quota API) — its "injection"
-// route is the free `codex app-server` JSON-RPC poll (no hook involved, just named the
-// same for UI/config consistency). routes_enabled for codex should only ever contain
-// "injection" until/unless a keychain-based Codex collector is added later.
+// Codex injection uses the free `codex app-server` JSON-RPC poll.
+// Codex keychain uses stored OAuth credentials to fetch ChatGPT quota.
+// Each provider config also accepts optional notify_threshold_percent: integer
+// 1-100. Absent/null disables notifications; disabled values are omitted in output.
+// The Swift app sends a local notification when either 5h or weekly used percent
+// crosses the threshold. The daemon only persists and returns this setting.
 
 ErrorEntry {
   "provider": "claude" | "codex" | "antigravity",
@@ -64,12 +66,33 @@ Returns `{ "providers": [Provider, Provider, Provider] }`, always all three,
 always in the order claude, codex, antigravity.
 
 ### `POST /refresh`
-Triggers an immediate live re-fetch for every provider whose `routes_enabled`
-includes `keychain` (injection-route providers can't be force-refreshed —
-they only update when the hook fires). Blocks until those fetches finish
-(bounded by a ~10s internal timeout per provider) and returns the same shape
-as `GET /status`. A provider whose only route is injection is returned
-unchanged.
+Triggers an immediate live re-fetch for every enabled synchronous route, including
+both Codex routes. Claude/Antigravity injection routes only update on pushes.
+Blocks until fetches finish (bounded by a ~10s internal timeout per provider)
+and returns the same shape as `GET /status`.
+
+### `POST /test-route`
+Body: `{"provider":"claude"|"codex"|"antigravity","route":"keychain"|"injection"}`.
+Tests exactly the requested route, even if disabled, with an 8-second timeout.
+Keychain routes use the corresponding collector; Codex injection uses app-server
+RPC. Successful fetches save fresh quota via the normal sample store. Failed
+probes do not modify samples or stored errors and cannot clobber displayed data.
+
+Claude/Antigravity injection is push-only: no fetch is attempted. `ok` reports
+whether that provider's injection quota sample is at most
+`max(2 * keychain_poll_interval_sec, 600)` seconds old, independently of enabled
+or displayed routes. The message explains that the daemon cannot trigger a push
+and whether a recent quota push was received.
+
+Diagnostic success and failure both return HTTP 200:
+```json
+{"ok":true,"provider":"claude","route":"keychain"}
+```
+```json
+{"ok":false,"provider":"claude","route":"keychain","message":"Claude credentials expired, run claude CLI to refresh"}
+```
+`message` is optional human-readable detail, with secrets redacted. Malformed
+JSON, missing fields, or unknown provider/route values return HTTP 400.
 
 ### `GET /config`
 Returns the current `Config`.
@@ -78,7 +101,11 @@ Returns the current `Config`.
 Body: full or partial `Config` (only include the providers you're changing).
 Persists to `~/Library/Application Support/AIUsageWidget/config.json` and
 takes effect immediately (reschedules keychain poll timers). Returns the
-resulting full `Config`.
+resulting full `Config`. Each included provider replaces its full config, so include
+`routes_enabled` and `keychain_poll_interval_sec` along with
+`notify_threshold_percent` (for example, 80). Omit the threshold or send null to
+disable notifications for that provider. Omitted providers remain unchanged.
+Thresholds outside 1-100, or non-integer values, return HTTP 400.
 
 ### `GET /errors?limit=50`
 Returns `{ "errors": [ErrorEntry, ...] }`, most recent first, capped at

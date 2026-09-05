@@ -58,6 +58,7 @@ final class UsageStore: ObservableObject {
         switch await client.updateConfig(newConfig) {
         case .success(let cfg):
             config = cfg
+            await reload()
             return true
         case .failure:
             return false
@@ -68,5 +69,9 @@ final class UsageStore: ObservableObject {
         if case .success(let response) = await client.errors() {
             errors = response.errors
         }
+    }
+
+    func testRoute(provider: Provider, route: Route) async -> Result<TestRouteResponse, DaemonError> {
+        await client.testRoute(provider: provider, route: route)
     }
 }

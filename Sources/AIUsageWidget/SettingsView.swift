@@ -12,10 +12,71 @@ struct SettingsView: View {
             AdvancedSettingsTab()
                 .tabItem { Label("Advanced", systemImage: "gearshape.2") }
         }
-        .frame(width: 460, height: 360)
+        .frame(width: 480, height: 480)
         .task {
             await store.loadConfig()
             await store.loadErrors()
+        }
+    }
+}
+
+private struct RouteKey: Hashable {
+    let provider: Provider
+    let route: Route
+}
+
+private struct RouteTestState {
+    var isLoading: Bool
+    var result: TestRouteResponse?
+}
+
+private enum LaunchAgentManager {
+    static let serviceName = "com.aiusagewidget.app"
+
+    static var plistPath: String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
+            .appendingPathComponent("\(serviceName).plist")
+            .path
+    }
+
+    static var isPlistInstalled: Bool {
+        FileManager.default.fileExists(atPath: plistPath)
+    }
+
+    static func isLoaded() -> Bool {
+        guard isPlistInstalled else { return false }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["list", serviceName]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    static func setEnabled(_ enable: Bool) -> Bool {
+        guard isPlistInstalled else { return false }
+        let path = plistPath
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = enable ? ["load", path] : ["unload", path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
         }
     }
 }
@@ -24,9 +85,24 @@ private struct GeneralSettingsTab: View {
     @ObservedObject var store: UsageStore
     @State private var draft: DaemonConfig = DaemonConfig()
     @State private var saveStatus: String?
+    @State private var testStatuses: [RouteKey: RouteTestState] = [:]
+    @State private var isLaunchAgentInstalled: Bool = false
+    @State private var isLaunchAtLoginEnabled: Bool = false
 
     var body: some View {
         Form {
+            Section {
+                Toggle("Launch at login", isOn: Binding(
+                    get: { isLaunchAtLoginEnabled },
+                    set: { enable in
+                        isLaunchAtLoginEnabled = enable
+                        LaunchAgentManager.setEnabled(enable)
+                    }
+                ))
+                .disabled(!isLaunchAgentInstalled)
+                .help(isLaunchAgentInstalled ? "Start AI Usage Widget automatically when logging in" : "App was not installed via install.sh")
+            }
+
             Section("Claude") {
                 routeToggles(for: .claude)
             }
@@ -54,20 +130,30 @@ private struct GeneralSettingsTab: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { draft = store.config ?? DaemonConfig() }
-        .onChange(of: store.config?.claude?.routesEnabled) { _ in draft = store.config ?? draft }
+        .onAppear {
+            if let config = store.config {
+                draft = config
+            }
+            isLaunchAgentInstalled = LaunchAgentManager.isPlistInstalled
+            isLaunchAtLoginEnabled = LaunchAgentManager.isLoaded()
+        }
+        .onChange(of: store.config) { newConfig in
+            if let newConfig {
+                draft = newConfig
+            }
+        }
     }
 
     @ViewBuilder
     private func routeToggles(for provider: Provider, allowKeychain: Bool = true) -> some View {
         let binding = configBinding(for: provider)
         if allowKeychain {
-            Toggle("Keychain (poll the provider's API directly)", isOn: routeBinding(binding, .keychain))
+            routeToggleRow(for: provider, route: .keychain, label: "Keychain (poll the provider's API directly)", binding: binding)
         }
         if provider == .codex {
-            Toggle("Local RPC (poll `codex app-server` directly, no network call)", isOn: routeBinding(binding, .injection))
+            routeToggleRow(for: provider, route: .injection, label: "Local RPC (poll `codex app-server` directly, no network call)", binding: binding)
         } else {
-            Toggle("Injection (real-time push from the provider's own CLI)", isOn: routeBinding(binding, .injection))
+            routeToggleRow(for: provider, route: .injection, label: "Injection (real-time push from the provider's own CLI)", binding: binding)
         }
         Stepper(
             "Poll interval: \(binding.wrappedValue.keychainPollIntervalSec)s",
@@ -78,6 +164,99 @@ private struct GeneralSettingsTab: View {
             in: 30...600,
             step: 30
         )
+        Toggle("Notify near limit", isOn: Binding(
+            get: { binding.wrappedValue.notifyThresholdPercent != nil },
+            set: { isOn in
+                if isOn {
+                    binding.wrappedValue.notifyThresholdPercent = binding.wrappedValue.notifyThresholdPercent ?? 90
+                } else {
+                    binding.wrappedValue.notifyThresholdPercent = nil
+                }
+            }
+        ))
+        if let threshold = binding.wrappedValue.notifyThresholdPercent {
+            Stepper(
+                "Threshold: \(threshold)%",
+                value: Binding(
+                    get: { binding.wrappedValue.notifyThresholdPercent ?? 90 },
+                    set: { binding.wrappedValue.notifyThresholdPercent = $0 }
+                ),
+                in: 1...100,
+                step: 5
+            )
+            .padding(.leading, 18)
+        }
+    }
+
+    @ViewBuilder
+    private func routeToggleRow(
+        for provider: Provider,
+        route: Route,
+        label: String,
+        binding: Binding<ProviderConfig>
+    ) -> some View {
+        let key = RouteKey(provider: provider, route: route)
+        let testState = testStatuses[key]
+
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Toggle(label, isOn: routeBinding(binding, route))
+                Spacer()
+                if testState?.isLoading == true {
+                    ProgressView()
+                        .controlSize(.small)
+                } else if let result = testState?.result {
+                    Image(systemName: result.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundStyle(result.ok ? .green : .red)
+                }
+                Button("Test") {
+                    testRoute(provider: provider, route: route)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(testState?.isLoading == true)
+            }
+
+            if let result = testState?.result, let message = result.message, !message.isEmpty {
+                HStack(alignment: .top, spacing: 4) {
+                    Image(systemName: result.ok ? "checkmark" : "xmark")
+                        .font(.caption2)
+                        .foregroundStyle(result.ok ? .green : .red)
+                        .padding(.top, 1)
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundStyle(result.ok ? Color.secondary : Color.red)
+                }
+                .padding(.leading, 18)
+            }
+        }
+    }
+
+    private func testRoute(provider: Provider, route: Route) {
+        let key = RouteKey(provider: provider, route: route)
+        testStatuses[key] = RouteTestState(isLoading: true, result: nil)
+        Task {
+            let res = await store.testRoute(provider: provider, route: route)
+            let result: TestRouteResponse
+            switch res {
+            case .success(let response):
+                result = response
+            case .failure(let error):
+                let message: String
+                switch error {
+                case .unreachable: message = "Daemon unreachable"
+                case .badResponse(let code): message = "Daemon returned error (\(code))"
+                case .decodeFailed: message = "Failed to parse response"
+                }
+                result = TestRouteResponse(ok: false, provider: provider, route: route, message: message)
+            }
+            testStatuses[key] = RouteTestState(isLoading: false, result: result)
+
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            if testStatuses[key]?.isLoading == false {
+                testStatuses[key] = nil
+            }
+        }
     }
 
     private func configBinding(for provider: Provider) -> Binding<ProviderConfig> {

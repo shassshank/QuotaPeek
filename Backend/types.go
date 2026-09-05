@@ -53,6 +53,7 @@ type StatusResponse struct {
 }
 
 type ProviderConfig struct {
+	NotifyThresholdPercent  *int    `json:"notify_threshold_percent,omitempty"`
 	RoutesEnabled           []Route `json:"routes_enabled"`
 	KeychainPollIntervalSec int     `json:"keychain_poll_interval_sec"`
 }

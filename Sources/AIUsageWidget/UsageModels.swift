@@ -2,7 +2,7 @@ import Foundation
 
 /// Types mirror API_CONTRACT.md exactly - the Go daemon is the source of truth for these shapes.
 
-enum Provider: String, CaseIterable, Identifiable, Codable {
+enum Provider: String, CaseIterable, Identifiable, Codable, Equatable {
     case claude, codex, antigravity
     var id: String { rawValue }
 
@@ -23,7 +23,7 @@ enum Provider: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-enum Route: String, Codable {
+enum Route: String, Codable, Equatable {
     case keychain
     case injection
     case none
@@ -74,20 +74,48 @@ struct StatusResponse: Codable {
     var providers: [ProviderStatus]
 }
 
-struct ProviderConfig: Codable {
+struct ProviderConfig: Codable, Equatable {
     var routesEnabled: [Route]
     var keychainPollIntervalSec: Int
+    var notifyThresholdPercent: Int?
 
     enum CodingKeys: String, CodingKey {
         case routesEnabled = "routes_enabled"
         case keychainPollIntervalSec = "keychain_poll_interval_sec"
+        case notifyThresholdPercent = "notify_threshold_percent"
+    }
+
+    init(routesEnabled: [Route], keychainPollIntervalSec: Int, notifyThresholdPercent: Int? = nil) {
+        self.routesEnabled = routesEnabled
+        self.keychainPollIntervalSec = keychainPollIntervalSec
+        self.notifyThresholdPercent = notifyThresholdPercent
     }
 }
 
-struct DaemonConfig: Codable {
+struct DaemonConfig: Codable, Equatable {
     var claude: ProviderConfig?
     var codex: ProviderConfig?
     var antigravity: ProviderConfig?
+
+    func config(for provider: Provider) -> ProviderConfig? {
+        switch provider {
+        case .claude: return claude
+        case .codex: return codex
+        case .antigravity: return antigravity
+        }
+    }
+}
+
+struct TestRouteRequest: Codable {
+    var provider: Provider
+    var route: Route
+}
+
+struct TestRouteResponse: Codable {
+    var ok: Bool
+    var provider: Provider
+    var route: Route
+    var message: String?
 }
 
 struct ErrorLogEntry: Codable, Identifiable {

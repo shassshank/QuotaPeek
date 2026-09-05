@@ -19,7 +19,9 @@ struct PopoverView: View {
 
             VStack(spacing: 10) {
                 ForEach(Provider.allCases) { provider in
-                    ProviderCard(status: store.providers[provider])
+                    if isProviderEnabled(provider) {
+                        ProviderCard(status: store.providers[provider])
+                    }
                 }
             }
 
@@ -82,6 +84,16 @@ struct PopoverView: View {
 
     private func quitApplication() {
         NSApp.terminate(nil)
+    }
+
+    private func isProviderEnabled(_ provider: Provider) -> Bool {
+        if let status = store.providers[provider] {
+            return !status.routesEnabled.isEmpty
+        }
+        if let config = store.config?.config(for: provider) {
+            return !config.routesEnabled.isEmpty
+        }
+        return true
     }
 }
 

@@ -126,10 +126,7 @@ func chooseSample(cfg ProviderConfig, samples map[Route]routeSample, now int64) 
 	if len(samples) == 0 {
 		return routeSample{}, RouteNone
 	}
-	maxAge := int64(cfg.KeychainPollIntervalSec * 2)
-	if maxAge < 600 {
-		maxAge = 600
-	}
+	maxAge := sampleMaxAge(cfg)
 
 	// Injection always wins over keychain when both are enabled and its sample is
 	// fresh - preference is by freshness, not by routes_enabled array order (a user
@@ -181,4 +178,24 @@ func (s *Store) lastErrorLocked(provider ProviderID, route Route) *ErrorEntry {
 		}
 	}
 	return nil
+}
+
+// RouteFresh reports on the requested route even when it is disabled or another
+// route is displayed. Unlike chooseSample, it never falls back to stale data.
+func (s *Store) RouteFresh(provider ProviderID, route Route, now int64) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cfg := s.cfg.Claude
+	switch provider {
+	case ProviderCodex:
+		cfg = s.cfg.Codex
+	case ProviderAntigravity:
+		cfg = s.cfg.Antigravity
+	}
+	sample, ok := s.samples[provider][route]
+	return ok && !sample.data.quotaEmpty() && now-sample.asOf <= sampleMaxAge(cfg)
+}
+
+func sampleMaxAge(cfg ProviderConfig) int64 {
+	return max(int64(cfg.KeychainPollIntervalSec)*2, 600)
 }

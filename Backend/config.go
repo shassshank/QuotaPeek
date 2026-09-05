@@ -86,6 +86,9 @@ func validateConfig(cfg Config) error {
 }
 
 func validateProviderConfig(id ProviderID, pc ProviderConfig) error {
+	if pc.NotifyThresholdPercent != nil && (*pc.NotifyThresholdPercent < 1 || *pc.NotifyThresholdPercent > 100) {
+		return errors.New(string(id) + ": notify_threshold_percent must be between 1 and 100")
+	}
 	if pc.KeychainPollIntervalSec <= 0 {
 		return errors.New(string(id) + ": keychain_poll_interval_sec must be positive")
 	}

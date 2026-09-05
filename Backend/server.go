@@ -28,6 +28,7 @@ func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", s.handleStatus)
 	mux.HandleFunc("POST /refresh", s.handleRefresh)
+	mux.HandleFunc("POST /test-route", s.handleTestRoute)
 	mux.HandleFunc("GET /config", s.handleGetConfig)
 	mux.HandleFunc("PUT /config", s.handlePutConfig)
 	mux.HandleFunc("GET /errors", s.handleErrors)
@@ -57,6 +58,76 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	wg.Wait()
 	writeJSON(w, s.store.Status(time.Now().Unix()))
+}
+
+type testRouteRequest struct {
+	Provider ProviderID `json:"provider"`
+	Route    Route      `json:"route"`
+}
+
+type testRouteResponse struct {
+	OK       bool       `json:"ok"`
+	Provider ProviderID `json:"provider"`
+	Route    Route      `json:"route"`
+	Message  string     `json:"message,omitempty"`
+}
+
+func (s *Server) handleTestRoute(w http.ResponseWriter, r *http.Request) {
+	var req testRouteRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if err := dec.Decode(new(any)); err != io.EOF {
+		http.Error(w, "expected one JSON object", http.StatusBadRequest)
+		return
+	}
+	if req.Provider != ProviderClaude && req.Provider != ProviderCodex && req.Provider != ProviderAntigravity {
+		http.Error(w, "invalid provider", http.StatusBadRequest)
+		return
+	}
+	if req.Route != RouteKeychain && req.Route != RouteInjection {
+		http.Error(w, "invalid route", http.StatusBadRequest)
+		return
+	}
+	result := testRouteResponse{Provider: req.Provider, Route: req.Route}
+	if req.Route == RouteInjection && req.Provider != ProviderCodex {
+		result.OK = s.store.RouteFresh(req.Provider, req.Route, time.Now().Unix())
+		result.Message = "Push-only route: the daemon cannot trigger a push; no recent quota push has been received."
+		if result.OK {
+			result.Message = "Push-only route: the daemon cannot trigger a push; a recent quota push has been received."
+		}
+		writeJSON(w, result)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	var data UsageData
+	var err error
+	switch req.Provider {
+	case ProviderClaude:
+		data, err = s.collector.FetchClaude(ctx)
+	case ProviderAntigravity:
+		data, err = s.collector.FetchAntigravity(ctx)
+	case ProviderCodex:
+		if req.Route == RouteKeychain {
+			data, err = s.collector.FetchCodexKeychain(ctx)
+		} else {
+			data, err = FetchCodex(ctx)
+		}
+	}
+	if err != nil {
+		result.Message = redactMessage(err.Error())
+	} else if data.quotaEmpty() {
+		result.Message = "Fetch returned no quota data."
+	} else {
+		result.OK = true
+		s.store.SetSample(req.Provider, req.Route, data, time.Now().Unix())
+	}
+	// Failed diagnostics never alter samples or headline errors.
+	writeJSON(w, result)
 }
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, _ *http.Request) {

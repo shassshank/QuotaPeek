@@ -42,6 +42,12 @@ final class DaemonClient {
         await request(path: "/errors?limit=\(limit)", method: "GET")
     }
 
+    func testRoute(provider: Provider, route: Route) async -> Result<TestRouteResponse, DaemonError> {
+        let requestBody = TestRouteRequest(provider: provider, route: route)
+        guard let body = try? JSONEncoder().encode(requestBody) else { return .failure(.decodeFailed) }
+        return await request(path: "/test-route", method: "POST", body: body)
+    }
+
     private func request<T: Decodable>(path: String, method: String, body: Data? = nil) async -> Result<T, DaemonError> {
         var request = URLRequest(url: Self.baseURL.appendingPathComponent(path.hasPrefix("/") ? String(path.dropFirst()) : path))
         // appendingPathComponent escapes "?" - rebuild with URLComponents when there's a query string.
