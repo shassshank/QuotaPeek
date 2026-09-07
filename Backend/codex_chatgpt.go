@@ -62,14 +62,14 @@ func (c *Collector) FetchCodexKeychain(ctx context.Context) (UsageData, error) {
 	if err != nil {
 		return UsageData{}, err
 	}
-	if raw, err := readKeychain(ctx, codexAuthKeyringService, codexKeyringAccount(home)); err == nil {
-		return c.fetchCodexUsage(ctx, raw)
+	if raw, err := c.readKeychain(ctx, codexAuthKeyringService, codexKeyringAccount(home)); err == nil {
+		return c.fetchCodexUsage(ctx, raw, "keychain")
 	}
 	raw, err := os.ReadFile(filepath.Join(home, "auth.json"))
 	if err != nil {
 		return UsageData{}, errors.New("could not read Codex auth from Keychain or ~/.codex/auth.json")
 	}
-	return c.fetchCodexUsage(ctx, raw)
+	return c.fetchCodexUsage(ctx, raw, "oauth")
 }
 
 // Mirrors codex-rs/login/src/auth/storage.rs::compute_store_key: the Keychain
@@ -84,15 +84,10 @@ func codexKeyringAccount(codexHome string) string {
 	return "cli|" + hexDigest[:16]
 }
 
-func (c *Collector) fetchCodexUsage(ctx context.Context, rawAuthJSON []byte) (UsageData, error) {
+func (c *Collector) fetchCodexUsage(ctx context.Context, rawAuthJSON []byte, sources ...string) (UsageData, error) {
 	var auth codexAuthDotJSON
 	if err := json.Unmarshal(rawAuthJSON, &auth); err != nil || auth.Tokens == nil || auth.Tokens.RefreshToken == "" {
 		return UsageData{}, errors.New("could not parse Codex auth credential")
-	}
-
-	accessToken, err := c.codexTokens.token(ctx, auth.Tokens.AccessToken, auth.Tokens.RefreshToken, tokenExpiry(auth.Tokens.AccessToken), c.refreshCodexToken)
-	if err != nil {
-		return UsageData{}, err
 	}
 
 	accountID := ""
@@ -101,6 +96,17 @@ func (c *Collector) fetchCodexUsage(ctx context.Context, rawAuthJSON []byte) (Us
 	}
 	if accountID == "" {
 		accountID = codexAccountIDFromIDToken(auth.Tokens.IDToken)
+	}
+
+	source := "oauth"
+	if len(sources) > 0 {
+		source = sources[0]
+	}
+	c.setCredentialInfo(ProviderCodex, source, accountID)
+
+	accessToken, err := c.codexTokens.token(ctx, auth.Tokens.AccessToken, auth.Tokens.RefreshToken, tokenExpiry(auth.Tokens.AccessToken), c.refreshCodexToken)
+	if err != nil {
+		return UsageData{}, err
 	}
 
 	return fetchCodexUsageWithToken(ctx, c.client, accessToken, accountID)

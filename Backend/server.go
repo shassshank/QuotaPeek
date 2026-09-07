@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"log"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -16,6 +18,8 @@ type Server struct {
 	collector  *Collector
 	configPath string
 	poller     *Poller
+	configMu   sync.Mutex
+	authToken  string
 }
 
 func NewServer(store *Store, collector *Collector, configPath string) *Server {
@@ -27,18 +31,26 @@ func NewServer(store *Store, collector *Collector, configPath string) *Server {
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", s.handleStatus)
+	mux.HandleFunc("GET /history", s.handleHistory)
 	mux.HandleFunc("POST /refresh", s.handleRefresh)
+	mux.HandleFunc("POST /providers/{name}/reset-credentials", s.handleResetCredentials)
 	mux.HandleFunc("POST /test-route", s.handleTestRoute)
 	mux.HandleFunc("GET /config", s.handleGetConfig)
 	mux.HandleFunc("PUT /config", s.handlePutConfig)
 	mux.HandleFunc("GET /errors", s.handleErrors)
 	mux.HandleFunc("POST /ingest/claude", s.handleIngestClaude)
 	mux.HandleFunc("POST /ingest/antigravity", s.handleIngestAntigravity)
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/status" && (s.authToken == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Auth-Token")), []byte(s.authToken)) != 1) {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, s.store.Status(time.Now().Unix()))
+	writeJSON(w, s.status())
 }
 
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +69,7 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		go func() { defer wg.Done(); s.pollProvider(r.Context(), ProviderCodex) }()
 	}
 	wg.Wait()
-	writeJSON(w, s.store.Status(time.Now().Unix()))
+	writeJSON(w, s.status())
 }
 
 type testRouteRequest struct {
@@ -93,6 +105,11 @@ func (s *Server) handleTestRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := testRouteResponse{Provider: req.Provider, Route: req.Route}
+	if s.store.Config().CollectionPaused {
+		result.Message = "Collection is paused."
+		writeJSON(w, result)
+		return
+	}
 	if req.Route == RouteInjection && req.Provider != ProviderCodex {
 		result.OK = s.store.RouteFresh(req.Provider, req.Route, time.Now().Unix())
 		result.Message = "Push-only route: the daemon cannot trigger a push; no recent quota push has been received."
@@ -102,13 +119,20 @@ func (s *Server) handleTestRoute(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, result)
 		return
 	}
+	started, available := s.store.beginPoll(req.Provider, req.Route)
+	if !available {
+		result.Message = "Collection paused, credentials resetting, or route poll already in flight."
+		writeJSON(w, result)
+		return
+	}
+	defer s.store.endPoll(req.Provider, req.Route)
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 	var data UsageData
 	var err error
 	switch req.Provider {
 	case ProviderClaude:
-		data, err = s.collector.FetchClaude(ctx)
+		data, err = s.collector.FetchClaudeWithMode(ctx, s.store.Config().ClaudePollingMode)
 	case ProviderAntigravity:
 		data, err = s.collector.FetchAntigravity(ctx)
 	case ProviderCodex:
@@ -118,15 +142,16 @@ func (s *Server) handleTestRoute(w http.ResponseWriter, r *http.Request) {
 			data, err = FetchCodex(ctx)
 		}
 	}
+	s.store.recordPoll(req.Provider, data, err)
 	if err != nil {
 		result.Message = redactMessage(err.Error())
 	} else if data.quotaEmpty() {
 		result.Message = "Fetch returned no quota data."
 	} else {
 		result.OK = true
-		s.store.SetSample(req.Provider, req.Route, data, time.Now().Unix())
+		s.store.SetSampleAt(req.Provider, req.Route, data, started)
 	}
-	// Failed diagnostics never alter samples or headline errors.
+	// Failed diagnostics update health, but never alter samples or headline errors.
 	writeJSON(w, result)
 }
 
@@ -140,6 +165,8 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	cfg, err := mergePartialConfig(s.store.Config(), patch)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -165,28 +192,33 @@ func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIngestClaude(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	raw, _ := io.ReadAll(io.LimitReader(r.Body, 2<<20))
 	data, ok, err := parseClaudeIngest(raw)
 	if err != nil {
 		s.store.AddError(ProviderClaude, RouteInjection, "claude ingest parse failed: "+err.Error())
 	} else if ok {
-		s.store.SetSample(ProviderClaude, RouteInjection, data, time.Now().Unix())
+		s.store.SetSampleAt(ProviderClaude, RouteInjection, data, started)
 	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleIngestAntigravity(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	raw, _ := io.ReadAll(io.LimitReader(r.Body, 2<<20))
 	data, ok, err := parseAntigravityIngest(raw)
 	if err != nil {
 		s.store.AddError(ProviderAntigravity, RouteInjection, "antigravity ingest parse failed: "+err.Error())
 	} else if ok {
-		s.store.SetSample(ProviderAntigravity, RouteInjection, data, time.Now().Unix())
+		s.store.SetSampleAt(ProviderAntigravity, RouteInjection, data, started)
 	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) pollProvider(ctx context.Context, provider ProviderID) {
+	if provider == ProviderClaude && s.store.Config().ClaudePollingMode == "disabled" {
+		return
+	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -201,35 +233,56 @@ func (s *Server) pollProvider(ctx context.Context, provider ProviderID) {
 		return
 	}
 
+	started, available := s.store.beginPoll(provider, RouteKeychain)
+	if !available {
+		return
+	}
+	defer s.store.endPoll(provider, RouteKeychain)
 	var data UsageData
 	var err error
 	switch provider {
 	case ProviderClaude:
-		data, err = s.collector.FetchClaude(ctx)
+		data, err = s.collector.FetchClaudeWithMode(ctx, s.store.Config().ClaudePollingMode)
 	case ProviderAntigravity:
 		data, err = s.collector.FetchAntigravity(ctx)
 	default:
 		err = errUnknownProvider
 	}
+	s.store.recordPoll(provider, data, err)
 	if err != nil {
 		s.store.AddError(provider, RouteKeychain, err.Error())
 		return
 	}
-	s.store.SetSample(provider, RouteKeychain, data, time.Now().Unix())
+	s.store.SetSampleAt(provider, RouteKeychain, data, started)
 }
 
 func (s *Server) pollCodexRoute(ctx context.Context, route Route, fetch func(context.Context) (UsageData, error)) {
+	started, available := s.store.beginPoll(ProviderCodex, route)
+	if !available {
+		return
+	}
+	defer s.store.endPoll(ProviderCodex, route)
 	data, err := fetch(ctx)
+	s.store.recordPoll(ProviderCodex, data, err)
 	if err != nil {
 		s.store.AddError(ProviderCodex, route, err.Error())
 		return
 	}
-	s.store.SetSample(ProviderCodex, route, data, time.Now().Unix())
+	s.store.SetSampleAt(ProviderCodex, route, data, started)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+	raw, err := json.Marshal(v)
+	if err != nil {
+		log.Printf("JSON response encoding failed: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"response encoding failed"}`))
+		return
+	}
+	if _, err := w.Write(append(raw, '\n')); err != nil {
+		log.Printf("JSON response write failed: %v", err)
+	}
 }
 
 func hasRoute(routes []Route, route Route) bool {
@@ -260,6 +313,9 @@ func (p *Poller) Reschedule(cfg Config) {
 	ctx, cancel := context.WithCancel(context.Background())
 	p.cancel = cancel
 	p.mu.Unlock()
+	if cfg.CollectionPaused {
+		return
+	}
 	p.startProvider(ctx, ProviderClaude, cfg.Claude)
 	p.startProvider(ctx, ProviderCodex, cfg.Codex)
 	p.startProvider(ctx, ProviderAntigravity, cfg.Antigravity)
@@ -272,6 +328,9 @@ func (p *Poller) startProvider(ctx context.Context, provider ProviderID, cfg Pro
 	}
 	interval := time.Duration(cfg.KeychainPollIntervalSec) * time.Second
 	go func() {
+		if ctx.Err() != nil {
+			return
+		}
 		p.pollOnce(ctx, provider)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -280,6 +339,9 @@ func (p *Poller) startProvider(ctx context.Context, provider ProviderID, cfg Pro
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				if ctx.Err() != nil {
+					return
+				}
 				p.pollOnce(ctx, provider)
 			}
 		}
@@ -323,8 +385,62 @@ func run() error {
 		return err
 	}
 	store := NewStore(cfg)
+	if err := store.enablePersistence(filepath.Join(filepath.Dir(path), "samples.json")); err != nil {
+		log.Printf("sample restore failed: %v", err)
+	}
 	server := NewServer(store, NewCollector(), path)
+	server.authToken, err = createAuthToken(filepath.Join(filepath.Dir(path), "auth-token"))
+	if err != nil {
+		return err
+	}
+	server.collector.codexTokens.path = filepath.Join(filepath.Dir(path), "oauth-codex.json")
+	server.collector.antigravityTokens.path = filepath.Join(filepath.Dir(path), "oauth-antigravity.json")
 	server.poller.Reschedule(cfg)
 	log.Println("aiusaged listening on 127.0.0.1:47831")
 	return http.ListenAndServe("127.0.0.1:47831", server.routes())
+}
+
+func (s *Server) status() StatusResponse {
+	status := s.store.Status(time.Now().Unix())
+	if s.collector != nil {
+		status = s.collector.decorateStatus(status)
+	}
+	return status
+}
+func (s *Server) handleResetCredentials(w http.ResponseWriter, r *http.Request) {
+	id := ProviderID(r.PathValue("name"))
+	fail := func(code int, message string) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		writeJSON(w, map[string]any{"ok": false, "provider": id, "message": redactMessage(message)})
+	}
+	if id != ProviderClaude && id != ProviderCodex && id != ProviderAntigravity {
+		fail(404, "Unknown provider.")
+		return
+	}
+	if !s.store.beginCredentialReset(id) {
+		fail(409, "Provider poll or credential reset already in flight.")
+		return
+	}
+	defer s.store.endCredentialReset(id)
+	if s.collector == nil {
+		fail(500, "Collector unavailable.")
+		return
+	}
+	if err := s.collector.resetCredentials(id); err != nil {
+		fail(500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "provider": id})
+}
+
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	provider, route := ProviderID(r.URL.Query().Get("provider")), Route(r.URL.Query().Get("route"))
+	if !validSampleKey(provider, route) {
+		http.Error(w, "invalid or missing provider/route", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, struct {
+		Points []HistoryPoint `json:"points"`
+	}{s.store.History(provider, route, time.Now().Unix())})
 }

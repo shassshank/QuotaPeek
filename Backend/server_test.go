@@ -15,7 +15,10 @@ import (
 func probe(t *testing.T, s *Server, body string, status int) testRouteResponse {
 	t.Helper()
 	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/test-route", strings.NewReader(body)))
+	s.authToken = "test-secret"
+	req := httptest.NewRequest(http.MethodPost, "/test-route", strings.NewReader(body))
+	req.Header.Set("X-Auth-Token", s.authToken)
+	s.routes().ServeHTTP(w, req)
 	if w.Code != status {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
@@ -82,8 +85,17 @@ func TestTestRouteSynchronous(t *testing.T) {
 			if *store.samples[ProviderClaude][RouteKeychain].data.UsedPercent5H != 42 {
 				t.Fatal("success not stored")
 			}
-		} else if result.Message == "" || !reflect.DeepEqual(before, store.Status(time.Now().Unix())) || len(store.Errors(50)) != 0 {
-			t.Fatal("failure modified status/errors or lacked message")
+		} else {
+			after := store.Status(time.Now().Unix())
+			if after.Providers[0].LastFailureAt == nil || after.Providers[0].LastErrorMessage == nil {
+				t.Fatal("failed diagnostic did not update poll health")
+			}
+			// Only the new historical poll-health fields may change on failure.
+			after.Providers[0].LastFailureAt = before.Providers[0].LastFailureAt
+			after.Providers[0].LastErrorMessage = before.Providers[0].LastErrorMessage
+			if result.Message == "" || !reflect.DeepEqual(before, after) || len(store.Errors(50)) != 0 {
+				t.Fatal("failure modified samples/headline errors or lacked message")
+			}
 		}
 		if *store.samples[ProviderClaude][RouteInjection].data.UsedPercent5H != 10 {
 			t.Fatal("other route modified")

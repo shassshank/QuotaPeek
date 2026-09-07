@@ -46,7 +46,7 @@ func parseAntigravityIngest(raw []byte) (UsageData, bool, error) {
 				continue
 			}
 			remaining, ok := numberFromAny(entry["remaining_fraction"])
-			if !ok {
+			if !ok || remaining < 0 || remaining > 1 {
 				continue
 			}
 			used := round1((1 - remaining) * 100)
@@ -107,17 +107,17 @@ func int64FromAny(v any) (int64, bool) {
 func numberFromAny(v any) (float64, bool) {
 	switch x := v.(type) {
 	case float64:
-		return x, true
+		return x, !math.IsNaN(x) && !math.IsInf(x, 0)
 	case int:
 		return float64(x), true
 	case int64:
 		return float64(x), true
 	case json.Number:
 		n, err := x.Float64()
-		return n, err == nil
+		return n, err == nil && !math.IsNaN(n) && !math.IsInf(n, 0)
 	case string:
 		n, err := strconv.ParseFloat(x, 64)
-		return n, err == nil
+		return n, err == nil && !math.IsNaN(n) && !math.IsInf(n, 0)
 	default:
 		return 0, false
 	}
@@ -138,6 +138,9 @@ func intPtr(v int64, ok bool) *int64 {
 }
 
 func round1(v float64) float64 {
+	if math.Abs(v) > math.MaxFloat64/10 {
+		return v
+	}
 	return math.Round(v*10) / 10
 }
 

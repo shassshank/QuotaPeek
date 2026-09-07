@@ -42,10 +42,41 @@ final class DaemonClient {
         await request(path: "/errors?limit=\(limit)", method: "GET")
     }
 
+    /// Fetches usage history points for a given provider and route, per API_CONTRACT.md.
+    func history(provider: Provider, route: Route? = nil) async -> Result<HistoryResponse, DaemonError> {
+        var path = "/history?provider=\(provider.rawValue)"
+        if let route, route != .none {
+            path += "&route=\(route.rawValue)"
+        }
+        return await request(path: path, method: "GET")
+    }
+
     func testRoute(provider: Provider, route: Route) async -> Result<TestRouteResponse, DaemonError> {
         let requestBody = TestRouteRequest(provider: provider, route: route)
         guard let body = try? JSONEncoder().encode(requestBody) else { return .failure(.decodeFailed) }
         return await request(path: "/test-route", method: "POST", body: body)
+    }
+
+    /// Clears stored OAuth tokens and session data for the provider.
+    func resetCredentials(for provider: Provider) async -> Result<ResetCredentialsResponse, DaemonError> {
+        await request(path: "/providers/\(provider.rawValue)/reset-credentials", method: "POST")
+    }
+
+    /// Pauses background data collection on the daemon.
+    func pauseCollection() async -> Result<DaemonConfig, DaemonError> {
+        await setCollectionPaused(true)
+    }
+
+    /// Resumes background data collection on the daemon.
+    func resumeCollection() async -> Result<DaemonConfig, DaemonError> {
+        await setCollectionPaused(false)
+    }
+
+    private func setCollectionPaused(_ paused: Bool) async -> Result<DaemonConfig, DaemonError> {
+        guard let body = try? JSONSerialization.data(withJSONObject: ["collectionPaused": paused]) else {
+            return .failure(.decodeFailed)
+        }
+        return await request(path: "/config", method: "PUT", body: body)
     }
 
     private func request<T: Decodable>(path: String, method: String, body: Data? = nil) async -> Result<T, DaemonError> {
@@ -55,6 +86,11 @@ final class DaemonClient {
             request = URLRequest(url: url)
         }
         request.httpMethod = method
+        let tokenURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/AIUsageWidget/auth-token")
+        if let token = try? String(contentsOf: tokenURL, encoding: .utf8) {
+            request.setValue(token.trimmingCharacters(in: .whitespacesAndNewlines), forHTTPHeaderField: "X-Auth-Token")
+        }
         if let body {
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -64,7 +100,8 @@ final class DaemonClient {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { return .failure(.unreachable) }
             guard (200...299).contains(http.statusCode) else { return .failure(.badResponse(http.statusCode)) }
-            guard let decoded = try? JSONDecoder().decode(T.self, from: data) else { return .failure(.decodeFailed) }
+            let responseData = data.isEmpty ? "{}".data(using: .utf8)! : data
+            guard let decoded = try? JSONDecoder().decode(T.self, from: responseData) else { return .failure(.decodeFailed) }
             return .success(decoded)
         } catch {
             return .failure(.unreachable)

@@ -26,6 +26,7 @@ type Collector struct {
 	antigravityTokens oauthTokenCache
 
 	mu                    sync.Mutex
+	credentials           map[ProviderID]credentialInfo
 	cachedAntigravityPair *oauthPair
 	cachedDiscovery       *antigravityDiscovery
 
@@ -74,6 +75,13 @@ func readKeychain(ctx context.Context, service string, account string) ([]byte, 
 }
 
 func (c *Collector) FetchClaude(ctx context.Context) (UsageData, error) {
+	return c.FetchClaudeWithMode(ctx, "inference")
+}
+
+func (c *Collector) FetchClaudeWithMode(ctx context.Context, mode string) (UsageData, error) {
+	if mode == "disabled" {
+		return UsageData{}, errors.New("Claude inference polling is disabled; enable injection for passive updates")
+	}
 	raw, err := c.readKeychain(ctx, "Claude Code-credentials", "")
 	if err != nil {
 		return UsageData{}, err
@@ -89,6 +97,7 @@ func (c *Collector) FetchClaude(ctx context.Context) (UsageData, error) {
 	if err := json.Unmarshal(raw, &creds); err != nil || creds.ClaudeAIOAuth.AccessToken == "" {
 		return UsageData{}, errors.New("could not parse Claude Code Keychain credentials")
 	}
+	c.setCredentialInfo(ProviderClaude, "keychain", "")
 	if creds.ClaudeAIOAuth.ExpiresAt > 0 && time.Now().UnixMilli() >= creds.ClaudeAIOAuth.ExpiresAt {
 		return UsageData{}, errors.New("Claude credentials expired, run claude CLI to refresh")
 	}
@@ -154,6 +163,7 @@ func parseHeaderInt(h http.Header, name string) (int64, bool) {
 }
 
 type antigravityCreds struct {
+	Email string `json:"email"`
 	Token struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
@@ -168,6 +178,7 @@ func (c *Collector) FetchAntigravity(ctx context.Context) (UsageData, error) {
 	if err != nil {
 		return UsageData{}, err
 	}
+	c.setCredentialInfo(ProviderAntigravity, "keychain", creds.Email)
 	token := creds.Token.AccessToken
 	if token == "" {
 		token = creds.AccessToken
@@ -386,4 +397,57 @@ func codexBin() string {
 		}
 	}
 	return "codex"
+}
+
+// Only metadata explicitly read by a collector is exposed; never infer identity
+// from an access token or perform credential reads to serve GET /status.
+type credentialInfo struct{ source, account string }
+
+func (c *Collector) setCredentialInfo(id ProviderID, source, account string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.credentials == nil {
+		c.credentials = make(map[ProviderID]credentialInfo)
+	}
+	c.credentials[id] = credentialInfo{source, account}
+}
+func (c *Collector) decorateStatus(status StatusResponse) StatusResponse {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range status.Providers {
+		p := &status.Providers[i]
+		if info, ok := c.credentials[p.ID]; ok {
+			p.CredentialSource = info.source
+			if info.account != "" {
+				account := info.account
+				p.EffectiveAccount = &account
+			}
+		}
+	}
+	return status
+}
+
+// Caller reserves both provider routes so an older fetch cannot refill caches.
+func (c *Collector) resetCredentials(id ProviderID) error {
+	var err error
+	switch id {
+	case ProviderCodex:
+		err = c.codexTokens.reset()
+	case ProviderAntigravity:
+		err = c.antigravityTokens.reset()
+	case ProviderClaude:
+	default:
+		return errUnknownProvider
+	}
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.credentials, id)
+	if id == ProviderAntigravity {
+		c.cachedAntigravityPair = nil
+		c.cachedDiscovery = nil
+	}
+	return nil
 }

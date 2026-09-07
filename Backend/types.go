@@ -1,5 +1,7 @@
 package main
 
+import "time"
+
 type Route string
 
 const (
@@ -40,12 +42,18 @@ type ErrorEntry struct {
 }
 
 type ProviderStatus struct {
-	ID            ProviderID  `json:"id"`
-	RoutesEnabled []Route     `json:"routes_enabled"`
-	ActiveRoute   Route       `json:"active_route"`
-	Data          *UsageData  `json:"data"`
-	AsOf          *int64      `json:"as_of"`
-	LastError     *ErrorEntry `json:"last_error"`
+	RestoredFromDisk bool        `json:"restoredFromDisk"`
+	CredentialSource string      `json:"credentialSource"`
+	EffectiveAccount *string     `json:"effectiveAccount"`
+	LastSuccessAt    *int64      `json:"lastSuccessAt"`
+	LastFailureAt    *int64      `json:"lastFailureAt"`
+	LastErrorMessage *string     `json:"lastError"`
+	ID               ProviderID  `json:"id"`
+	RoutesEnabled    []Route     `json:"routes_enabled"`
+	ActiveRoute      Route       `json:"active_route"`
+	Data             *UsageData  `json:"data"`
+	AsOf             *int64      `json:"as_of"`
+	LastError        *ErrorEntry `json:"last_error"`
 }
 
 type StatusResponse struct {
@@ -59,14 +67,19 @@ type ProviderConfig struct {
 }
 
 type Config struct {
-	Claude      ProviderConfig `json:"claude"`
-	Codex       ProviderConfig `json:"codex"`
-	Antigravity ProviderConfig `json:"antigravity"`
+	StaleAfterSeconds int64          `json:"staleAfterSeconds"`
+	CollectionPaused  bool           `json:"collectionPaused"`
+	ClaudePollingMode string         `json:"claude_polling_mode"`
+	Claude            ProviderConfig `json:"claude"`
+	Codex             ProviderConfig `json:"codex"`
+	Antigravity       ProviderConfig `json:"antigravity"`
 }
 
 type routeSample struct {
-	data UsageData
-	asOf int64
+	restored bool
+	data     UsageData
+	asOf     int64
+	started  time.Time
 }
 
 // Context usage alone cannot replace a provider's quota snapshot.

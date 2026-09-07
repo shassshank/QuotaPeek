@@ -9,9 +9,11 @@ import (
 
 func defaultConfig() Config {
 	return Config{
-		Claude:      ProviderConfig{RoutesEnabled: []Route{RouteKeychain}, KeychainPollIntervalSec: 60},
-		Codex:       ProviderConfig{RoutesEnabled: []Route{RouteInjection}, KeychainPollIntervalSec: 60},
-		Antigravity: ProviderConfig{RoutesEnabled: []Route{RouteKeychain}, KeychainPollIntervalSec: 120},
+		StaleAfterSeconds: 600,
+		ClaudePollingMode: "inference",
+		Claude:            ProviderConfig{RoutesEnabled: []Route{RouteKeychain}, KeychainPollIntervalSec: 60},
+		Codex:             ProviderConfig{RoutesEnabled: []Route{RouteInjection}, KeychainPollIntervalSec: 60},
+		Antigravity:       ProviderConfig{RoutesEnabled: []Route{RouteKeychain}, KeychainPollIntervalSec: 120},
 	}
 }
 
@@ -49,20 +51,31 @@ func saveConfig(path string, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomicPrivateWrite(path, b)
 }
 
 type partialConfig struct {
-	Claude      *ProviderConfig `json:"claude"`
-	Codex       *ProviderConfig `json:"codex"`
-	Antigravity *ProviderConfig `json:"antigravity"`
+	StaleAfterSeconds *int64          `json:"staleAfterSeconds"`
+	CollectionPaused  *bool           `json:"collectionPaused"`
+	ClaudePollingMode *string         `json:"claude_polling_mode"`
+	Claude            *ProviderConfig `json:"claude"`
+	Codex             *ProviderConfig `json:"codex"`
+	Antigravity       *ProviderConfig `json:"antigravity"`
 }
 
 func mergePartialConfig(current Config, patch partialConfig) (Config, error) {
+	if patch.StaleAfterSeconds != nil {
+		if *patch.StaleAfterSeconds <= 0 {
+			return current, errors.New("staleAfterSeconds must be positive")
+		}
+		current.StaleAfterSeconds = *patch.StaleAfterSeconds
+	}
+	if patch.CollectionPaused != nil {
+		current.CollectionPaused = *patch.CollectionPaused
+	}
+	if patch.ClaudePollingMode != nil {
+		current.ClaudePollingMode = *patch.ClaudePollingMode
+	}
 	if patch.Claude != nil {
 		current.Claude = *patch.Claude
 	}
@@ -76,6 +89,12 @@ func mergePartialConfig(current Config, patch partialConfig) (Config, error) {
 }
 
 func validateConfig(cfg Config) error {
+	if cfg.StaleAfterSeconds < 0 {
+		return errors.New("staleAfterSeconds must be nonnegative")
+	}
+	if cfg.ClaudePollingMode != "" && cfg.ClaudePollingMode != "inference" && cfg.ClaudePollingMode != "disabled" {
+		return errors.New("claude_polling_mode must be inference or disabled")
+	}
 	if err := validateProviderConfig(ProviderClaude, cfg.Claude); err != nil {
 		return err
 	}

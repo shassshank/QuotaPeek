@@ -8,6 +8,7 @@
     <array>
         <string>__BIN_DIR__/aiusaged</string>
     </array>
+    <!-- Independent of app login/quit. Explicit stop: install.sh --daemon-stop (unload -w). -->
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
