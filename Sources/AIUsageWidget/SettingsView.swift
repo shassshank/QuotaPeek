@@ -848,18 +848,23 @@ private struct GeneralSettingsTab: View {
                 .padding(.top, 4)
             }
 
-            Section("Desktop Widget") {
-                Toggle("Show desktop widget", isOn: $displayPrefs.isDesktopWidgetEnabled)
-
-                if displayPrefs.isDesktopWidgetEnabled {
-                    Picker("Widget style", selection: $displayPrefs.desktopWidgetStyle) {
-                        ForEach(DesktopWidgetStyle.allCases) { style in
-                            Text(style.displayName).tag(style)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .accessibilityLabel("Desktop widget style")
+            Section("Desktop Widgets") {
+                if displayPrefs.widgetConfigurations.isEmpty {
+                    Text("No desktop widgets configured yet")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+
+                ForEach($displayPrefs.widgetConfigurations) { configuration in
+                    widgetConfigurationRow(configuration)
+                }
+
+                Button {
+                    displayPrefs.addWidgetConfiguration()
+                } label: {
+                    Label("Add Widget", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
             }
 
             // Task D11: Uninstall button with confirmation dialog
@@ -962,6 +967,59 @@ private struct GeneralSettingsTab: View {
         } message: {
             Text(uninstallResultAlert ?? "")
         }
+    }
+
+    private func widgetConfigurationRow(_ configuration: Binding<WidgetConfiguration>) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Toggle("Enabled", isOn: configuration.isEnabled)
+                TextField("Widget name", text: configuration.name)
+                    .textFieldStyle(.roundedBorder)
+                Button(role: .destructive) {
+                    displayPrefs.removeWidgetConfiguration(id: configuration.wrappedValue.id)
+                } label: {
+                    Label("Remove Widget", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            Picker("Widget style", selection: configuration.style) {
+                ForEach(DesktopWidgetStyle.allCases) { style in
+                    Text(style.displayName).tag(style)
+                }
+            }
+            .pickerStyle(.menu)
+
+            Picker("Scope", selection: Binding<String?>(
+                get: { configuration.wrappedValue.scope.accountId },
+                set: { accountId in
+                    configuration.wrappedValue.scope = accountId.map { .singleAgent($0) } ?? .allAgents
+                }
+            )) {
+                Text("All agents (combined)").tag(nil as String?)
+                ForEach(store.accounts.filter { store.isAccountEnabled($0) }) { account in
+                    Text("\(account.provider.displayName) — \(account.label)")
+                        .tag(Optional(account.id))
+                }
+            }
+            .pickerStyle(.menu)
+
+            ForEach(WidgetMetricKind.allCases) { metric in
+                Toggle(metric.displayName, isOn: Binding(
+                    get: { configuration.wrappedValue.visibleMetrics.contains(metric) },
+                    set: { isVisible in
+                        if isVisible {
+                            configuration.wrappedValue.visibleMetrics.insert(metric)
+                        } else {
+                            configuration.wrappedValue.visibleMetrics.remove(metric)
+                        }
+                    }
+                ))
+                .toggleStyle(.checkbox)
+            }
+        }
+        .padding(.vertical, 4)
     }
 
     private func formatDuration(_ seconds: Int) -> String {

@@ -2,21 +2,22 @@ import AppKit
 import CoreGraphics
 import SwiftUI
 
-/// A non-activating panel that hosts `WidgetPanelView` as an always-visible desktop
-/// widget. Independent from the menu bar status item / popover — both can be shown at
-/// the same time.
+/// A non-activating panel that hosts one `WidgetPanelView` instance as an always-visible
+/// desktop widget. Independent from the menu bar status item / popover — any number of
+/// these can be shown at once, one per `WidgetConfiguration`.
 ///
-/// Sits just above the desktop wallpaper but below the desktop-icons layer (like a real
-/// macOS desktop widget), not `.floating`: it stays behind normal app windows AND behind
-/// Finder's desktop icons, so files/folders on the desktop always render on top of it
-/// instead of being covered. `.stationary` keeps it pinned to wherever it was placed
-/// instead of chasing the user across Space switches/Exposé the way a floating panel would.
+/// Sits just above the desktop-icons layer (like a real macOS desktop widget), not
+/// `.floating`: it stays behind normal app windows instead of covering them.
+/// `.stationary` keeps it pinned to wherever it was placed instead of chasing the user
+/// across Space switches/Exposé the way a floating panel would.
 @MainActor
 final class DesktopWidgetPanel: NSPanel {
-    private static let autosaveName = "DesktopWidgetPanel"
     private static let initialSize = NSSize(width: 260, height: 200)
 
-    init(store: UsageStore, displayPrefs: DisplayPreferences) {
+    let configurationId: UUID
+
+    init(store: UsageStore, displayPrefs: DisplayPreferences, configuration: WidgetConfiguration, placementIndex: Int) {
+        self.configurationId = configuration.id
         super.init(
             contentRect: NSRect(origin: .zero, size: Self.initialSize),
             styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView, .closable, .resizable],
@@ -25,7 +26,7 @@ final class DesktopWidgetPanel: NSPanel {
         )
 
         isFloatingPanel = false
-        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) + 1)
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
         becomesKeyOnlyIfNeeded = true
         hidesOnDeactivate = false
         isMovableByWindowBackground = true
@@ -40,19 +41,30 @@ final class DesktopWidgetPanel: NSPanel {
         isOpaque = false
         hasShadow = true
 
-        let rootView = WidgetPanelView(store: store, displayPrefs: displayPrefs)
+        let rootView = WidgetPanelView(store: store, displayPrefs: displayPrefs, configuration: configuration)
         let hostingView = NSHostingView(rootView: rootView)
         contentView = hostingView
 
-        setFrameUsingName(Self.autosaveName)
-        setFrameAutosaveName(Self.autosaveName)
+        let autosaveName = "DesktopWidgetPanel-\(configuration.id.uuidString)"
+        let hadSavedFrame = setFrameUsingName(autosaveName)
+        setFrameAutosaveName(autosaveName)
 
-        // If there's no saved frame yet, place it near the top-right of the main screen.
-        if frame.origin == .zero, let screen = NSScreen.main {
-            let x = screen.visibleFrame.maxX - Self.initialSize.width - 24
-            let y = screen.visibleFrame.maxY - Self.initialSize.height - 24
-            setFrameOrigin(NSPoint(x: x, y: y))
+        // If there's no saved frame yet, stagger new widgets down/left from the top-right
+        // of the main screen so they don't stack exactly on top of each other.
+        if !hadSavedFrame, let screen = NSScreen.main {
+            let stride: CGFloat = 24
+            let offset = CGFloat(placementIndex) * (Self.initialSize.height + stride)
+            let x = screen.visibleFrame.maxX - Self.initialSize.width - stride
+            let y = screen.visibleFrame.maxY - Self.initialSize.height - stride - offset
+            setFrameOrigin(NSPoint(x: x, y: max(y, screen.visibleFrame.minY)))
         }
+    }
+
+    /// Re-renders this panel's content for an updated configuration (style/scope/visible
+    /// metrics may have changed) without recreating the window itself.
+    func update(configuration: WidgetConfiguration, store: UsageStore, displayPrefs: DisplayPreferences) {
+        let rootView = WidgetPanelView(store: store, displayPrefs: displayPrefs, configuration: configuration)
+        (contentView as? NSHostingView<WidgetPanelView>)?.rootView = rootView
     }
 
     override var canBecomeKey: Bool { true }

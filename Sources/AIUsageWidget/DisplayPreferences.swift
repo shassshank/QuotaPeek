@@ -20,11 +20,13 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
 }
 
 /// Layout style for the floating desktop widget.
-enum DesktopWidgetStyle: String, CaseIterable, Identifiable {
+enum DesktopWidgetStyle: String, CaseIterable, Identifiable, Codable {
     case combinedLinear = "combined_linear"
     case combinedCircular = "combined_circular"
     case perAgentLinear = "per_agent_linear"
     case perAgentCircular = "per_agent_circular"
+    case concentricRings = "concentric_rings"
+    case singleAgentFocus = "single_agent_focus"
 
     var id: String { rawValue }
 
@@ -34,8 +36,42 @@ enum DesktopWidgetStyle: String, CaseIterable, Identifiable {
         case .combinedCircular: return "Combined (circular rings)"
         case .perAgentLinear: return "Per-agent (linear bars)"
         case .perAgentCircular: return "Per-agent (circular rings)"
+        case .concentricRings: return "Concentric rings (5h / weekly / context)"
+        case .singleAgentFocus: return "Single agent focus"
         }
     }
+}
+
+enum WidgetMetricKind: String, CaseIterable, Identifiable, Codable {
+    case fiveHour = "5h"
+    case weekly = "weekly"
+    case context = "context"
+
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .fiveHour: return "5-hour window"
+        case .weekly: return "Weekly window"
+        case .context: return "Context window"
+        }
+    }
+}
+
+struct WidgetScope: Codable, Equatable {
+    // nil includes all enabled accounts; otherwise scopes to one account's ID.
+    var accountId: String?
+
+    static let allAgents = WidgetScope(accountId: nil)
+    static func singleAgent(_ accountId: String) -> WidgetScope { WidgetScope(accountId: accountId) }
+}
+
+struct WidgetConfiguration: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var name: String = "Desktop Widget"
+    var isEnabled: Bool = false
+    var style: DesktopWidgetStyle = .combinedLinear
+    var scope: WidgetScope = .allAgents
+    var visibleMetrics: Set<WidgetMetricKind> = Set(WidgetMetricKind.allCases)
 }
 
 /// Whether percentages represent used quota or remaining quota.
@@ -62,6 +98,7 @@ final class DisplayPreferences: ObservableObject {
         static let menuBarMode = "display_menu_bar_mode"
         static let percentageMetric = "display_percentage_metric"
         static let providerOrder = "display_provider_order"
+        static let widgetConfigurations = "display_widget_configurations"
         static let isDesktopWidgetEnabled = "display_desktop_widget_enabled"
         static let desktopWidgetStyle = "display_desktop_widget_style"
     }
@@ -85,26 +122,36 @@ final class DisplayPreferences: ObservableObject {
         }
     }
 
-    @Published var isDesktopWidgetEnabled: Bool {
+    @Published var widgetConfigurations: [WidgetConfiguration] {
         didSet {
-            UserDefaults.standard.set(isDesktopWidgetEnabled, forKey: Keys.isDesktopWidgetEnabled)
-        }
-    }
-
-    @Published var desktopWidgetStyle: DesktopWidgetStyle {
-        didSet {
-            UserDefaults.standard.set(desktopWidgetStyle.rawValue, forKey: Keys.desktopWidgetStyle)
+            if let data = try? JSONEncoder().encode(widgetConfigurations) {
+                UserDefaults.standard.set(data, forKey: Keys.widgetConfigurations)
+            }
         }
     }
 
     private init() {
-        self.isDesktopWidgetEnabled = UserDefaults.standard.bool(forKey: Keys.isDesktopWidgetEnabled)
-
-        if let styleRaw = UserDefaults.standard.string(forKey: Keys.desktopWidgetStyle),
-           let style = DesktopWidgetStyle(rawValue: styleRaw) {
-            self.desktopWidgetStyle = style
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: Keys.widgetConfigurations),
+           let configurations = try? JSONDecoder().decode([WidgetConfiguration].self, from: data) {
+            self.widgetConfigurations = configurations
+        } else if defaults.object(forKey: Keys.isDesktopWidgetEnabled) != nil
+                    || defaults.object(forKey: Keys.desktopWidgetStyle) != nil {
+            let style = defaults.string(forKey: Keys.desktopWidgetStyle)
+                .flatMap { DesktopWidgetStyle(rawValue: $0) } ?? .combinedLinear
+            let configurations = [WidgetConfiguration(
+                isEnabled: defaults.bool(forKey: Keys.isDesktopWidgetEnabled),
+                style: style
+            )]
+            self.widgetConfigurations = configurations
+            // Property observers do not run during initialization.
+            if let data = try? JSONEncoder().encode(configurations) {
+                defaults.set(data, forKey: Keys.widgetConfigurations)
+                defaults.removeObject(forKey: Keys.isDesktopWidgetEnabled)
+                defaults.removeObject(forKey: Keys.desktopWidgetStyle)
+            }
         } else {
-            self.desktopWidgetStyle = .combinedLinear
+            self.widgetConfigurations = []
         }
 
         if let modeRaw = UserDefaults.standard.string(forKey: Keys.menuBarMode),
@@ -130,6 +177,14 @@ final class DisplayPreferences: ObservableObject {
         } else {
             self.providerOrder = Provider.allCases
         }
+    }
+
+    func addWidgetConfiguration() {
+        widgetConfigurations.append(WidgetConfiguration(isEnabled: true))
+    }
+
+    func removeWidgetConfiguration(id: UUID) {
+        widgetConfigurations.removeAll { $0.id == id }
     }
 
     /// Moves a provider up one step in the display order.

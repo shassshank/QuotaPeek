@@ -19,7 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = UsageStore()
     private let displayPrefs = DisplayPreferences.shared
     private var settingsWindow: NSWindow?
-    private var desktopWidgetPanel: DesktopWidgetPanel?
+    private var desktopWidgetPanels: [UUID: DesktopWidgetPanel] = [:]
     private var cancellables = Set<AnyCancellable>()
     private var eventMonitor: Any?
 
@@ -102,19 +102,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateDesktopWidgetVisibility()
     }
 
-    /// Shows/hides the floating desktop widget panel to match the user's preference, without
-    /// touching the menu bar status item or popover.
+    /// Reconciles the set of open desktop widget panels against `displayPrefs.widgetConfigurations`,
+    /// without touching the menu bar status item or popover. Creates/shows a panel for every
+    /// enabled configuration, closes panels for configurations that were disabled or removed.
     private func updateDesktopWidgetVisibility() {
-        if displayPrefs.isDesktopWidgetEnabled {
-            if desktopWidgetPanel == nil {
-                desktopWidgetPanel = DesktopWidgetPanel(store: store, displayPrefs: displayPrefs)
+        let configs = displayPrefs.widgetConfigurations
+        let enabledConfigs = configs.filter { $0.isEnabled }
+        let enabledIds = Set(enabledConfigs.map(\.id))
+        let allKnownIds = Set(configs.map(\.id))
+
+        // Close panels whose configuration was disabled or deleted entirely.
+        for (id, panel) in desktopWidgetPanels where !enabledIds.contains(id) {
+            panel.orderOut(nil)
+            if !allKnownIds.contains(id) {
+                desktopWidgetPanels.removeValue(forKey: id)
             }
-            desktopWidgetPanel?.orderFrontRegardless()
-            store.setWidgetVisible(true)
-        } else {
-            desktopWidgetPanel?.orderOut(nil)
-            store.setWidgetVisible(false)
         }
+
+        // Create/show panels for every enabled configuration.
+        for (index, config) in enabledConfigs.enumerated() {
+            if let existing = desktopWidgetPanels[config.id] {
+                existing.update(configuration: config, store: store, displayPrefs: displayPrefs)
+                existing.orderFrontRegardless()
+            } else {
+                let panel = DesktopWidgetPanel(store: store, displayPrefs: displayPrefs, configuration: config, placementIndex: index)
+                desktopWidgetPanels[config.id] = panel
+                panel.orderFrontRegardless()
+            }
+        }
+
+        store.setWidgetVisible(!enabledConfigs.isEmpty)
     }
 
     private func updateStatusItem() {
@@ -241,9 +258,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             refreshItem.target = self
             menu.addItem(refreshItem)
 
-            let widgetItem = NSMenuItem(title: "Show Desktop Widget", action: #selector(toggleDesktopWidgetMenuAction), keyEquivalent: "")
+            let widgetItem = NSMenuItem(title: "Manage Desktop Widgets...", action: #selector(openSettingsMenuAction), keyEquivalent: "")
             widgetItem.target = self
-            widgetItem.state = displayPrefs.isDesktopWidgetEnabled ? .on : .off
             menu.addItem(widgetItem)
 
             menu.addItem(.separator())
@@ -274,9 +290,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await store.refresh() }
     }
 
-    @objc private func toggleDesktopWidgetMenuAction() {
-        displayPrefs.isDesktopWidgetEnabled.toggle()
-    }
 
     @objc private func quitMenuAction() {
         NSApp.terminate(nil)
