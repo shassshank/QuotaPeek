@@ -335,6 +335,20 @@ private struct AccountsSettingsTab: View {
 
             let binding = configBinding(for: account.provider)
 
+            if account.provider == .claude {
+                Toggle("Enable inference polling (Keychain route)", isOn: Binding(
+                    get: { draftConfig.claudePollingMode == "inference" },
+                    set: { isOn in
+                        draftConfig.claudePollingMode = isOn ? "inference" : "disabled"
+                        Task { _ = await store.saveConfig(draftConfig) }
+                    }
+                ))
+                .font(.caption)
+                Text("Off by default: sends a real one-token inference request every 60s (~1,440/day) to read live rate-limit headers. The Keychain route below stays disabled until this is on.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
             routeToggleRow(for: account, route: .keychain, label: "Keychain (poll CLI credentials)", binding: binding)
 
             if account.provider == .codex {
