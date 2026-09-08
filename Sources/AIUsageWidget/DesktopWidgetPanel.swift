@@ -49,14 +49,26 @@ final class DesktopWidgetPanel: NSPanel {
         let hadSavedFrame = setFrameUsingName(autosaveName)
         setFrameAutosaveName(autosaveName)
 
-        // If there's no saved frame yet, stagger new widgets down/left from the top-right
-        // of the main screen so they don't stack exactly on top of each other.
+        // Brand new widget (never shown/moved before, hence no saved frame): pop up centered
+        // on screen, per user preference. Once shown, macOS's frame autosave persists any
+        // position the user drags it to under `autosaveName`, so a later disable/re-enable
+        // cycle restores that saved position instead of re-centering (setFrameUsingName above
+        // already handles that case by returning true and leaving the frame as restored).
         if !hadSavedFrame, let screen = NSScreen.main {
-            let stride: CGFloat = 24
-            let offset = CGFloat(placementIndex) * (Self.initialSize.height + stride)
-            let x = screen.visibleFrame.maxX - Self.initialSize.width - stride
-            let y = screen.visibleFrame.maxY - Self.initialSize.height - stride - offset
-            setFrameOrigin(NSPoint(x: x, y: max(y, screen.visibleFrame.minY)))
+            center()
+            // If several brand-new widgets are enabled at once, cascade them slightly so they
+            // don't stack exactly on top of one another.
+            if placementIndex > 0 {
+                let cascadeStep: CGFloat = 32
+                let offset = CGFloat(placementIndex) * cascadeStep
+                var origin = frame.origin
+                origin.x += offset
+                origin.y -= offset
+                setFrameOrigin(NSPoint(
+                    x: min(origin.x, screen.visibleFrame.maxX - Self.initialSize.width),
+                    y: max(origin.y, screen.visibleFrame.minY)
+                ))
+            }
         }
     }
 
