@@ -47,41 +47,41 @@ struct WidgetPanelView: View {
                     CombinedLinearWidgetView(
                         accounts: displayedAccounts,
                         metric: displayPrefs.percentageMetric,
-                        visibleMetrics: configuration.visibleMetrics
+                        configuration: configuration
                     )
                 case .combinedCircular:
                     CombinedCircularWidgetView(
                         accounts: displayedAccounts,
                         metric: displayPrefs.percentageMetric,
-                        visibleMetrics: configuration.visibleMetrics
+                        configuration: configuration
                     )
                 case .perAgentLinear:
                     PerAgentLinearWidgetView(
                         accounts: displayedAccounts,
                         selectedIndex: $selectedAgentIndex,
                         metric: displayPrefs.percentageMetric,
-                        visibleMetrics: configuration.visibleMetrics
+                        configuration: configuration
                     )
                 case .perAgentCircular:
                     PerAgentCircularWidgetView(
                         accounts: displayedAccounts,
                         selectedIndex: $selectedAgentIndex,
                         metric: displayPrefs.percentageMetric,
-                        visibleMetrics: configuration.visibleMetrics
+                        configuration: configuration
                     )
                 case .concentricRings:
                     ConcentricRingsWidgetView(
                         accounts: displayedAccounts,
                         isSingleAccountScope: configuration.scope.includedAccountIds?.count == 1,
                         metric: displayPrefs.percentageMetric,
-                        visibleMetrics: configuration.visibleMetrics
+                        configuration: configuration
                     )
                 case .singleAgentFocus:
                     SingleAgentFocusWidgetView(
                         accounts: displayedAccounts,
                         isSingleAccountScope: configuration.scope.includedAccountIds?.count == 1,
                         metric: displayPrefs.percentageMetric,
-                        visibleMetrics: configuration.visibleMetrics
+                        configuration: configuration
                     )
                 }
             }
@@ -237,12 +237,12 @@ private func statusColor(for state: AccountTrustState) -> Color {
 private struct CombinedLinearWidgetView: View {
     let accounts: [Account]
     let metric: PercentageMetric
-    let visibleMetrics: Set<WidgetMetricKind>
+    let configuration: WidgetConfiguration
 
     var body: some View {
         VStack(spacing: 8) {
             ForEach(accounts) { account in
-                CombinedLinearAccountCard(account: account, metric: metric, visibleMetrics: visibleMetrics)
+                CombinedLinearAccountCard(account: account, metric: metric, visibleMetrics: configuration.visibleMetrics(forAccountId: account.id))
             }
         }
     }
@@ -257,7 +257,7 @@ private struct CombinedLinearAccountCard: View {
         VStack(alignment: .leading, spacing: 6) {
             accountHeader
 
-            if visibleMetrics.isEmpty {
+            if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
                 Text("No metrics selected")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -281,8 +281,8 @@ private struct CombinedLinearAccountCard: View {
                 case .restored, .stale, .fresh:
                     if let data = account.data {
                         let hasModelBreakdown = account.provider == .antigravity
-                            && visibleMetrics.contains(.claudeGptWeekly)
-                            && (data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil)
+                            && ((visibleMetrics.contains(.fiveHour) && data.usedPercent5hThirdParty != nil)
+                                || (visibleMetrics.contains(.weekly) && data.usedPercentWeeklyThirdParty != nil))
                         let has5h = visibleMetrics.contains(.fiveHour) && data.usedPercent5h != nil
                         let hasWk = visibleMetrics.contains(.weekly) && data.usedPercentWeekly != nil
 
@@ -337,7 +337,7 @@ private struct CombinedLinearAccountCard: View {
             }
 
             VStack(spacing: 4) {
-                if let p5h = data.usedPercent5hThirdParty {
+                if visibleMetrics.contains(.fiveHour), let p5h = data.usedPercent5hThirdParty {
                     linearRow(
                         label: "5h C/G",
                         percent: p5h,
@@ -346,7 +346,7 @@ private struct CombinedLinearAccountCard: View {
                         accessibilityLabelText: "Claude/GPT 5h"
                     )
                 }
-                if let pWk = data.usedPercentWeeklyThirdParty {
+                if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeeklyThirdParty {
                     linearRow(
                         label: "Wk C/G",
                         percent: pWk,
@@ -450,12 +450,12 @@ private struct CombinedLinearAccountCard: View {
 private struct CombinedCircularWidgetView: View {
     let accounts: [Account]
     let metric: PercentageMetric
-    let visibleMetrics: Set<WidgetMetricKind>
+    let configuration: WidgetConfiguration
 
     var body: some View {
         VStack(spacing: 10) {
             ForEach(accounts) { account in
-                CombinedCircularAccountCard(account: account, metric: metric, visibleMetrics: visibleMetrics)
+                CombinedCircularAccountCard(account: account, metric: metric, visibleMetrics: configuration.visibleMetrics(forAccountId: account.id))
             }
         }
     }
@@ -495,7 +495,7 @@ private struct CombinedCircularAccountCard: View {
                 }
             }
 
-            if visibleMetrics.isEmpty {
+            if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
                 Text("No metrics selected")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -519,8 +519,8 @@ private struct CombinedCircularAccountCard: View {
                 case .restored, .stale, .fresh:
                     if let data = account.data {
                         let hasModelBreakdown = account.provider == .antigravity
-                            && visibleMetrics.contains(.claudeGptWeekly)
-                            && (data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil)
+                            && ((visibleMetrics.contains(.fiveHour) && data.usedPercent5hThirdParty != nil)
+                                || (visibleMetrics.contains(.weekly) && data.usedPercentWeeklyThirdParty != nil))
                         let has5h = visibleMetrics.contains(.fiveHour) && data.usedPercent5h != nil
                         let hasWk = visibleMetrics.contains(.weekly) && data.usedPercentWeekly != nil
 
@@ -537,10 +537,10 @@ private struct CombinedCircularAccountCard: View {
                                     circularMetricItem(label: "Weekly", percent: percent, resetsAt: data.resetsAtWeekly)
                                 }
                                 if hasModelBreakdown {
-                                    if let percent = data.usedPercent5hThirdParty {
+                                    if visibleMetrics.contains(.fiveHour), let percent = data.usedPercent5hThirdParty {
                                         circularMetricItem(label: "5h C/G", percent: percent, resetsAt: data.resetsAt5hThirdParty)
                                     }
-                                    if let percent = data.usedPercentWeeklyThirdParty {
+                                    if visibleMetrics.contains(.weekly), let percent = data.usedPercentWeeklyThirdParty {
                                         circularMetricItem(label: "Weekly C/G", percent: percent, resetsAt: data.resetsAtWeeklyThirdParty)
                                     }
                                 }
@@ -608,12 +608,17 @@ private struct PerAgentLinearWidgetView: View {
     let accounts: [Account]
     @Binding var selectedIndex: Int
     let metric: PercentageMetric
-    let visibleMetrics: Set<WidgetMetricKind>
+    let configuration: WidgetConfiguration
 
     private var activeAccount: Account? {
         guard !accounts.isEmpty else { return nil }
         let clamped = min(max(selectedIndex, 0), accounts.count - 1)
         return accounts[clamped]
+    }
+
+    private var visibleMetrics: Set<WidgetMetricKind> {
+        guard let account = activeAccount else { return [] }
+        return configuration.visibleMetrics(forAccountId: account.id)
     }
 
     var body: some View {
@@ -658,7 +663,7 @@ private struct PerAgentLinearWidgetView: View {
                         routePill(for: account)
                     }
 
-                    if visibleMetrics.isEmpty {
+                    if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
                         Text("No metrics selected")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -686,8 +691,8 @@ private struct PerAgentLinearWidgetView: View {
                         case .restored, .stale, .fresh:
                             if let data = account.data {
                                 let hasModelBreakdown = account.provider == .antigravity
-                                    && visibleMetrics.contains(.claudeGptWeekly)
-                                    && (data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil)
+                                    && ((visibleMetrics.contains(.fiveHour) && data.usedPercent5hThirdParty != nil)
+                                        || (visibleMetrics.contains(.weekly) && data.usedPercentWeeklyThirdParty != nil))
                                 let (primaryMetric, secondaryMetrics) = categorizeMetrics(data: data)
                                 if let primary = primaryMetric {
                                     VStack(spacing: 6) {
@@ -829,7 +834,7 @@ private struct PerAgentLinearWidgetView: View {
 
     @ViewBuilder
     private func perAgentLinearClaudeGptSection(data: ProviderData) -> some View {
-        ClaudeGptLinearQuotaSection(data: data, metric: metric)
+        ClaudeGptLinearQuotaSection(data: data, metric: metric, visibleMetrics: visibleMetrics)
     }
 
     private func secondaryRow(label: String, percent: Double, resetsAt: Int?, labelWidth: CGFloat = 48) -> some View {
@@ -866,12 +871,17 @@ private struct PerAgentCircularWidgetView: View {
     let accounts: [Account]
     @Binding var selectedIndex: Int
     let metric: PercentageMetric
-    let visibleMetrics: Set<WidgetMetricKind>
+    let configuration: WidgetConfiguration
 
     private var activeAccount: Account? {
         guard !accounts.isEmpty else { return nil }
         let clamped = min(max(selectedIndex, 0), accounts.count - 1)
         return accounts[clamped]
+    }
+
+    private var visibleMetrics: Set<WidgetMetricKind> {
+        guard let account = activeAccount else { return [] }
+        return configuration.visibleMetrics(forAccountId: account.id)
     }
 
     var body: some View {
@@ -910,7 +920,7 @@ private struct PerAgentCircularWidgetView: View {
                         }
                     }
 
-                    if visibleMetrics.isEmpty {
+                    if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
                         Text("No metrics selected")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -935,8 +945,8 @@ private struct PerAgentCircularWidgetView: View {
                         case .restored, .stale, .fresh:
                             if let data = account.data {
                                 let hasModelBreakdown = account.provider == .antigravity
-                                    && visibleMetrics.contains(.claudeGptWeekly)
-                                    && (data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil)
+                                    && ((visibleMetrics.contains(.fiveHour) && data.usedPercent5hThirdParty != nil)
+                                        || (visibleMetrics.contains(.weekly) && data.usedPercentWeeklyThirdParty != nil))
                                 let (primaryMetric, secondaryMetrics) = categorizeMetrics(data: data)
                                 if primaryMetric != nil || hasModelBreakdown {
                                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 8)], spacing: 12) {
@@ -947,10 +957,10 @@ private struct PerAgentCircularWidgetView: View {
                                             primaryDial(title: secondary.title, percent: secondary.percent, resetsAt: secondary.resetsAt)
                                         }
                                         if hasModelBreakdown {
-                                            if let percent = data.usedPercent5hThirdParty {
+                                            if visibleMetrics.contains(.fiveHour), let percent = data.usedPercent5hThirdParty {
                                                 primaryDial(title: "5h C/G", percent: percent, resetsAt: data.resetsAt5hThirdParty)
                                             }
-                                            if let percent = data.usedPercentWeeklyThirdParty {
+                                            if visibleMetrics.contains(.weekly), let percent = data.usedPercentWeeklyThirdParty {
                                                 primaryDial(title: "Weekly C/G", percent: percent, resetsAt: data.resetsAtWeeklyThirdParty)
                                             }
                                         }
@@ -1073,7 +1083,7 @@ private struct ConcentricRingsWidgetView: View {
     let accounts: [Account]
     let isSingleAccountScope: Bool
     let metric: PercentageMetric
-    let visibleMetrics: Set<WidgetMetricKind>
+    let configuration: WidgetConfiguration
 
     var body: some View {
         if isSingleAccountScope || accounts.count == 1 {
@@ -1081,14 +1091,14 @@ private struct ConcentricRingsWidgetView: View {
                 SingleAccountConcentricCard(
                     account: account,
                     metric: metric,
-                    visibleMetrics: visibleMetrics
+                    visibleMetrics: configuration.visibleMetrics(forAccountId: account.id)
                 )
             }
         } else {
             MultiAccountConcentricView(
                 accounts: accounts,
                 metric: metric,
-                visibleMetrics: visibleMetrics
+                configuration: configuration
             )
         }
     }
@@ -1200,7 +1210,7 @@ private struct SingleAccountConcentricCard: View {
                 }
             }
 
-            if visibleMetrics.isEmpty {
+            if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
                 Text("No metrics selected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1225,8 +1235,8 @@ private struct SingleAccountConcentricCard: View {
                 case .restored, .stale, .fresh:
                     if let data = account.data {
                         let hasModelBreakdown = account.provider == .antigravity
-                            && visibleMetrics.contains(.claudeGptWeekly)
-                            && (data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil)
+                            && ((visibleMetrics.contains(.fiveHour) && data.usedPercent5hThirdParty != nil)
+                                || (visibleMetrics.contains(.weekly) && data.usedPercentWeeklyThirdParty != nil))
                         let rings = extractRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
                         if rings.isEmpty {
                             if !hasModelBreakdown {
@@ -1292,10 +1302,10 @@ private struct SingleAccountConcentricCard: View {
 
                         if hasModelBreakdown {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 12)], spacing: 12) {
-                                if let percent = data.usedPercent5hThirdParty {
+                                if visibleMetrics.contains(.fiveHour), let percent = data.usedPercent5hThirdParty {
                                     companionGauge(label: "5h C/G", percent: percent, resetsAt: data.resetsAt5hThirdParty)
                                 }
-                                if let percent = data.usedPercentWeeklyThirdParty {
+                                if visibleMetrics.contains(.weekly), let percent = data.usedPercentWeeklyThirdParty {
                                     companionGauge(label: "Weekly C/G", percent: percent, resetsAt: data.resetsAtWeeklyThirdParty)
                                 }
                             }
@@ -1343,11 +1353,11 @@ private struct SingleAccountConcentricCard: View {
 private struct MultiAccountConcentricView: View {
     let accounts: [Account]
     let metric: PercentageMetric
-    let visibleMetrics: Set<WidgetMetricKind>
+    let configuration: WidgetConfiguration
 
     var body: some View {
         VStack(spacing: 10) {
-            if visibleMetrics.isEmpty {
+            if accounts.allSatisfy({ configuration.visibleMetrics(forAccountId: $0.id).isDisjoint(with: WidgetMetricKind.offerable) }) {
                 Text("No metrics selected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1358,7 +1368,7 @@ private struct MultiAccountConcentricView: View {
                         MultiAccountConcentricCell(
                             account: account,
                             metric: metric,
-                            visibleMetrics: visibleMetrics
+                            visibleMetrics: configuration.visibleMetrics(forAccountId: account.id)
                         )
                     }
                 }
@@ -1412,8 +1422,8 @@ private struct MultiAccountConcentricCell: View {
             case .restored, .stale, .fresh:
                 if let data = account.data {
                     let hasModelBreakdown = account.provider == .antigravity
-                        && visibleMetrics.contains(.claudeGptWeekly)
-                        && (data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil)
+                        && ((visibleMetrics.contains(.fiveHour) && data.usedPercent5hThirdParty != nil)
+                            || (visibleMetrics.contains(.weekly) && data.usedPercentWeeklyThirdParty != nil))
                     let rings = extractRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
                     if rings.isEmpty {
                         if !hasModelBreakdown {
@@ -1474,11 +1484,11 @@ private struct MultiAccountConcentricCell: View {
                 .foregroundStyle(.secondary)
 
             HStack(alignment: .top, spacing: 6) {
-                if let p5h = data.usedPercent5hThirdParty {
+                if visibleMetrics.contains(.fiveHour), let p5h = data.usedPercent5hThirdParty {
                     multiAccountClaudeGptGauge(label: "5h", percent: p5h, resetsAt: data.resetsAt5hThirdParty)
                 }
 
-                if let pWk = data.usedPercentWeeklyThirdParty {
+                if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeeklyThirdParty {
                     multiAccountClaudeGptGauge(label: "Weekly", percent: pWk, resetsAt: data.resetsAtWeeklyThirdParty)
                 }
             }
@@ -1521,10 +1531,15 @@ private struct SingleAgentFocusWidgetView: View {
     let accounts: [Account]
     let isSingleAccountScope: Bool
     let metric: PercentageMetric
-    let visibleMetrics: Set<WidgetMetricKind>
+    let configuration: WidgetConfiguration
 
     private var targetAccount: Account? {
         accounts.first
+    }
+
+    private var visibleMetrics: Set<WidgetMetricKind> {
+        guard let account = targetAccount else { return [] }
+        return configuration.visibleMetrics(forAccountId: account.id)
     }
 
     var body: some View {
@@ -1575,7 +1590,7 @@ private struct SingleAgentFocusWidgetView: View {
                     routePill(for: account)
                 }
 
-                if visibleMetrics.isEmpty {
+                if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
                     Text("No metrics selected")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1601,8 +1616,8 @@ private struct SingleAgentFocusWidgetView: View {
                     case .restored, .stale, .fresh:
                         if let data = account.data {
                             let hasModelBreakdown = account.provider == .antigravity
-                                && visibleMetrics.contains(.claudeGptWeekly)
-                                && (data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil)
+                                && ((visibleMetrics.contains(.fiveHour) && data.usedPercent5hThirdParty != nil)
+                                    || (visibleMetrics.contains(.weekly) && data.usedPercentWeeklyThirdParty != nil))
                             let (dominantMetric, secondaryMetrics) = pickDominantAndSecondary(data: data)
                             if let dominant = dominantMetric {
                                 dominantFocusCard(dominant: dominant)
@@ -1749,7 +1764,7 @@ private struct SingleAgentFocusWidgetView: View {
 
     @ViewBuilder
     private func singleAgentClaudeGptSection(data: ProviderData) -> some View {
-        ClaudeGptLinearQuotaSection(data: data, metric: metric)
+        ClaudeGptLinearQuotaSection(data: data, metric: metric, visibleMetrics: visibleMetrics)
     }
 }
 
@@ -1759,6 +1774,7 @@ private struct SingleAgentFocusWidgetView: View {
 private struct ClaudeGptLinearQuotaSection: View {
     let data: ProviderData
     let metric: PercentageMetric
+    let visibleMetrics: Set<WidgetMetricKind>
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -1770,7 +1786,7 @@ private struct ClaudeGptLinearQuotaSection: View {
             }
 
             VStack(spacing: 5) {
-                if let p5h = data.usedPercent5hThirdParty {
+                if visibleMetrics.contains(.fiveHour), let p5h = data.usedPercent5hThirdParty {
                     linearRow(
                         label: "5h (C/G)",
                         percent: p5h,
@@ -1778,7 +1794,7 @@ private struct ClaudeGptLinearQuotaSection: View {
                         accessibilityLabelText: "Claude/GPT 5h"
                     )
                 }
-                if let pWk = data.usedPercentWeeklyThirdParty {
+                if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeeklyThirdParty {
                     linearRow(
                         label: "Weekly (C/G)",
                         percent: pWk,

@@ -1046,17 +1046,38 @@ private struct GeneralSettingsTab: View {
                     .font(.subheadline)
                 let enabledAccounts = store.accounts.filter { store.isAccountEnabled($0) }
                 ForEach(enabledAccounts) { account in
-                    Toggle("\(account.provider.displayName) — \(account.label)", isOn: Binding(
-                        get: { configuration.wrappedValue.scope.includes(account.id) },
-                        set: { isIncluded in
-                            configuration.wrappedValue.scope.setIncluded(
-                                account.id,
-                                isIncluded: isIncluded,
-                                enabledAccountIds: Set(enabledAccounts.map(\.id))
-                            )
+                    DisclosureGroup("\(account.provider.displayName) — \(account.label)") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Toggle("Include account", isOn: Binding(
+                                get: { configuration.wrappedValue.scope.includes(account.id) },
+                                set: { isIncluded in
+                                    configuration.wrappedValue.scope.setIncluded(
+                                        account.id,
+                                        isIncluded: isIncluded,
+                                        enabledAccountIds: Set(enabledAccounts.map(\.id))
+                                    )
+                                }
+                            ))
+                            .toggleStyle(.checkbox)
+
+                            ForEach(WidgetMetricKind.offerable) { metric in
+                                Toggle(metric.displayName, isOn: Binding(
+                                    get: { configuration.wrappedValue.visibleMetrics(forAccountId: account.id).contains(metric) },
+                                    set: { isVisible in
+                                        var metrics = configuration.wrappedValue.visibleMetrics(forAccountId: account.id)
+                                        if isVisible {
+                                            metrics.insert(metric)
+                                        } else {
+                                            metrics.remove(metric)
+                                        }
+                                        configuration.wrappedValue.accountMetrics[account.id] = metrics
+                                    }
+                                ))
+                                .toggleStyle(.checkbox)
+                            }
                         }
-                    ))
-                    .toggleStyle(.checkbox)
+                        .padding(.vertical, 4)
+                    }
                 }
                 Text(enabledAccounts.isEmpty
                      ? "Enable accounts in the Accounts tab to select them here."
@@ -1065,19 +1086,6 @@ private struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
-            ForEach(WidgetMetricKind.offerable) { metric in
-                Toggle(metric.displayName, isOn: Binding(
-                    get: { configuration.wrappedValue.visibleMetrics.contains(metric) },
-                    set: { isVisible in
-                        if isVisible {
-                            configuration.wrappedValue.visibleMetrics.insert(metric)
-                        } else {
-                            configuration.wrappedValue.visibleMetrics.remove(metric)
-                        }
-                    }
-                ))
-                .toggleStyle(.checkbox)
-            }
         }
         .padding(.vertical, 4)
     }

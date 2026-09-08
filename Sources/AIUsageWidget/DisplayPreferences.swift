@@ -48,7 +48,7 @@ enum WidgetMetricKind: String, CaseIterable, Identifiable, Codable {
     case context = "context"
     case claudeGptWeekly = "claude_gpt_weekly"
 
-    static let offerable: [WidgetMetricKind] = [.fiveHour, .weekly, .claudeGptWeekly]
+    static let offerable: [WidgetMetricKind] = [.fiveHour, .weekly]
 
     var id: String { rawValue }
     var displayName: String {
@@ -121,7 +121,31 @@ struct WidgetConfiguration: Identifiable, Codable, Equatable {
     var isEnabled: Bool = false
     var style: DesktopWidgetStyle = .combinedLinear
     var scope: WidgetScope = .allAgents
+    // Legacy global selection remains the fallback for accounts without an override.
     var visibleMetrics: Set<WidgetMetricKind> = Set(WidgetMetricKind.offerable)
+    var accountMetrics: [String: Set<WidgetMetricKind>] = [:]
+
+    func visibleMetrics(forAccountId accountId: String) -> Set<WidgetMetricKind> {
+        accountMetrics[accountId] ?? visibleMetrics
+    }
+}
+
+extension WidgetConfiguration {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, isEnabled, style, scope, visibleMetrics, accountMetrics
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
+        style = try container.decode(DesktopWidgetStyle.self, forKey: .style)
+        scope = try container.decode(WidgetScope.self, forKey: .scope)
+        visibleMetrics = try container.decode(Set<WidgetMetricKind>.self, forKey: .visibleMetrics)
+        // Older widgets have only the global visibleMetrics field.
+        accountMetrics = try container.decodeIfPresent([String: Set<WidgetMetricKind>].self, forKey: .accountMetrics) ?? [:]
+    }
 }
 
 private struct FailableWidgetConfiguration: Decodable {
