@@ -1075,6 +1075,12 @@ private struct GeneralSettingsTab: View {
                                 ))
                                 .toggleStyle(.checkbox)
                             }
+
+                            if account.provider == .antigravity {
+                                Text("Applies to both Gemini and Claude/GPT quotas.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         .padding(.vertical, 4)
                     }

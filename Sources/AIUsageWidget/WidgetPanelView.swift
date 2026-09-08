@@ -8,6 +8,20 @@ import SwiftUI
 /// 4. Per-agent, circular: Single-account dial ring with secondary window metrics, paginated when multi-account.
 /// 5. Concentric rings: Nested circular progress rings (outer: 5h, inner: weekly) with legend.
 /// 6. Single-agent focus: Minimal, unpaginated single-account glance card with a bold dominant metric.
+struct WidgetAccount: Identifiable, Equatable {
+    let id: String
+    let baseAccountId: String
+    let displayName: String
+    let symbolName: String
+    let label: String
+    let state: AccountTrustState
+    let displayLastError: String?
+    let asOf: Int64?
+    let activeRoute: Route
+    let isCodex: Bool
+    let data: ProviderData?
+}
+
 struct WidgetPanelView: View {
     @ObservedObject var store: UsageStore
     @ObservedObject var displayPrefs: DisplayPreferences
@@ -15,16 +29,67 @@ struct WidgetPanelView: View {
 
     @State private var selectedAgentIndex: Int = 0
 
-    private var displayedAccounts: [Account] {
-        var result: [Account] = []
+    private var displayedAccounts: [WidgetAccount] {
+        var realAccounts: [Account] = []
         for provider in displayPrefs.providerOrder {
             let accts = store.accounts.filter { $0.provider == provider && store.isAccountEnabled($0) }
-            result.append(contentsOf: accts)
+            realAccounts.append(contentsOf: accts)
         }
-        let remainder = store.accounts.filter { store.isAccountEnabled($0) && !result.contains($0) }
-        result.append(contentsOf: remainder)
+        let remainder = store.accounts.filter { store.isAccountEnabled($0) && !realAccounts.contains($0) }
+        realAccounts.append(contentsOf: remainder)
 
-        return result.filter { configuration.scope.includes($0.id) }
+        let scoped = realAccounts.filter { configuration.scope.includes($0.id) }
+
+        var result: [WidgetAccount] = []
+        for account in scoped {
+            result.append(WidgetAccount(
+                id: account.id,
+                baseAccountId: account.id,
+                displayName: account.provider.displayName,
+                symbolName: account.provider.symbolName,
+                label: account.label,
+                state: account.state,
+                displayLastError: account.displayLastError,
+                asOf: account.asOf,
+                activeRoute: account.activeRoute,
+                isCodex: account.provider == .codex,
+                data: account.data
+            ))
+
+            if account.provider == .antigravity,
+               let data = account.data,
+               data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil {
+                let cgData = ProviderData(
+                    usedPercent5h: data.usedPercent5hThirdParty,
+                    resetsAt5h: data.resetsAt5hThirdParty,
+                    usedPercentWeekly: data.usedPercentWeeklyThirdParty,
+                    resetsAtWeekly: data.resetsAtWeeklyThirdParty,
+                    usedPercent5hThirdParty: nil,
+                    resetsAt5hThirdParty: nil,
+                    usedPercentWeeklyThirdParty: nil,
+                    resetsAtWeeklyThirdParty: nil,
+                    contextWindowUsedPercent: nil
+                )
+                let cgLabel = (account.label.isEmpty || account.label == "Default")
+                    ? "via Antigravity"
+                    : "\(account.label) (via Antigravity)"
+
+                result.append(WidgetAccount(
+                    id: "\(account.id):claude_gpt",
+                    baseAccountId: account.id,
+                    displayName: "Claude/GPT",
+                    symbolName: "sparkles",
+                    label: cgLabel,
+                    state: account.state,
+                    displayLastError: account.displayLastError,
+                    asOf: account.asOf,
+                    activeRoute: account.activeRoute,
+                    isCodex: false,
+                    data: cgData
+                ))
+            }
+        }
+        return result
     }
 
     var body: some View {
@@ -72,7 +137,6 @@ struct WidgetPanelView: View {
                 case .concentricRings:
                     ConcentricRingsWidgetView(
                         accounts: displayedAccounts,
-                        isSingleAccountScope: configuration.scope.includedAccountIds?.count == 1,
                         metric: displayPrefs.percentageMetric,
                         configuration: configuration
                     )
@@ -191,12 +255,12 @@ struct WidgetPanelView: View {
 
 // MARK: - Shared Route & Badge Helpers
 
-private func routePill(for account: Account) -> some View {
+private func routePill(for account: WidgetAccount) -> some View {
     let title: String
     let color: Color
     switch account.activeRoute {
     case .injection:
-        if account.provider == .codex {
+        if account.isCodex {
             title = "RPC"
             color = .blue
         } else if account.state == .fresh {
@@ -235,21 +299,21 @@ private func statusColor(for state: AccountTrustState) -> Color {
 // MARK: - Style 1: Combined Linear Widget View
 
 private struct CombinedLinearWidgetView: View {
-    let accounts: [Account]
+    let accounts: [WidgetAccount]
     let metric: PercentageMetric
     let configuration: WidgetConfiguration
 
     var body: some View {
         VStack(spacing: 8) {
             ForEach(accounts) { account in
-                CombinedLinearAccountCard(account: account, metric: metric, visibleMetrics: configuration.visibleMetrics(forAccountId: account.id))
+                CombinedLinearAccountCard(account: account, metric: metric, visibleMetrics: configuration.visibleMetrics(forAccountId: account.baseAccountId))
             }
         }
     }
 }
 
 private struct CombinedLinearAccountCard: View {
-    let account: Account
+    let account: WidgetAccount
     let metric: PercentageMetric
     let visibleMetrics: Set<WidgetMetricKind>
 
@@ -280,18 +344,13 @@ private struct CombinedLinearAccountCard: View {
                     }
                 case .restored, .stale, .fresh:
                     if let data = account.data {
-                        let hasModelBreakdown = account.provider == .antigravity
-                            && ((visibleMetrics.contains(.fiveHour) && data.usedPercent5hThirdParty != nil)
-                                || (visibleMetrics.contains(.weekly) && data.usedPercentWeeklyThirdParty != nil))
                         let has5h = visibleMetrics.contains(.fiveHour) && data.usedPercent5h != nil
                         let hasWk = visibleMetrics.contains(.weekly) && data.usedPercentWeekly != nil
 
                         if !has5h && !hasWk {
-                            if !hasModelBreakdown {
-                                Text("No usage data")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
+                            Text("No usage data")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         } else {
                             VStack(spacing: 4) {
                                 if has5h {
@@ -302,11 +361,6 @@ private struct CombinedLinearAccountCard: View {
                                 }
                             }
                             .opacity(account.state == .stale ? 0.75 : 1.0)
-                        }
-
-                        if hasModelBreakdown {
-                            combinedLinearClaudeGptSection(data: data, hasGeminiMetrics: has5h || hasWk)
-                                .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                         }
                     } else {
                         Text("No usage data")
@@ -320,50 +374,11 @@ private struct CombinedLinearAccountCard: View {
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    @ViewBuilder
-    private func combinedLinearClaudeGptSection(data: ProviderData, hasGeminiMetrics: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            if hasGeminiMetrics {
-                Divider()
-                    .opacity(0.3)
-                    .padding(.vertical, 1)
-            }
-
-            HStack(spacing: 4) {
-                Text("Claude / GPT Quota")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-
-            VStack(spacing: 4) {
-                if visibleMetrics.contains(.fiveHour), let p5h = data.usedPercent5hThirdParty {
-                    linearRow(
-                        label: "5h C/G",
-                        percent: p5h,
-                        resetsAt: data.resetsAt5hThirdParty,
-                        labelWidth: 40,
-                        accessibilityLabelText: "Claude/GPT 5h"
-                    )
-                }
-                if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeeklyThirdParty {
-                    linearRow(
-                        label: "Wk C/G",
-                        percent: pWk,
-                        resetsAt: data.resetsAtWeeklyThirdParty,
-                        labelWidth: 40,
-                        accessibilityLabelText: "Claude/GPT Weekly"
-                    )
-                }
-            }
-        }
-    }
-
     private var accountHeader: some View {
         HStack(spacing: 5) {
-            Image(systemName: account.provider.symbolName)
+            Image(systemName: account.symbolName)
                 .font(.caption.weight(.bold))
-            Text(account.provider.displayName)
+            Text(account.displayName)
                 .font(.caption.weight(.semibold))
 
             if !account.label.isEmpty && account.label != "Default" {
@@ -440,7 +455,7 @@ private struct CombinedLinearAccountCard: View {
                 }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(accessibilityLabelText ?? "\(account.provider.displayName) \(label)"): \(Int(displayVal)) percent")
+            .accessibilityLabel("\(accessibilityLabelText ?? "\(account.displayName) \(label)"): \(Int(displayVal)) percent")
         }
     }
 }
@@ -448,30 +463,30 @@ private struct CombinedLinearAccountCard: View {
 // MARK: - Style 2: Combined Circular Widget View
 
 private struct CombinedCircularWidgetView: View {
-    let accounts: [Account]
+    let accounts: [WidgetAccount]
     let metric: PercentageMetric
     let configuration: WidgetConfiguration
 
     var body: some View {
         VStack(spacing: 10) {
             ForEach(accounts) { account in
-                CombinedCircularAccountCard(account: account, metric: metric, visibleMetrics: configuration.visibleMetrics(forAccountId: account.id))
+                CombinedCircularAccountCard(account: account, metric: metric, visibleMetrics: configuration.visibleMetrics(forAccountId: account.baseAccountId))
             }
         }
     }
 }
 
 private struct CombinedCircularAccountCard: View {
-    let account: Account
+    let account: WidgetAccount
     let metric: PercentageMetric
     let visibleMetrics: Set<WidgetMetricKind>
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 5) {
-                Image(systemName: account.provider.symbolName)
+                Image(systemName: account.symbolName)
                     .font(.caption.weight(.bold))
-                Text(account.provider.displayName)
+                Text(account.displayName)
                     .font(.caption.weight(.semibold))
 
                 if !account.label.isEmpty && account.label != "Default" {
@@ -518,13 +533,10 @@ private struct CombinedCircularAccountCard: View {
                     }
                 case .restored, .stale, .fresh:
                     if let data = account.data {
-                        let hasModelBreakdown = account.provider == .antigravity
-                            && ((visibleMetrics.contains(.fiveHour) && data.usedPercent5hThirdParty != nil)
-                                || (visibleMetrics.contains(.weekly) && data.usedPercentWeeklyThirdParty != nil))
                         let has5h = visibleMetrics.contains(.fiveHour) && data.usedPercent5h != nil
                         let hasWk = visibleMetrics.contains(.weekly) && data.usedPercentWeekly != nil
 
-                        if !has5h && !hasWk && !hasModelBreakdown {
+                        if !has5h && !hasWk {
                             Text("No usage data")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
@@ -535,14 +547,6 @@ private struct CombinedCircularAccountCard: View {
                                 }
                                 if hasWk, let percent = data.usedPercentWeekly {
                                     circularMetricItem(label: "Weekly", percent: percent, resetsAt: data.resetsAtWeekly)
-                                }
-                                if hasModelBreakdown {
-                                    if visibleMetrics.contains(.fiveHour), let percent = data.usedPercent5hThirdParty {
-                                        circularMetricItem(label: "5h C/G", percent: percent, resetsAt: data.resetsAt5hThirdParty)
-                                    }
-                                    if visibleMetrics.contains(.weekly), let percent = data.usedPercentWeeklyThirdParty {
-                                        circularMetricItem(label: "Weekly C/G", percent: percent, resetsAt: data.resetsAtWeeklyThirdParty)
-                                    }
                                 }
                             }
                             .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
@@ -592,7 +596,7 @@ private struct CombinedCircularAccountCard: View {
 // MARK: - Style 3: Per-Agent Linear Widget View
 
 @ViewBuilder
-private func freshnessBadge(for account: Account) -> some View {
+private func freshnessBadge(for account: WidgetAccount) -> some View {
     if account.state == .restored || account.state == .stale {
         let color: Color = account.state == .restored ? .purple : .orange
         Text(account.state == .restored ? "Last known — stale since restart" : "Stale")
@@ -605,12 +609,12 @@ private func freshnessBadge(for account: Account) -> some View {
 }
 
 private struct PerAgentLinearWidgetView: View {
-    let accounts: [Account]
+    let accounts: [WidgetAccount]
     @Binding var selectedIndex: Int
     let metric: PercentageMetric
     let configuration: WidgetConfiguration
 
-    private var activeAccount: Account? {
+    private var activeAccount: WidgetAccount? {
         guard !accounts.isEmpty else { return nil }
         let clamped = min(max(selectedIndex, 0), accounts.count - 1)
         return accounts[clamped]
@@ -618,7 +622,7 @@ private struct PerAgentLinearWidgetView: View {
 
     private var visibleMetrics: Set<WidgetMetricKind> {
         guard let account = activeAccount else { return [] }
-        return configuration.visibleMetrics(forAccountId: account.id)
+        return configuration.visibleMetrics(forAccountId: account.baseAccountId)
     }
 
     var body: some View {
@@ -631,13 +635,13 @@ private struct PerAgentLinearWidgetView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     // Agent Identity
                     HStack(spacing: 8) {
-                        Image(systemName: account.provider.symbolName)
+                        Image(systemName: account.symbolName)
                             .font(.title3.weight(.bold))
                             .foregroundStyle(.primary)
 
                         VStack(alignment: .leading, spacing: 1) {
                             HStack(spacing: 5) {
-                                Text(account.provider.displayName)
+                                Text(account.displayName)
                                     .font(.subheadline.weight(.bold))
                                 if !account.label.isEmpty && account.label != "Default" {
                                     Text(account.label)
@@ -690,9 +694,6 @@ private struct PerAgentLinearWidgetView: View {
                             .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                         case .restored, .stale, .fresh:
                             if let data = account.data {
-                                let hasModelBreakdown = account.provider == .antigravity
-                                    && ((visibleMetrics.contains(.fiveHour) && data.usedPercent5hThirdParty != nil)
-                                        || (visibleMetrics.contains(.weekly) && data.usedPercentWeeklyThirdParty != nil))
                                 let (primaryMetric, secondaryMetrics) = categorizeMetrics(data: data)
                                 if let primary = primaryMetric {
                                     VStack(spacing: 6) {
@@ -717,16 +718,9 @@ private struct PerAgentLinearWidgetView: View {
                                     }
                                     .opacity(account.state == .restored || account.state == .stale ? 0.85 : 1.0)
                                 } else {
-                                    if !hasModelBreakdown {
-                                        Text("No usage data")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-
-                                if hasModelBreakdown {
-                                    perAgentLinearClaudeGptSection(data: data)
-                                        .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
+                                    Text("No usage data")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
                                 }
                             } else {
                                 Text("No usage data")
@@ -799,30 +793,22 @@ private struct PerAgentLinearWidgetView: View {
         let displayVal = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
         let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
 
-        return VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .lastTextBaseline) {
+        return VStack(spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
                 Text("\(Int(displayVal))%")
-                    .font(.system(size: 32, weight: .bold, design: .rounded))
-                    .foregroundStyle(color)
-
-                Text(metric == .remaining ? "remaining" : "used")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundStyle(.primary)
 
                 Spacer()
 
                 if let resetsAt {
-                    HStack(spacing: 3) {
-                        Image(systemName: "clock")
-                            .font(.system(size: 9))
-                        Text(WidgetMetrics.formatCountdown(resetsAt))
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    }
-                    .foregroundStyle(.secondary)
+                    Text("Resets in \(WidgetMetrics.formatCountdown(resetsAt))")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
                 }
             }
 
-            LinearProgressBar(percent: displayVal, color: color, height: 7)
+            LinearProgressBar(percent: displayVal, color: color, height: 6)
 
             Text(title)
                 .font(.system(size: 9, weight: .semibold))
@@ -830,11 +816,6 @@ private struct PerAgentLinearWidgetView: View {
         }
         .padding(8)
         .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    @ViewBuilder
-    private func perAgentLinearClaudeGptSection(data: ProviderData) -> some View {
-        ClaudeGptLinearQuotaSection(data: data, metric: metric, visibleMetrics: visibleMetrics)
     }
 
     private func secondaryRow(label: String, percent: Double, resetsAt: Int?, labelWidth: CGFloat = 48) -> some View {
@@ -868,12 +849,12 @@ private struct PerAgentLinearWidgetView: View {
 // MARK: - Style 4: Per-Agent Circular Widget View
 
 private struct PerAgentCircularWidgetView: View {
-    let accounts: [Account]
+    let accounts: [WidgetAccount]
     @Binding var selectedIndex: Int
     let metric: PercentageMetric
     let configuration: WidgetConfiguration
 
-    private var activeAccount: Account? {
+    private var activeAccount: WidgetAccount? {
         guard !accounts.isEmpty else { return nil }
         let clamped = min(max(selectedIndex, 0), accounts.count - 1)
         return accounts[clamped]
@@ -881,7 +862,7 @@ private struct PerAgentCircularWidgetView: View {
 
     private var visibleMetrics: Set<WidgetMetricKind> {
         guard let account = activeAccount else { return [] }
-        return configuration.visibleMetrics(forAccountId: account.id)
+        return configuration.visibleMetrics(forAccountId: account.baseAccountId)
     }
 
     var body: some View {
@@ -894,9 +875,9 @@ private struct PerAgentCircularWidgetView: View {
                 VStack(spacing: 10) {
                     // Identity row
                     HStack(spacing: 6) {
-                        Image(systemName: account.provider.symbolName)
+                        Image(systemName: account.symbolName)
                             .font(.caption.weight(.bold))
-                        Text(account.provider.displayName)
+                        Text(account.displayName)
                             .font(.caption.weight(.bold))
 
                         if !account.label.isEmpty && account.label != "Default" {
@@ -944,25 +925,12 @@ private struct PerAgentCircularWidgetView: View {
                             .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                         case .restored, .stale, .fresh:
                             if let data = account.data {
-                                let hasModelBreakdown = account.provider == .antigravity
-                                    && ((visibleMetrics.contains(.fiveHour) && data.usedPercent5hThirdParty != nil)
-                                        || (visibleMetrics.contains(.weekly) && data.usedPercentWeeklyThirdParty != nil))
                                 let (primaryMetric, secondaryMetrics) = categorizeMetrics(data: data)
-                                if primaryMetric != nil || hasModelBreakdown {
+                                if let primary = primaryMetric {
                                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 8)], spacing: 12) {
-                                        if let primary = primaryMetric {
-                                            primaryDial(title: primary.title, percent: primary.percent, resetsAt: primary.resetsAt)
-                                        }
+                                        primaryDial(title: primary.title, percent: primary.percent, resetsAt: primary.resetsAt)
                                         ForEach(secondaryMetrics, id: \.kind) { secondary in
                                             primaryDial(title: secondary.title, percent: secondary.percent, resetsAt: secondary.resetsAt)
-                                        }
-                                        if hasModelBreakdown {
-                                            if visibleMetrics.contains(.fiveHour), let percent = data.usedPercent5hThirdParty {
-                                                primaryDial(title: "5h C/G", percent: percent, resetsAt: data.resetsAt5hThirdParty)
-                                            }
-                                            if visibleMetrics.contains(.weekly), let percent = data.usedPercentWeeklyThirdParty {
-                                                primaryDial(title: "Weekly C/G", percent: percent, resetsAt: data.resetsAtWeeklyThirdParty)
-                                            }
                                         }
                                     }
                                     .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
@@ -1080,20 +1048,17 @@ private struct PerAgentCircularWidgetView: View {
 // MARK: - Style 5: Concentric Rings Widget View
 
 private struct ConcentricRingsWidgetView: View {
-    let accounts: [Account]
-    let isSingleAccountScope: Bool
+    let accounts: [WidgetAccount]
     let metric: PercentageMetric
     let configuration: WidgetConfiguration
 
     var body: some View {
-        if isSingleAccountScope || accounts.count == 1 {
-            if let account = accounts.first {
-                SingleAccountConcentricCard(
-                    account: account,
-                    metric: metric,
-                    visibleMetrics: configuration.visibleMetrics(forAccountId: account.id)
-                )
-            }
+        if accounts.count == 1, let account = accounts.first {
+            SingleAccountConcentricCard(
+                account: account,
+                metric: metric,
+                visibleMetrics: configuration.visibleMetrics(forAccountId: account.baseAccountId)
+            )
         } else {
             MultiAccountConcentricView(
                 accounts: accounts,
@@ -1149,41 +1114,6 @@ private func extractRings(
     return rings
 }
 
-private func extractThirdPartyRings(
-    from data: ProviderData,
-    visibleMetrics: Set<WidgetMetricKind>,
-    metric: PercentageMetric
-) -> [RingData] {
-    var rings: [RingData] = []
-    if visibleMetrics.contains(.fiveHour), let p5h = data.usedPercent5hThirdParty {
-        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: p5h, metric: metric)
-        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
-        rings.append(RingData(
-            id: .fiveHour,
-            kind: .claudeGptWeekly,
-            label: "5h",
-            positionName: "Outer",
-            percent: displayVal,
-            color: color,
-            resetsAt: data.resetsAt5hThirdParty
-        ))
-    }
-    if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeeklyThirdParty {
-        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: pWk, metric: metric)
-        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
-        rings.append(RingData(
-            id: .weekly,
-            kind: .claudeGptWeekly,
-            label: "Weekly",
-            positionName: rings.isEmpty ? "Outer" : "Inner",
-            percent: displayVal,
-            color: color,
-            resetsAt: data.resetsAtWeeklyThirdParty
-        ))
-    }
-    return rings
-}
-
 /// Draws 1-3 nested concentric circular rings centered around a shared origin.
 private struct ConcentricRingsGauge: View {
     let rings: [RingData]
@@ -1209,7 +1139,7 @@ private struct ConcentricRingsGauge: View {
 
 /// Prominent single-account card with a large nested concentric rings gauge and detailed legend.
 private struct SingleAccountConcentricCard: View {
-    let account: Account
+    let account: WidgetAccount
     let metric: PercentageMetric
     let visibleMetrics: Set<WidgetMetricKind>
 
@@ -1217,9 +1147,9 @@ private struct SingleAccountConcentricCard: View {
         VStack(spacing: 10) {
             // Identity Header
             HStack(spacing: 6) {
-                Image(systemName: account.provider.symbolName)
+                Image(systemName: account.symbolName)
                     .font(.caption.weight(.bold))
-                Text(account.provider.displayName)
+                Text(account.displayName)
                     .font(.caption.weight(.bold))
 
                 if !account.label.isEmpty && account.label != "Default" {
@@ -1270,65 +1200,12 @@ private struct SingleAccountConcentricCard: View {
                 case .restored, .stale, .fresh:
                     if let data = account.data {
                         let rings = extractRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
-                        let cgRings = account.provider == .antigravity
-                            ? extractThirdPartyRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
-                            : []
 
-                        if rings.isEmpty && cgRings.isEmpty {
+                        if rings.isEmpty {
                             Text("No usage data")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                        } else if !rings.isEmpty && !cgRings.isEmpty {
-                            // Side-by-side: Gemini on the left, Claude / GPT on the right
-                            HStack(alignment: .top, spacing: 8) {
-                                // Left: Gemini concentric gauge
-                                VStack(spacing: 8) {
-                                    ZStack {
-                                        ConcentricRingsGauge(
-                                            rings: rings,
-                                            baseSize: 104,
-                                            ringWidth: 7,
-                                            ringSpacing: 4
-                                        )
-
-                                        Image(systemName: account.provider.symbolName)
-                                            .font(.system(size: 18, weight: .bold))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .frame(height: 104)
-                                    .accessibilityElement(children: .combine)
-                                    .accessibilityLabel("\(account.provider.displayName) concentric usage gauge")
-
-                                    concentricLegend(title: "Gemini", rings: rings)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .opacity(account.state == .stale ? 0.75 : 1.0)
-
-                                // Right: Claude/GPT companion concentric gauge
-                                VStack(spacing: 8) {
-                                    ZStack {
-                                        ConcentricRingsGauge(
-                                            rings: cgRings,
-                                            baseSize: 76,
-                                            ringWidth: 5.5,
-                                            ringSpacing: 3
-                                        )
-
-                                        Image(systemName: "sparkles")
-                                            .font(.system(size: 14, weight: .bold))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .frame(height: 104)
-                                    .accessibilityElement(children: .combine)
-                                    .accessibilityLabel("Claude/GPT concentric usage gauge")
-
-                                    concentricLegend(title: "Claude / GPT", rings: cgRings)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
-                            }
-                        } else if !rings.isEmpty {
-                            // Single main gauge
+                        } else {
                             VStack(spacing: 12) {
                                 ZStack {
                                     ConcentricRingsGauge(
@@ -1338,39 +1215,17 @@ private struct SingleAccountConcentricCard: View {
                                         ringSpacing: 4
                                     )
 
-                                    Image(systemName: account.provider.symbolName)
+                                    Image(systemName: account.symbolName)
                                         .font(.system(size: 18, weight: .bold))
                                         .foregroundStyle(.secondary)
                                 }
                                 .padding(.vertical, 2)
                                 .accessibilityElement(children: .combine)
-                                .accessibilityLabel("\(account.provider.displayName) concentric usage gauge")
+                                .accessibilityLabel("\(account.displayName) concentric usage gauge")
 
                                 concentricLegend(title: nil, rings: rings)
                             }
                             .opacity(account.state == .stale ? 0.75 : 1.0)
-                        } else {
-                            // Only Claude/GPT rings present
-                            VStack(spacing: 12) {
-                                ZStack {
-                                    ConcentricRingsGauge(
-                                        rings: cgRings,
-                                        baseSize: 104,
-                                        ringWidth: 7,
-                                        ringSpacing: 4
-                                    )
-
-                                    Image(systemName: "sparkles")
-                                        .font(.system(size: 18, weight: .bold))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(.vertical, 2)
-                                .accessibilityElement(children: .combine)
-                                .accessibilityLabel("Claude/GPT concentric usage gauge")
-
-                                concentricLegend(title: "Claude / GPT", rings: cgRings)
-                            }
-                            .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                         }
                     } else {
                         Text("No usage data")
@@ -1390,7 +1245,7 @@ private struct SingleAccountConcentricCard: View {
                 Text(title)
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                .lineLimit(1)
             }
 
             HStack(spacing: title != nil ? 4 : 12) {
@@ -1438,13 +1293,13 @@ private struct SingleAccountConcentricCard: View {
 
 /// Multi-account small-multiples layout when scope is all agents in concentricRings style.
 private struct MultiAccountConcentricView: View {
-    let accounts: [Account]
+    let accounts: [WidgetAccount]
     let metric: PercentageMetric
     let configuration: WidgetConfiguration
 
     var body: some View {
         VStack(spacing: 10) {
-            if accounts.allSatisfy({ configuration.visibleMetrics(forAccountId: $0.id).isDisjoint(with: WidgetMetricKind.offerable) }) {
+            if accounts.allSatisfy({ configuration.visibleMetrics(forAccountId: $0.baseAccountId).isDisjoint(with: WidgetMetricKind.offerable) }) {
                 Text("No metrics selected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1455,7 +1310,7 @@ private struct MultiAccountConcentricView: View {
                         MultiAccountConcentricCell(
                             account: account,
                             metric: metric,
-                            visibleMetrics: configuration.visibleMetrics(forAccountId: account.id)
+                            visibleMetrics: configuration.visibleMetrics(forAccountId: account.baseAccountId)
                         )
                     }
                 }
@@ -1465,7 +1320,7 @@ private struct MultiAccountConcentricView: View {
 }
 
 private struct MultiAccountConcentricCell: View {
-    let account: Account
+    let account: WidgetAccount
     let metric: PercentageMetric
     let visibleMetrics: Set<WidgetMetricKind>
 
@@ -1473,9 +1328,9 @@ private struct MultiAccountConcentricCell: View {
         VStack(spacing: 6) {
             // Header
             HStack(spacing: 4) {
-                Image(systemName: account.provider.symbolName)
+                Image(systemName: account.symbolName)
                     .font(.system(size: 9, weight: .bold))
-                Text(account.provider.displayName)
+                Text(account.displayName)
                     .font(.system(size: 9, weight: .semibold))
                     .lineLimit(1)
                 Spacer()
@@ -1509,94 +1364,13 @@ private struct MultiAccountConcentricCell: View {
             case .restored, .stale, .fresh:
                 if let data = account.data {
                     let rings = extractRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
-                    let cgRings = account.provider == .antigravity
-                        ? extractThirdPartyRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
-                        : []
 
-                    if rings.isEmpty && cgRings.isEmpty {
+                    if rings.isEmpty {
                         Text("No data")
                             .font(.system(size: 9))
                             .foregroundStyle(.secondary)
                             .frame(height: 58)
-                    } else if !rings.isEmpty && !cgRings.isEmpty {
-                        // Side-by-side: Gemini on the left, Claude / GPT on the right
-                        HStack(alignment: .top, spacing: 4) {
-                            // Left: Gemini
-                            VStack(spacing: 3) {
-                                ZStack {
-                                    ConcentricRingsGauge(
-                                        rings: rings,
-                                        baseSize: 52,
-                                        ringWidth: 3.5,
-                                        ringSpacing: 2
-                                    )
-
-                                    if let top = rings.first {
-                                        Text("\(Int(top.percent))%")
-                                            .font(.system(size: 8.5, weight: .bold, design: .rounded))
-                                            .foregroundStyle(.primary)
-                                    }
-                                }
-                                .frame(height: 52)
-                                .accessibilityElement(children: .combine)
-                                .accessibilityLabel("\(account.provider.displayName) concentric usage gauge")
-
-                                Text("Gemini")
-                                    .font(.system(size: 7.5, weight: .bold))
-                                    .foregroundStyle(.secondary)
-
-                                VStack(spacing: 1) {
-                                    ForEach(rings) { ring in
-                                        Text("\(ring.label) (\(ring.positionName.lowercased()))")
-                                            .font(.system(size: 6.5, weight: .medium))
-                                            .foregroundStyle(.tertiary)
-                                            .lineLimit(1)
-                                            .minimumScaleFactor(0.8)
-                                    }
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .opacity(account.state == .stale ? 0.75 : 1.0)
-
-                            // Right: Claude / GPT
-                            VStack(spacing: 3) {
-                                ZStack {
-                                    ConcentricRingsGauge(
-                                        rings: cgRings,
-                                        baseSize: 38,
-                                        ringWidth: 3,
-                                        ringSpacing: 1.5
-                                    )
-
-                                    if let top = cgRings.first {
-                                        Text("\(Int(top.percent))%")
-                                            .font(.system(size: 7.5, weight: .bold, design: .rounded))
-                                            .foregroundStyle(.primary)
-                                    }
-                                }
-                                .frame(height: 52)
-                                .accessibilityElement(children: .combine)
-                                .accessibilityLabel("Claude/GPT concentric usage gauge")
-
-                                Text("C/G")
-                                    .font(.system(size: 7.5, weight: .bold))
-                                    .foregroundStyle(.secondary)
-
-                                VStack(spacing: 1) {
-                                    ForEach(cgRings) { ring in
-                                        Text("\(ring.label) (\(ring.positionName.lowercased()))")
-                                            .font(.system(size: 6.5, weight: .medium))
-                                            .foregroundStyle(.tertiary)
-                                            .lineLimit(1)
-                                            .minimumScaleFactor(0.8)
-                                    }
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
-                        }
-                    } else if !rings.isEmpty {
-                        // Single main gauge
+                    } else {
                         ZStack {
                             ConcentricRingsGauge(
                                 rings: rings,
@@ -1612,35 +1386,12 @@ private struct MultiAccountConcentricCell: View {
                             }
                         }
                         .opacity(account.state == .stale ? 0.75 : 1.0)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("\(account.displayName) concentric usage gauge")
 
                         // Missing metrics differ per account, so label each card's actual rings.
                         VStack(alignment: .leading, spacing: 2) {
                             ForEach(rings) { ring in
-                                Text("\(ring.label) (\(ring.positionName.lowercased()))")
-                                    .font(.system(size: 8, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    } else {
-                        // Only Claude/GPT rings present
-                        ZStack {
-                            ConcentricRingsGauge(
-                                rings: cgRings,
-                                baseSize: 58,
-                                ringWidth: 4,
-                                ringSpacing: 2.5
-                            )
-
-                            if let top = cgRings.first {
-                                Text("\(Int(top.percent))%")
-                                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                                    .foregroundStyle(.primary)
-                            }
-                        }
-                        .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(cgRings) { ring in
                                 Text("\(ring.label) (\(ring.positionName.lowercased()))")
                                     .font(.system(size: 8, weight: .medium))
                                     .foregroundStyle(.secondary)
@@ -1659,24 +1410,23 @@ private struct MultiAccountConcentricCell: View {
         .frame(maxWidth: .infinity)
         .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
     }
-
 }
 
 // MARK: - Style 6: Single-Agent Focus Widget View
 
 private struct SingleAgentFocusWidgetView: View {
-    let accounts: [Account]
+    let accounts: [WidgetAccount]
     let isSingleAccountScope: Bool
     let metric: PercentageMetric
     let configuration: WidgetConfiguration
 
-    private var targetAccount: Account? {
+    private var targetAccount: WidgetAccount? {
         accounts.first
     }
 
     private var visibleMetrics: Set<WidgetMetricKind> {
         guard let account = targetAccount else { return [] }
-        return configuration.visibleMetrics(forAccountId: account.id)
+        return configuration.visibleMetrics(forAccountId: account.baseAccountId)
     }
 
     var body: some View {
@@ -1695,13 +1445,13 @@ private struct SingleAgentFocusWidgetView: View {
 
                 // Account Identity
                 HStack(spacing: 8) {
-                    Image(systemName: account.provider.symbolName)
+                    Image(systemName: account.symbolName)
                         .font(.title2.weight(.bold))
                         .foregroundStyle(.primary)
 
                     VStack(alignment: .leading, spacing: 1) {
                         HStack(spacing: 5) {
-                            Text(account.provider.displayName)
+                            Text(account.displayName)
                                 .font(.headline.weight(.bold))
                             if !account.label.isEmpty && account.label != "Default" {
                                 Text(account.label)
@@ -1752,9 +1502,6 @@ private struct SingleAgentFocusWidgetView: View {
                         .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                     case .restored, .stale, .fresh:
                         if let data = account.data {
-                            let hasModelBreakdown = account.provider == .antigravity
-                                && ((visibleMetrics.contains(.fiveHour) && data.usedPercent5hThirdParty != nil)
-                                    || (visibleMetrics.contains(.weekly) && data.usedPercentWeeklyThirdParty != nil))
                             let (dominantMetric, secondaryMetrics) = pickDominantAndSecondary(data: data)
                             if let dominant = dominantMetric {
                                 dominantFocusCard(dominant: dominant)
@@ -1765,16 +1512,9 @@ private struct SingleAgentFocusWidgetView: View {
                                         .opacity(account.state == .restored || account.state == .stale ? 0.85 : 1.0)
                                 }
                             } else {
-                                if !hasModelBreakdown {
-                                    Text("No usage data")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-
-                            if hasModelBreakdown {
-                                singleAgentClaudeGptSection(data: data)
-                                    .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
+                                Text("No usage data")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
                         } else {
                             Text("No usage data")
@@ -1898,86 +1638,9 @@ private struct SingleAgentFocusWidgetView: View {
         }
         .padding(.top, 2)
     }
-
-    @ViewBuilder
-    private func singleAgentClaudeGptSection(data: ProviderData) -> some View {
-        ClaudeGptLinearQuotaSection(data: data, metric: metric, visibleMetrics: visibleMetrics)
-    }
 }
 
 // MARK: - Reusable Visual Components
-
-/// Reusable linear section for Antigravity's Claude / GPT quota display across styles with sufficient horizontal space.
-private struct ClaudeGptLinearQuotaSection: View {
-    let data: ProviderData
-    let metric: PercentageMetric
-    let visibleMetrics: Set<WidgetMetricKind>
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Text("Claude / GPT Quota")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-
-            VStack(spacing: 5) {
-                if visibleMetrics.contains(.fiveHour), let p5h = data.usedPercent5hThirdParty {
-                    linearRow(
-                        label: "5h (C/G)",
-                        percent: p5h,
-                        resetsAt: data.resetsAt5hThirdParty,
-                        accessibilityLabelText: "Claude/GPT 5h"
-                    )
-                }
-                if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeeklyThirdParty {
-                    linearRow(
-                        label: "Weekly (C/G)",
-                        percent: pWk,
-                        resetsAt: data.resetsAtWeeklyThirdParty,
-                        accessibilityLabelText: "Claude/GPT Weekly"
-                    )
-                }
-            }
-        }
-        .padding(8)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func linearRow(
-        label: String,
-        percent: Double,
-        resetsAt: Int?,
-        accessibilityLabelText: String
-    ) -> some View {
-        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
-        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
-
-        return HStack(spacing: 6) {
-            Text(label)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 68, alignment: .leading)
-
-            LinearProgressBar(percent: displayVal, color: color, height: 4)
-
-            Text("\(Int(displayVal))%")
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.primary)
-                .frame(width: 30, alignment: .trailing)
-
-            if let resetsAt {
-                Text(WidgetMetrics.formatCountdown(resetsAt))
-                    .font(.system(size: 8, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 36, alignment: .trailing)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(accessibilityLabelText): \(Int(displayVal)) percent")
-    }
-}
 
 /// A circular progress ring rendered using SwiftUI `Circle().trim`.
 private struct CircularRingProgress: View {
