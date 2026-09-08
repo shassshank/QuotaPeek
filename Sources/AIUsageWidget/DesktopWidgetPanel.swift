@@ -1,9 +1,15 @@
 import AppKit
+import CoreGraphics
 import SwiftUI
 
-/// A floating, non-activating panel that hosts `WidgetPanelView` as an always-visible
-/// desktop widget. Independent from the menu bar status item / popover — both can be
-/// shown at the same time.
+/// A non-activating panel that hosts `WidgetPanelView` as an always-visible desktop
+/// widget. Independent from the menu bar status item / popover — both can be shown at
+/// the same time.
+///
+/// Sits at the desktop-icon window level (like a real macOS desktop widget), not
+/// `.floating`: it stays behind normal app windows instead of covering them, and
+/// `.stationary` keeps it pinned to wherever it was placed instead of chasing the user
+/// across Space switches/Exposé the way a floating panel would.
 @MainActor
 final class DesktopWidgetPanel: NSPanel {
     private static let autosaveName = "DesktopWidgetPanel"
@@ -17,12 +23,12 @@ final class DesktopWidgetPanel: NSPanel {
             defer: false
         )
 
-        isFloatingPanel = true
-        level = .floating
+        isFloatingPanel = false
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
         becomesKeyOnlyIfNeeded = true
         hidesOnDeactivate = false
         isMovableByWindowBackground = true
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
         isReleasedWhenClosed = false
