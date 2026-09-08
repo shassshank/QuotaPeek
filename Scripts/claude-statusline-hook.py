@@ -214,7 +214,10 @@ def main():
         line = build_status_line(payload)
     except Exception:
         line = "Claude Code"
-    print(" | ".join([line or "Claude Code"] + extra_status_segments()))
+    print(line or "Claude Code")
+    extras = extra_status_segments()
+    if extras:
+        print(" | ".join(extras))
     post_ingest(raw)
 
 
