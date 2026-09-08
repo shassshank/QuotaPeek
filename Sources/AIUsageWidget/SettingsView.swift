@@ -336,20 +336,31 @@ private struct AccountsSettingsTab: View {
             let binding = configBinding(for: account.provider)
 
             if account.provider == .claude {
+                // For Claude, "inference polling" and the Keychain route are the same thing
+                // (inference mode is what actually drives the Keychain-credentialed poll), so
+                // this is a single toggle that keeps both pieces of state in lockstep instead
+                // of two checkboxes that could disagree.
                 Toggle("Enable inference polling (Keychain route)", isOn: Binding(
                     get: { draftConfig.claudePollingMode == "inference" },
                     set: { isOn in
                         draftConfig.claudePollingMode = isOn ? "inference" : "disabled"
+                        var routes = binding.wrappedValue.routesEnabled
+                        if isOn, !routes.contains(.keychain) {
+                            routes.append(.keychain)
+                        } else if !isOn {
+                            routes.removeAll { $0 == .keychain }
+                        }
+                        binding.wrappedValue.routesEnabled = routes
                         Task { _ = await store.saveConfig(draftConfig) }
                     }
                 ))
                 .font(.caption)
-                Text("Off by default: sends a real one-token inference request every 60s (~1,440/day) to read live rate-limit headers. The Keychain route below stays disabled until this is on.")
+                Text("Off by default: sends a real one-token inference request every \(binding.wrappedValue.keychainPollIntervalSec)s (~\(requestsPerDay(intervalSec: binding.wrappedValue.keychainPollIntervalSec))/day) to read live rate-limit headers.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+            } else {
+                routeToggleRow(for: account, route: .keychain, label: "Keychain (poll CLI credentials)", binding: binding)
             }
-
-            routeToggleRow(for: account, route: .keychain, label: "Keychain (poll CLI credentials)", binding: binding)
 
             if account.provider == .codex {
                 routeToggleRow(for: account, route: .injection, label: "Local RPC (poll `codex app-server`)", binding: binding)
@@ -405,6 +416,12 @@ private struct AccountsSettingsTab: View {
                 .padding(.leading, 16)
             }
         }
+    }
+
+    private func requestsPerDay(intervalSec: Int) -> String {
+        guard intervalSec > 0 else { return "0" }
+        let perDay = 86_400 / intervalSec
+        return NumberFormatter.localizedString(from: NSNumber(value: perDay), number: .decimal)
     }
 
     private func routeToggleRow(
