@@ -41,7 +41,8 @@ struct PopoverView: View {
                     ForEach(displayedAccounts) { account in
                         AccountCard(
                             account: account,
-                            metric: displayPrefs.percentageMetric
+                            metric: displayPrefs.percentageMetric,
+                            showAntigravityModelBreakdown: displayPrefs.showAntigravityModelBreakdown
                         )
                     }
                 }
@@ -198,6 +199,7 @@ struct PopoverView: View {
 private struct AccountCard: View {
     let account: Account
     let metric: PercentageMetric
+    let showAntigravityModelBreakdown: Bool
 
     private var provider: Provider { account.provider }
 
@@ -337,7 +339,7 @@ private struct AccountCard: View {
             if let data = account.data {
                 windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
                 windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
-                if account.provider == .antigravity {
+                if account.provider == .antigravity && showAntigravityModelBreakdown {
                     windowRow(label: "Weekly (Claude)", percent: data.usedPercentWeeklyClaude, resetsAt: data.resetsAtWeeklyClaude)
                     windowRow(label: "Weekly (GPT)", percent: data.usedPercentWeeklyGPT, resetsAt: data.resetsAtWeeklyGPT)
                 }
@@ -358,7 +360,7 @@ private struct AccountCard: View {
             if let data = account.data {
                 windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h, isMuted: true)
                 windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly, isMuted: true)
-                if account.provider == .antigravity {
+                if account.provider == .antigravity && showAntigravityModelBreakdown {
                     windowRow(label: "Weekly (Claude)", percent: data.usedPercentWeeklyClaude, resetsAt: data.resetsAtWeeklyClaude, isMuted: true)
                     windowRow(label: "Weekly (GPT)", percent: data.usedPercentWeeklyGPT, resetsAt: data.resetsAtWeeklyGPT, isMuted: true)
                 }
@@ -380,7 +382,7 @@ private struct AccountCard: View {
             if let data = account.data {
                 windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
                 windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
-                if account.provider == .antigravity {
+                if account.provider == .antigravity && showAntigravityModelBreakdown {
                     windowRow(label: "Weekly (Claude)", percent: data.usedPercentWeeklyClaude, resetsAt: data.resetsAtWeeklyClaude)
                     windowRow(label: "Weekly (GPT)", percent: data.usedPercentWeeklyGPT, resetsAt: data.resetsAtWeeklyGPT)
                 }

@@ -46,6 +46,7 @@ enum WidgetMetricKind: String, CaseIterable, Identifiable, Codable {
     case fiveHour = "5h"
     case weekly = "weekly"
     case context = "context"
+    case claudeGptWeekly = "claude_gpt_weekly"
 
     var id: String { rawValue }
     var displayName: String {
@@ -53,6 +54,7 @@ enum WidgetMetricKind: String, CaseIterable, Identifiable, Codable {
         case .fiveHour: return "5-hour window"
         case .weekly: return "Weekly window"
         case .context: return "Context window"
+        case .claudeGptWeekly: return "Claude/GPT (weekly)"
         }
     }
 }
@@ -111,6 +113,7 @@ final class DisplayPreferences: ObservableObject {
 
     private enum Keys {
         static let menuBarMode = "display_menu_bar_mode"
+        static let showAntigravityModelBreakdown = "display_show_antigravity_model_breakdown"
         static let percentageMetric = "display_percentage_metric"
         static let providerOrder = "display_provider_order"
         static let widgetConfigurations = "display_widget_configurations"
@@ -127,6 +130,12 @@ final class DisplayPreferences: ObservableObject {
     @Published var percentageMetric: PercentageMetric {
         didSet {
             UserDefaults.standard.set(percentageMetric.rawValue, forKey: Keys.percentageMetric)
+        }
+    }
+
+    @Published var showAntigravityModelBreakdown: Bool {
+        didSet {
+            UserDefaults.standard.set(showAntigravityModelBreakdown, forKey: Keys.showAntigravityModelBreakdown)
         }
     }
 
@@ -147,6 +156,8 @@ final class DisplayPreferences: ObservableObject {
 
     private init() {
         let defaults = UserDefaults.standard
+        self.showAntigravityModelBreakdown = defaults.object(forKey: Keys.showAntigravityModelBreakdown) == nil
+            ? true : defaults.bool(forKey: Keys.showAntigravityModelBreakdown)
         if let data = defaults.data(forKey: Keys.widgetConfigurations),
            let configurations = try? JSONDecoder().decode([FailableWidgetConfiguration].self, from: data) {
             self.widgetConfigurations = configurations.compactMap(\.value)

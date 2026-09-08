@@ -854,6 +854,8 @@ private struct GeneralSettingsTab: View {
                 .pickerStyle(.segmented)
                 .accessibilityLabel("Percentage metric style")
 
+                Toggle("Show Antigravity Claude/GPT quota", isOn: $displayPrefs.showAntigravityModelBreakdown)
+
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Provider display order")
                         .font(.subheadline)

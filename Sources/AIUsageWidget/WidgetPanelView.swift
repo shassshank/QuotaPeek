@@ -283,14 +283,19 @@ private struct CombinedLinearAccountCard: View {
                     }
                 case .restored, .stale, .fresh:
                     if let data = account.data {
+                        let hasModelBreakdown = account.provider == .antigravity
+                            && visibleMetrics.contains(.claudeGptWeekly)
+                            && (data.usedPercentWeeklyClaude != nil || data.usedPercentWeeklyGPT != nil)
                         let has5h = visibleMetrics.contains(.fiveHour) && data.usedPercent5h != nil
                         let hasWk = visibleMetrics.contains(.weekly) && data.usedPercentWeekly != nil
                         let hasCtx = visibleMetrics.contains(.context) && data.contextWindowUsedPercent != nil
 
                         if !has5h && !hasWk && !hasCtx {
-                            Text("No usage data")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                            if !hasModelBreakdown {
+                                Text("No usage data")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         } else {
                             VStack(spacing: 4) {
                                 if has5h {
@@ -304,6 +309,11 @@ private struct CombinedLinearAccountCard: View {
                                 }
                             }
                             .opacity(account.state == .stale ? 0.75 : 1.0)
+                        }
+
+                        if hasModelBreakdown {
+                            AntigravityModelQuotaRows(data: data, metric: metric)
+                                .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                         }
                     } else {
                         Text("No usage data")
@@ -470,14 +480,19 @@ private struct CombinedCircularAccountCard: View {
                     }
                 case .restored, .stale, .fresh:
                     if let data = account.data {
+                        let hasModelBreakdown = account.provider == .antigravity
+                            && visibleMetrics.contains(.claudeGptWeekly)
+                            && (data.usedPercentWeeklyClaude != nil || data.usedPercentWeeklyGPT != nil)
                         let has5h = visibleMetrics.contains(.fiveHour) && data.usedPercent5h != nil
                         let hasWk = visibleMetrics.contains(.weekly) && data.usedPercentWeekly != nil
                         let hasCtx = visibleMetrics.contains(.context) && data.contextWindowUsedPercent != nil
 
                         if !has5h && !hasWk && !hasCtx {
-                            Text("No usage data")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                            if !hasModelBreakdown {
+                                Text("No usage data")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         } else {
                             HStack(spacing: 12) {
                                 if has5h, let p5h = data.usedPercent5h {
@@ -492,6 +507,11 @@ private struct CombinedCircularAccountCard: View {
                             }
                             .frame(maxWidth: .infinity, alignment: .center)
                             .opacity(account.state == .stale ? 0.75 : 1.0)
+                        }
+
+                        if hasModelBreakdown {
+                            AntigravityModelQuotaRows(data: data, metric: metric)
+                                .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                         }
                     } else {
                         Text("No usage data")
@@ -631,6 +651,9 @@ private struct PerAgentLinearWidgetView: View {
                             .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                         case .restored, .stale, .fresh:
                             if let data = account.data {
+                                let hasModelBreakdown = account.provider == .antigravity
+                                    && visibleMetrics.contains(.claudeGptWeekly)
+                                    && (data.usedPercentWeeklyClaude != nil || data.usedPercentWeeklyGPT != nil)
                                 let (primaryMetric, secondaryMetrics) = categorizeMetrics(data: data)
                                 if let primary = primaryMetric {
                                     VStack(spacing: 6) {
@@ -655,9 +678,16 @@ private struct PerAgentLinearWidgetView: View {
                                     }
                                     .opacity(account.state == .restored || account.state == .stale ? 0.85 : 1.0)
                                 } else {
-                                    Text("No usage data")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                    if !hasModelBreakdown {
+                                        Text("No usage data")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+
+                                if hasModelBreakdown {
+                                    AntigravityModelQuotaRows(data: data, metric: metric)
+                                        .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                                 }
                             } else {
                                 Text("No usage data")
@@ -866,6 +896,9 @@ private struct PerAgentCircularWidgetView: View {
                             .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                         case .restored, .stale, .fresh:
                             if let data = account.data {
+                                let hasModelBreakdown = account.provider == .antigravity
+                                    && visibleMetrics.contains(.claudeGptWeekly)
+                                    && (data.usedPercentWeeklyClaude != nil || data.usedPercentWeeklyGPT != nil)
                                 let (primaryMetric, secondaryMetrics) = categorizeMetrics(data: data)
                                 if let primary = primaryMetric {
                                     VStack(spacing: 8) {
@@ -889,9 +922,16 @@ private struct PerAgentCircularWidgetView: View {
                                     }
                                     .opacity(account.state == .stale ? 0.75 : 1.0)
                                 } else {
-                                    Text("No usage data")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                    if !hasModelBreakdown {
+                                        Text("No usage data")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+
+                                if hasModelBreakdown {
+                                    AntigravityModelQuotaRows(data: data, metric: metric)
+                                        .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                                 }
                             } else {
                                 Text("No usage data")
@@ -1201,11 +1241,16 @@ private struct SingleAccountConcentricCard: View {
                     .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                 case .restored, .stale, .fresh:
                     if let data = account.data {
+                        let hasModelBreakdown = account.provider == .antigravity
+                            && visibleMetrics.contains(.claudeGptWeekly)
+                            && (data.usedPercentWeeklyClaude != nil || data.usedPercentWeeklyGPT != nil)
                         let rings = extractRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
                         if rings.isEmpty {
-                            Text("No usage data")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            if !hasModelBreakdown {
+                                Text("No usage data")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         } else {
                             VStack(spacing: 12) {
                                 // Large Concentric Gauge
@@ -1260,6 +1305,11 @@ private struct SingleAccountConcentricCard: View {
                                 .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
                             }
                             .opacity(account.state == .stale ? 0.75 : 1.0)
+                        }
+
+                        if hasModelBreakdown {
+                            AntigravityModelQuotaRows(data: data, metric: metric)
+                                .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                         }
                     } else {
                         Text("No usage data")
@@ -1346,12 +1396,17 @@ private struct MultiAccountConcentricCell: View {
                     .frame(height: 58)
             case .restored, .stale, .fresh:
                 if let data = account.data {
+                    let hasModelBreakdown = account.provider == .antigravity
+                        && visibleMetrics.contains(.claudeGptWeekly)
+                        && (data.usedPercentWeeklyClaude != nil || data.usedPercentWeeklyGPT != nil)
                     let rings = extractRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
                     if rings.isEmpty {
-                        Text("No data")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                            .frame(height: 58)
+                        if !hasModelBreakdown {
+                            Text("No data")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                                .frame(height: 58)
+                        }
                     } else {
                         ZStack {
                             ConcentricRingsGauge(
@@ -1377,6 +1432,11 @@ private struct MultiAccountConcentricCell: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+                    }
+
+                    if hasModelBreakdown {
+                        AntigravityModelQuotaRows(data: data, metric: metric)
+                            .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                     }
                 } else {
                     Text("No data")
@@ -1477,6 +1537,9 @@ private struct SingleAgentFocusWidgetView: View {
                         .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                     case .restored, .stale, .fresh:
                         if let data = account.data {
+                            let hasModelBreakdown = account.provider == .antigravity
+                                && visibleMetrics.contains(.claudeGptWeekly)
+                                && (data.usedPercentWeeklyClaude != nil || data.usedPercentWeeklyGPT != nil)
                             let (dominantMetric, secondaryMetrics) = pickDominantAndSecondary(data: data)
                             if let dominant = dominantMetric {
                                 dominantFocusCard(dominant: dominant)
@@ -1487,9 +1550,16 @@ private struct SingleAgentFocusWidgetView: View {
                                         .opacity(account.state == .restored || account.state == .stale ? 0.85 : 1.0)
                                 }
                             } else {
-                                Text("No usage data")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                if !hasModelBreakdown {
+                                    Text("No usage data")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+
+                            if hasModelBreakdown {
+                                AntigravityModelQuotaRows(data: data, metric: metric)
+                                    .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                             }
                         } else {
                             Text("No usage data")
@@ -1615,6 +1685,44 @@ private struct SingleAgentFocusWidgetView: View {
             }
         }
         .padding(.top, 2)
+    }
+}
+
+/// Secondary quota rows keep the existing headline and ring metrics unchanged.
+private struct AntigravityModelQuotaRows: View {
+    let data: ProviderData
+    let metric: PercentageMetric
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            quotaRow(label: "Weekly (Claude)", percent: data.usedPercentWeeklyClaude, resetsAt: data.resetsAtWeeklyClaude)
+            quotaRow(label: "Weekly (GPT)", percent: data.usedPercentWeeklyGPT, resetsAt: data.resetsAtWeeklyGPT)
+        }
+    }
+
+    @ViewBuilder
+    private func quotaRow(label: String, percent: Double?, resetsAt: Int?) -> some View {
+        if let percent {
+            let displayed = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
+            let color = WidgetMetrics.colorForPercent(displayed, metric: metric)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(label)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text("\(Int(displayed))%\(metric == .remaining ? " remaining" : " used")")
+                        .font(.system(size: 9, weight: .semibold))
+                    Spacer(minLength: 0)
+                    if let resetsAt {
+                        Text(WidgetMetrics.formatCountdown(resetsAt))
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                LinearProgressBar(percent: displayed, color: color, height: 3.5)
+            }
+            .accessibilityElement(children: .combine)
+        }
     }
 }
 
