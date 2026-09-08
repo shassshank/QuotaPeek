@@ -338,23 +338,29 @@ private struct AccountsSettingsTab: View {
             if account.provider == .claude {
                 // For Claude, "inference polling" and the Keychain route are the same thing
                 // (inference mode is what actually drives the Keychain-credentialed poll), so
-                // this is a single toggle that keeps both pieces of state in lockstep instead
+                // this reuses routeToggleRow (Test button included) with an overridden isOn
+                // binding that keeps claudePollingMode and routesEnabled in lockstep instead
                 // of two checkboxes that could disagree.
-                Toggle("Enable inference polling (Keychain route)", isOn: Binding(
-                    get: { draftConfig.claudePollingMode == "inference" },
-                    set: { isOn in
-                        draftConfig.claudePollingMode = isOn ? "inference" : "disabled"
-                        var routes = binding.wrappedValue.routesEnabled
-                        if isOn, !routes.contains(.keychain) {
-                            routes.append(.keychain)
-                        } else if !isOn {
-                            routes.removeAll { $0 == .keychain }
+                routeToggleRow(
+                    for: account,
+                    route: .keychain,
+                    label: "Enable inference polling (Keychain route)",
+                    binding: binding,
+                    isOnOverride: Binding(
+                        get: { draftConfig.claudePollingMode == "inference" },
+                        set: { isOn in
+                            draftConfig.claudePollingMode = isOn ? "inference" : "disabled"
+                            var routes = binding.wrappedValue.routesEnabled
+                            if isOn, !routes.contains(.keychain) {
+                                routes.append(.keychain)
+                            } else if !isOn {
+                                routes.removeAll { $0 == .keychain }
+                            }
+                            binding.wrappedValue.routesEnabled = routes
+                            Task { _ = await store.saveConfig(draftConfig) }
                         }
-                        binding.wrappedValue.routesEnabled = routes
-                        Task { _ = await store.saveConfig(draftConfig) }
-                    }
-                ))
-                .font(.caption)
+                    )
+                )
                 Text("Off by default: sends a real one-token inference request every \(binding.wrappedValue.keychainPollIntervalSec)s (~\(requestsPerDay(intervalSec: binding.wrappedValue.keychainPollIntervalSec))/day) to read live rate-limit headers.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -428,26 +434,29 @@ private struct AccountsSettingsTab: View {
         for account: Account,
         route: Route,
         label: String,
-        binding: Binding<ProviderConfig>
+        binding: Binding<ProviderConfig>,
+        isOnOverride: Binding<Bool>? = nil
     ) -> some View {
         let key = RouteKey(accountId: account.id, provider: account.provider, route: route)
         let testState = testStatuses[key]
 
+        let isOnBinding = isOnOverride ?? Binding(
+            get: { binding.wrappedValue.routesEnabled.contains(route) },
+            set: { isOn in
+                var routes = binding.wrappedValue.routesEnabled
+                if isOn, !routes.contains(route) {
+                    routes.append(route)
+                } else if !isOn {
+                    routes.removeAll { $0 == route }
+                }
+                binding.wrappedValue.routesEnabled = routes
+                Task { _ = await store.saveConfig(draftConfig) }
+            }
+        )
+
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Toggle(label, isOn: Binding(
-                    get: { binding.wrappedValue.routesEnabled.contains(route) },
-                    set: { isOn in
-                        var routes = binding.wrappedValue.routesEnabled
-                        if isOn, !routes.contains(route) {
-                            routes.append(route)
-                        } else if !isOn {
-                            routes.removeAll { $0 == route }
-                        }
-                        binding.wrappedValue.routesEnabled = routes
-                        Task { _ = await store.saveConfig(draftConfig) }
-                    }
-                ))
+                Toggle(label, isOn: isOnBinding)
                 .font(.caption)
 
                 Spacer()
