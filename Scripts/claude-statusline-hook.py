@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import math
 import os
 import subprocess
 import sys
@@ -7,6 +8,7 @@ import time
 import urllib.request
 
 INGEST_URL = "http://127.0.0.1:47831/ingest/claude"
+STATUS_URL = "http://127.0.0.1:47831/status"
 
 
 def as_str(value):
@@ -138,6 +140,41 @@ def build_status_line(payload):
     return " | ".join(segments) if segments else "Claude Code"
 
 
+def extra_status_segments():
+    # Keep all daemon-dependent work isolated from Claude's own rendering.
+    try:
+        with urllib.request.urlopen(STATUS_URL, timeout=0.2) as response:
+            status = json.load(response)
+        if not isinstance(status, dict) or not isinstance(status.get("accounts"), list):
+            return []
+        selected = {}
+        for account in status["accounts"]:
+            if not isinstance(account, dict):
+                continue
+            provider = account.get("provider")
+            if provider not in ("codex", "antigravity"):
+                continue
+            if account.get("state") in ("unknown", "error"):
+                continue
+            data = account.get("data")
+            if not isinstance(data, dict):
+                continue
+            field = "used_percent_5h" if provider == "codex" else "used_percent_weekly"
+            pct = data.get(field)
+            if not isinstance(pct, (int, float)) or isinstance(pct, bool):
+                continue
+            if not math.isfinite(pct) or not 0 <= pct <= 100:
+                continue
+            # One compact number per provider, from its first usable account.
+            if provider not in selected:
+                selected[provider] = f"{pct:.0f}%"
+        return [f"{label} {selected[provider]}" for provider, label in
+                (("codex", "Codex"), ("antigravity", "Antigravity")) if provider in selected]
+    except Exception:
+        pass
+    return []
+
+
 def post_ingest(raw):
     try:
         payload = json.loads(raw)
@@ -169,7 +206,7 @@ def main():
         line = build_status_line(payload)
     except Exception:
         line = "Claude Code"
-    print(line or "Claude Code")
+    print(" | ".join([line or "Claude Code"] + extra_status_segments()))
     post_ingest(raw)
 
 

@@ -11,9 +11,9 @@ func defaultConfig() Config {
 	return Config{
 		StaleAfterSeconds: 600,
 		ClaudePollingMode: "disabled",
-		Claude:            ProviderConfig{RoutesEnabled: []Route{RouteKeychain}, KeychainPollIntervalSec: 60},
-		Codex:             ProviderConfig{RoutesEnabled: []Route{RouteKeychain}, KeychainPollIntervalSec: 60},
-		Antigravity:       ProviderConfig{RoutesEnabled: []Route{RouteKeychain}, KeychainPollIntervalSec: 120},
+		Claude:            ProviderConfig{RoutesEnabled: []Route{}, KeychainPollIntervalSec: 60},
+		Codex:             ProviderConfig{RoutesEnabled: []Route{}, KeychainPollIntervalSec: 60},
+		Antigravity:       ProviderConfig{RoutesEnabled: []Route{}, KeychainPollIntervalSec: 120},
 	}
 }
 

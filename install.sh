@@ -38,6 +38,17 @@ case "${1:-}" in
     *) echo "Unknown option: $1" >&2; exit 2 ;;
 esac
 
+# Check before starting the daemon: its first startup creates config.json.
+DETECT_ACCOUNTS=false
+if [ ! -e "$APP_SUPPORT/config.json" ]; then
+    echo "Accounts are optional. Detection uses installed CLIs and existing login credentials."
+    REPLY=""
+    read -r -p "No existing configuration found. Auto-detect installed AI CLIs (Claude, Codex, Antigravity) and add them as accounts? [y/N] " REPLY || true
+    case "$REPLY" in
+        y|Y) DETECT_ACCOUNTS=true ;;
+    esac
+fi
+
 echo "==> Building Go daemon"
 cd "$REPO_DIR/Backend"
 go build -o "$REPO_DIR/.build-go/aiusaged" .
@@ -78,6 +89,107 @@ for name in com.aiusagewidget.daemon com.aiusagewidget.app; do
     echo "  loaded $dest"
 done
 
+# POST /accounts creates credentials/account metadata; PUT /config enables routes.
+setup_detected_accounts() {
+    local token="" ready=false provider body patch config_dir interval
+    local deadline=$((SECONDS + 5))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if [ -s "$APP_SUPPORT/auth-token" ]; then
+            token="$(cat "$APP_SUPPORT/auth-token")"
+            if curl --silent --fail --max-time 0.2 \
+                -H "X-Auth-Token: $token" http://127.0.0.1:47831/config >/dev/null; then
+                ready=true
+                break
+            fi
+        fi
+        sleep 0.1
+    done
+    if [ "$ready" != true ]; then
+        echo "  Daemon not ready; add accounts later in Settings > Add Account."
+        return
+    fi
+    for provider in claude codex antigravity; do
+        config_dir=""
+        interval=60
+        case "$provider" in
+            claude|codex)
+                if ! command -v "$provider" >/dev/null 2>&1; then
+                    echo "  $provider not detected."
+                    continue
+                fi
+                if [ "$provider" = claude ]; then
+                    config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+                else
+                    config_dir="${CODEX_HOME:-$HOME/.codex}"
+                fi
+                ;;
+            antigravity)
+                if ! security find-generic-password -s gemini -a antigravity >/dev/null 2>&1; then
+                    echo "  antigravity not detected."
+                    continue
+                fi
+                interval=120
+                ;;
+        esac
+        # JSON encoding handles spaces/quotes in paths. Antigravity's existing
+        # credential format matches loadAntigravityCreds in Backend/collectors.go.
+        # Keep OAuth credentials out of command arguments and diagnostic output.
+        if ! body="$("$PYTHON3" - "$provider" "$config_dir" <<'PY'
+import base64, json, os, subprocess, sys
+provider, config_dir = sys.argv[1:]
+try:
+    body = {"provider": provider, "label": "Default"}
+    if provider == "antigravity":
+        raw = subprocess.run(
+            ["security", "find-generic-password", "-s", "gemini", "-a", "antigravity", "-w"],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        ).stdout.decode().strip()
+        prefix = "go-keyring-base64:"
+        if not raw.startswith(prefix):
+            raise ValueError("credential encoding")
+        creds = json.loads(base64.b64decode(raw[len(prefix):], validate=True))
+        refresh = creds["token"]["refresh_token"]
+        if not isinstance(refresh, str) or not refresh.strip():
+            raise ValueError("missing refresh token")
+        email = creds.get("email", "")
+        body["credentialLocation"] = {"kind": "daemon_token"}
+        body["oauthBootstrap"] = {"refreshToken": refresh, "email": email if isinstance(email, str) else ""}
+    else:
+        body["credentialLocation"] = {"kind": "config_dir", "configDir": os.path.abspath(config_dir)}
+    print(json.dumps(body))
+except Exception:
+    sys.exit(1)
+PY
+)"; then
+            echo "  Could not read $provider credentials; add it later in Settings."
+            continue
+        fi
+        if ! printf '%s' "$body" | curl --silent --show-error --fail --max-time 5 \
+            -H "X-Auth-Token: $token" -H "Content-Type: application/json" \
+            --data-binary @- http://127.0.0.1:47831/accounts >/dev/null; then
+            echo "  Could not add $provider; retry in Settings > Add Account."
+            continue
+        fi
+        body=""
+        patch="$("$PYTHON3" - "$provider" "$interval" <<'PY'
+import json, sys
+print(json.dumps({sys.argv[1]: {"routes_enabled": ["keychain"], "keychain_poll_interval_sec": int(sys.argv[2])}}))
+PY
+)"
+        if printf '%s' "$patch" | curl --silent --show-error --fail --max-time 5 \
+            -X PUT -H "X-Auth-Token: $token" -H "Content-Type: application/json" \
+            --data-binary @- http://127.0.0.1:47831/config >/dev/null; then
+            echo "  Added $provider account with Keychain route enabled."
+        else
+            echo "  Added $provider account; enable its route in Settings."
+        fi
+    done
+}
+
+if [ "$DETECT_ACCOUNTS" = true ]; then
+    setup_detected_accounts
+fi
+
 merge_statusline() {
     local settings_file="$1"
     local command="$2"
@@ -85,12 +197,14 @@ merge_statusline() {
     if [ ! -f "$settings_file" ]; then
         echo '{}' > "$settings_file"
     fi
-    "$PYTHON3" - "$settings_file" "$command" <<'PY'
+    "$PYTHON3" - "$settings_file" "$command" "${3:-}" <<'PY'
 import json, sys, shutil, datetime, os, tempfile
 path, command = sys.argv[1], sys.argv[2]
 with open(path) as f:
     data = json.load(f)
 desired = {"type": "command", "command": command, "enabled": True}
+if sys.argv[3]:
+    desired["refreshInterval"] = int(sys.argv[3])
 existing = data.get("statusLine")
 if isinstance(existing, dict) and all(existing.get(k) == v for k, v in desired.items()):
     sys.exit(0)
@@ -117,22 +231,20 @@ echo "==> Registering statusLine hooks (Injection route)"
 # BIN_DIR lives under ~/Library/Application Support, which has a space in it -
 # the command string must quote each path so a naive whitespace-splitting
 # executor (not just a real shell) doesn't tear "Application Support" in two.
-merge_statusline "$HOME/.claude/settings.json" "\"$PYTHON3\" \"$BIN_DIR/claude-statusline-hook.py\""
+merge_statusline "$HOME/.claude/settings.json" "\"$PYTHON3\" \"$BIN_DIR/claude-statusline-hook.py\"" 3
 merge_statusline "$HOME/.gemini/antigravity-cli/settings.json" "\"$PYTHON3\" \"$BIN_DIR/antigravity-statusline-hook.py\""
 
 echo ""
 echo "Installed. The menu bar icon should appear now (a gauge icon in the top menu bar)."
-echo "The background daemon (aiusaged) polls Antigravity via Keychain-read OAuth tokens,"
-echo "and Codex via a free local RPC call, by default."
+echo "Accounts are no longer auto-configured by default. Add detected accounts using"
+echo "the fresh-install prompt, or later via Settings > Add Account."
 echo ""
-echo "Claude Code and Antigravity will also start pushing live usage data (the"
-echo "Injection route) the next time you run either CLI, since their statusLine hooks"
-echo "are now registered. Open the app's Settings window (gear icon in the popover) to"
-echo "choose which route each provider uses, or enable both for automatic fallback."
+echo "StatusLine hooks are registered. Open Settings (gear icon in the popover) to"
+echo "add accounts and choose their collection routes, including passive Claude injection."
 echo ""
-echo "Claude inference polling is off by default (consent-first): until you either run"
-echo "Claude Code once (Injection route) or turn on inference polling in Settings, the"
-echo "Claude row will show 'inference polling is disabled'. Enabling it sends a real"
+echo "Claude inference polling remains off by default. For an added Claude account,"
+echo "enable Injection in Settings and run Claude Code for passive updates."
+echo "Enabling inference polling in Settings sends a real"
 echo "one-token inference request every 60s (~1,440/day) to read live rate-limit headers."
 echo "Quitting the app leaves the daemon running. Use $0 --daemon-stop to stop it durably."
 echo "Use $0 --app-login-off or --app-login-on to persist app login preferences."
