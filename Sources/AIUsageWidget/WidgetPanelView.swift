@@ -1149,6 +1149,41 @@ private func extractRings(
     return rings
 }
 
+private func extractThirdPartyRings(
+    from data: ProviderData,
+    visibleMetrics: Set<WidgetMetricKind>,
+    metric: PercentageMetric
+) -> [RingData] {
+    var rings: [RingData] = []
+    if visibleMetrics.contains(.fiveHour), let p5h = data.usedPercent5hThirdParty {
+        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: p5h, metric: metric)
+        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+        rings.append(RingData(
+            id: .fiveHour,
+            kind: .claudeGptWeekly,
+            label: "5h",
+            positionName: "Outer",
+            percent: displayVal,
+            color: color,
+            resetsAt: data.resetsAt5hThirdParty
+        ))
+    }
+    if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeeklyThirdParty {
+        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: pWk, metric: metric)
+        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+        rings.append(RingData(
+            id: .weekly,
+            kind: .claudeGptWeekly,
+            label: "Weekly",
+            positionName: rings.isEmpty ? "Outer" : "Inner",
+            percent: displayVal,
+            color: color,
+            resetsAt: data.resetsAtWeeklyThirdParty
+        ))
+    }
+    return rings
+}
+
 /// Draws 1-3 nested concentric circular rings centered around a shared origin.
 private struct ConcentricRingsGauge: View {
     let rings: [RingData]
@@ -1234,19 +1269,67 @@ private struct SingleAccountConcentricCard: View {
                     .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                 case .restored, .stale, .fresh:
                     if let data = account.data {
-                        let hasModelBreakdown = account.provider == .antigravity
-                            && ((visibleMetrics.contains(.fiveHour) && data.usedPercent5hThirdParty != nil)
-                                || (visibleMetrics.contains(.weekly) && data.usedPercentWeeklyThirdParty != nil))
                         let rings = extractRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
-                        if rings.isEmpty {
-                            if !hasModelBreakdown {
-                                Text("No usage data")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                        let cgRings = account.provider == .antigravity
+                            ? extractThirdPartyRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
+                            : []
+
+                        if rings.isEmpty && cgRings.isEmpty {
+                            Text("No usage data")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if !rings.isEmpty && !cgRings.isEmpty {
+                            // Side-by-side: Gemini on the left, Claude / GPT on the right
+                            HStack(alignment: .top, spacing: 8) {
+                                // Left: Gemini concentric gauge
+                                VStack(spacing: 8) {
+                                    ZStack {
+                                        ConcentricRingsGauge(
+                                            rings: rings,
+                                            baseSize: 104,
+                                            ringWidth: 7,
+                                            ringSpacing: 4
+                                        )
+
+                                        Image(systemName: account.provider.symbolName)
+                                            .font(.system(size: 18, weight: .bold))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(height: 104)
+                                    .accessibilityElement(children: .combine)
+                                    .accessibilityLabel("\(account.provider.displayName) concentric usage gauge")
+
+                                    concentricLegend(title: "Gemini", rings: rings)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .opacity(account.state == .stale ? 0.75 : 1.0)
+
+                                // Right: Claude/GPT companion concentric gauge
+                                VStack(spacing: 8) {
+                                    ZStack {
+                                        ConcentricRingsGauge(
+                                            rings: cgRings,
+                                            baseSize: 76,
+                                            ringWidth: 5.5,
+                                            ringSpacing: 3
+                                        )
+
+                                        Image(systemName: "sparkles")
+                                            .font(.system(size: 14, weight: .bold))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(height: 104)
+                                    .accessibilityElement(children: .combine)
+                                    .accessibilityLabel("Claude/GPT concentric usage gauge")
+
+                                    concentricLegend(title: "Claude / GPT", rings: cgRings)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                             }
-                        } else {
+                        } else if !rings.isEmpty {
+                            // Single main gauge
                             VStack(spacing: 12) {
-                                // Large Concentric Gauge
                                 ZStack {
                                     ConcentricRingsGauge(
                                         rings: rings,
@@ -1255,7 +1338,6 @@ private struct SingleAccountConcentricCard: View {
                                         ringSpacing: 4
                                     )
 
-                                    // Center symbol
                                     Image(systemName: account.provider.symbolName)
                                         .font(.system(size: 18, weight: .bold))
                                         .foregroundStyle(.secondary)
@@ -1264,52 +1346,31 @@ private struct SingleAccountConcentricCard: View {
                                 .accessibilityElement(children: .combine)
                                 .accessibilityLabel("\(account.provider.displayName) concentric usage gauge")
 
-                                // Rings Legend
-                                HStack(spacing: 12) {
-                                    ForEach(rings) { ring in
-                                        VStack(spacing: 2) {
-                                            HStack(spacing: 4) {
-                                                Circle()
-                                                    .fill(ring.color)
-                                                    .frame(width: 6, height: 6)
-                                                Text(ring.label)
-                                                    .font(.system(size: 9, weight: .semibold))
-                                                    .foregroundStyle(.secondary)
-                                            }
-
-                                            Text("\(Int(ring.percent))%")
-                                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                                .foregroundStyle(.primary)
-
-                                            Text(ring.positionName)
-                                                .font(.system(size: 8))
-                                                .foregroundStyle(.tertiary)
-
-                                            if let resetsAt = ring.resetsAt {
-                                                Text(WidgetMetrics.formatCountdown(resetsAt))
-                                                    .font(.system(size: 7, design: .monospaced))
-                                                    .foregroundStyle(.tertiary)
-                                            }
-                                        }
-                                        .frame(maxWidth: .infinity)
-                                    }
-                                }
-                                .padding(8)
-                                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+                                concentricLegend(title: nil, rings: rings)
                             }
                             .opacity(account.state == .stale ? 0.75 : 1.0)
-                        }
+                        } else {
+                            // Only Claude/GPT rings present
+                            VStack(spacing: 12) {
+                                ZStack {
+                                    ConcentricRingsGauge(
+                                        rings: cgRings,
+                                        baseSize: 104,
+                                        ringWidth: 7,
+                                        ringSpacing: 4
+                                    )
 
-                        if hasModelBreakdown {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 12)], spacing: 12) {
-                                if visibleMetrics.contains(.fiveHour), let percent = data.usedPercent5hThirdParty {
-                                    companionGauge(label: "5h C/G", percent: percent, resetsAt: data.resetsAt5hThirdParty)
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 18, weight: .bold))
+                                        .foregroundStyle(.secondary)
                                 }
-                                if visibleMetrics.contains(.weekly), let percent = data.usedPercentWeeklyThirdParty {
-                                    companionGauge(label: "Weekly C/G", percent: percent, resetsAt: data.resetsAtWeeklyThirdParty)
-                                }
+                                .padding(.vertical, 2)
+                                .accessibilityElement(children: .combine)
+                                .accessibilityLabel("Claude/GPT concentric usage gauge")
+
+                                concentricLegend(title: "Claude / GPT", rings: cgRings)
                             }
-                                .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
+                            .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                         }
                     } else {
                         Text("No usage data")
@@ -1323,28 +1384,54 @@ private struct SingleAccountConcentricCard: View {
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private func companionGauge(label: String, percent: Double, resetsAt: Int?) -> some View {
-        let displayed = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
-        let ring = RingData(id: .claudeGptWeekly, kind: .claudeGptWeekly, label: label,
-                            positionName: "Outer", percent: displayed,
-                            color: WidgetMetrics.colorForPercent(displayed, metric: metric), resetsAt: resetsAt)
-        return VStack(spacing: 5) {
-            ZStack {
-                ConcentricRingsGauge(rings: [ring], baseSize: 72, ringWidth: 6, ringSpacing: 4)
-                Text("\(Int(displayed))%")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+    private func concentricLegend(title: String?, rings: [RingData]) -> some View {
+        VStack(spacing: title != nil ? 3 : 0) {
+            if let title {
+                Text(title)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            Text(label)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
-            if let resetsAt {
-                Text(WidgetMetrics.formatCountdown(resetsAt))
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+
+            HStack(spacing: title != nil ? 4 : 12) {
+                ForEach(rings) { ring in
+                    VStack(spacing: 2) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(ring.color)
+                                .frame(width: title != nil ? 5 : 6, height: title != nil ? 5 : 6)
+                            Text(ring.label)
+                                .font(.system(size: title != nil ? 8.5 : 9, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+
+                        Text("\(Int(ring.percent))%")
+                            .font(.system(size: title != nil ? 10 : 11, weight: .bold, design: .monospaced))
+                            .foregroundStyle(.primary)
+
+                        Text(ring.positionName)
+                            .font(.system(size: title != nil ? 7.5 : 8))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+
+                        if let resetsAt = ring.resetsAt {
+                            Text(WidgetMetrics.formatCountdown(resetsAt))
+                                .font(.system(size: title != nil ? 6.5 : 7, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
             }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Claude/GPT \(label): \(Int(displayed)) percent")
+        .padding(title != nil ? 6 : 8)
+        .frame(maxWidth: .infinity)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
     }
 
 }
@@ -1421,18 +1508,95 @@ private struct MultiAccountConcentricCell: View {
                     .frame(height: 58)
             case .restored, .stale, .fresh:
                 if let data = account.data {
-                    let hasModelBreakdown = account.provider == .antigravity
-                        && ((visibleMetrics.contains(.fiveHour) && data.usedPercent5hThirdParty != nil)
-                            || (visibleMetrics.contains(.weekly) && data.usedPercentWeeklyThirdParty != nil))
                     let rings = extractRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
-                    if rings.isEmpty {
-                        if !hasModelBreakdown {
-                            Text("No data")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.secondary)
-                                .frame(height: 58)
+                    let cgRings = account.provider == .antigravity
+                        ? extractThirdPartyRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
+                        : []
+
+                    if rings.isEmpty && cgRings.isEmpty {
+                        Text("No data")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .frame(height: 58)
+                    } else if !rings.isEmpty && !cgRings.isEmpty {
+                        // Side-by-side: Gemini on the left, Claude / GPT on the right
+                        HStack(alignment: .top, spacing: 4) {
+                            // Left: Gemini
+                            VStack(spacing: 3) {
+                                ZStack {
+                                    ConcentricRingsGauge(
+                                        rings: rings,
+                                        baseSize: 52,
+                                        ringWidth: 3.5,
+                                        ringSpacing: 2
+                                    )
+
+                                    if let top = rings.first {
+                                        Text("\(Int(top.percent))%")
+                                            .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                                            .foregroundStyle(.primary)
+                                    }
+                                }
+                                .frame(height: 52)
+                                .accessibilityElement(children: .combine)
+                                .accessibilityLabel("\(account.provider.displayName) concentric usage gauge")
+
+                                Text("Gemini")
+                                    .font(.system(size: 7.5, weight: .bold))
+                                    .foregroundStyle(.secondary)
+
+                                VStack(spacing: 1) {
+                                    ForEach(rings) { ring in
+                                        Text("\(ring.label) (\(ring.positionName.lowercased()))")
+                                            .font(.system(size: 6.5, weight: .medium))
+                                            .foregroundStyle(.tertiary)
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.8)
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .opacity(account.state == .stale ? 0.75 : 1.0)
+
+                            // Right: Claude / GPT
+                            VStack(spacing: 3) {
+                                ZStack {
+                                    ConcentricRingsGauge(
+                                        rings: cgRings,
+                                        baseSize: 38,
+                                        ringWidth: 3,
+                                        ringSpacing: 1.5
+                                    )
+
+                                    if let top = cgRings.first {
+                                        Text("\(Int(top.percent))%")
+                                            .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                                            .foregroundStyle(.primary)
+                                    }
+                                }
+                                .frame(height: 52)
+                                .accessibilityElement(children: .combine)
+                                .accessibilityLabel("Claude/GPT concentric usage gauge")
+
+                                Text("C/G")
+                                    .font(.system(size: 7.5, weight: .bold))
+                                    .foregroundStyle(.secondary)
+
+                                VStack(spacing: 1) {
+                                    ForEach(cgRings) { ring in
+                                        Text("\(ring.label) (\(ring.positionName.lowercased()))")
+                                            .font(.system(size: 6.5, weight: .medium))
+                                            .foregroundStyle(.tertiary)
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.8)
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                         }
-                    } else {
+                    } else if !rings.isEmpty {
+                        // Single main gauge
                         ZStack {
                             ConcentricRingsGauge(
                                 rings: rings,
@@ -1457,11 +1621,31 @@ private struct MultiAccountConcentricCell: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
-                    }
+                    } else {
+                        // Only Claude/GPT rings present
+                        ZStack {
+                            ConcentricRingsGauge(
+                                rings: cgRings,
+                                baseSize: 58,
+                                ringWidth: 4,
+                                ringSpacing: 2.5
+                            )
 
-                    if hasModelBreakdown {
-                        multiAccountClaudeGptIndicator(data: data)
-                            .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
+                            if let top = cgRings.first {
+                                Text("\(Int(top.percent))%")
+                                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.primary)
+                            }
+                        }
+                        .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(cgRings) { ring in
+                                Text("\(ring.label) (\(ring.positionName.lowercased()))")
+                                    .font(.system(size: 8, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 } else {
                     Text("No data")
@@ -1474,53 +1658,6 @@ private struct MultiAccountConcentricCell: View {
         .padding(6)
         .frame(maxWidth: .infinity)
         .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    @ViewBuilder
-    private func multiAccountClaudeGptIndicator(data: ProviderData) -> some View {
-        VStack(spacing: 3) {
-            Text("Claude / GPT Quota")
-                .font(.system(size: 7.5, weight: .bold))
-                .foregroundStyle(.secondary)
-
-            HStack(alignment: .top, spacing: 6) {
-                if visibleMetrics.contains(.fiveHour), let p5h = data.usedPercent5hThirdParty {
-                    multiAccountClaudeGptGauge(label: "5h", percent: p5h, resetsAt: data.resetsAt5hThirdParty)
-                }
-
-                if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeeklyThirdParty {
-                    multiAccountClaudeGptGauge(label: "Weekly", percent: pWk, resetsAt: data.resetsAtWeeklyThirdParty)
-                }
-            }
-        }
-        .padding(.horizontal, 5)
-        .padding(.vertical, 3.5)
-        .frame(maxWidth: .infinity)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
-    }
-
-    private func multiAccountClaudeGptGauge(label: String, percent: Double, resetsAt: Int?) -> some View {
-        let displayed = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
-        let ring = RingData(id: .claudeGptWeekly, kind: .claudeGptWeekly, label: label,
-                            positionName: "Outer", percent: displayed,
-                            color: WidgetMetrics.colorForPercent(displayed, metric: metric), resetsAt: resetsAt)
-        return VStack(spacing: 2) {
-            ZStack {
-                ConcentricRingsGauge(rings: [ring], baseSize: 32, ringWidth: 3, ringSpacing: 2)
-                Text("\(Int(displayed))%")
-                    .font(.system(size: 8, weight: .bold, design: .rounded))
-            }
-            Text(label)
-                .font(.system(size: 7.5, weight: .semibold))
-                .foregroundStyle(.secondary)
-            if let resetsAt {
-                Text(WidgetMetrics.formatCountdown(resetsAt))
-                    .font(.system(size: 6.5, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Claude/GPT \(label): \(Int(displayed)) percent")
     }
 
 }
