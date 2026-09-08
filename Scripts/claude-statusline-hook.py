@@ -159,10 +159,8 @@ def extra_status_segments():
             data = account.get("data")
             if not isinstance(data, dict):
                 continue
-            pct_field, reset_field = (
-                ("used_percent_5h", "resets_at_5h") if provider == "codex"
-                else ("used_percent_weekly", "resets_at_weekly")
-            )
+            # Both Codex and Antigravity (Gemini group) expose a genuine 5h bucket.
+            pct_field, reset_field = "used_percent_5h", "resets_at_5h"
             pct = data.get(pct_field)
             if not isinstance(pct, (int, float)) or isinstance(pct, bool):
                 continue
@@ -188,8 +186,10 @@ def extra_status_segments():
                         breakdown.append(f"C:{claude_pct:.0f}%")
                     if has_g:
                         breakdown.append(f"G:{gpt_pct:.0f}%")
+                # Main figure above is the 5h Gemini window; this breakdown is weekly,
+                # so it's labeled to avoid implying the same window.
                 if breakdown:
-                    line = f"{line} ({' '.join(breakdown)})"
+                    line = f"{line} (wk {' '.join(breakdown)})"
             selected[provider] = line
         return [f"{label} {selected[provider]}" for provider, label in
                 (("codex", "Codex"), ("antigravity", "Antigravity")) if provider in selected]
