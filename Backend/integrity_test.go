@@ -14,7 +14,9 @@ import (
 )
 
 func TestPollSingleFlightAndStartTimestamp(t *testing.T) {
-	store := NewStore(defaultConfig())
+	cfg := defaultConfig()
+	cfg.Accounts = []AccountConfig{legacyAccount(ProviderCodex)}
+	store := NewStore(cfg)
 	server := NewServer(store, nil, "")
 	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	start := time.Now()
@@ -70,7 +72,9 @@ func TestNonFiniteIngestAndStatusEncodeFailure(t *testing.T) {
 	if _, err := json.Marshal(data); err != nil {
 		t.Fatal(err)
 	}
-	store := NewStore(defaultConfig())
+	cfg := defaultConfig()
+	cfg.Claude.RoutesEnabled = []Route{RouteKeychain}
+	store := NewStore(cfg)
 	// Bypass sample validation to exercise the response encoder failure guard.
 	store.samples[ProviderClaude][RouteKeychain] = routeSample{data: UsageData{UsedPercent5H: f(math.NaN())}, asOf: time.Now().Unix()}
 	w := httptest.NewRecorder()

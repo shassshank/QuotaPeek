@@ -21,8 +21,16 @@ const (
 type UsageData struct {
 	UsedPercent5H            *float64 `json:"used_percent_5h"`
 	ResetsAt5H               *int64   `json:"resets_at_5h"`
+	// UsedPercentWeekly and ResetsAtWeekly represent the primary/Gemini model family
+	// weekly quota for Antigravity (aligned with UsedPercent5H / ResetsAt5H), ensuring
+	// 5h and weekly metrics and resets are not mismatched across model families.
+	// For Claude and Codex providers, this remains their standard weekly quota.
 	UsedPercentWeekly        *float64 `json:"used_percent_weekly"`
 	ResetsAtWeekly           *int64   `json:"resets_at_weekly"`
+	UsedPercentWeeklyClaude  *float64 `json:"used_percent_weekly_claude,omitempty"`
+	ResetsAtWeeklyClaude     *int64   `json:"resets_at_weekly_claude,omitempty"`
+	UsedPercentWeeklyGPT     *float64 `json:"used_percent_weekly_gpt,omitempty"`
+	ResetsAtWeeklyGPT        *int64   `json:"resets_at_weekly_gpt,omitempty"`
 	ContextWindowUsedPercent *float64 `json:"context_window_used_percent"`
 }
 
@@ -31,6 +39,10 @@ func (u UsageData) empty() bool {
 		u.ResetsAt5H == nil &&
 		u.UsedPercentWeekly == nil &&
 		u.ResetsAtWeekly == nil &&
+		u.UsedPercentWeeklyClaude == nil &&
+		u.ResetsAtWeeklyClaude == nil &&
+		u.UsedPercentWeeklyGPT == nil &&
+		u.ResetsAtWeeklyGPT == nil &&
 		u.ContextWindowUsedPercent == nil
 }
 
@@ -88,5 +100,7 @@ type routeSample struct {
 // Context usage alone cannot replace a provider's quota snapshot.
 func (u UsageData) quotaEmpty() bool {
 	return u.UsedPercent5H == nil && u.ResetsAt5H == nil &&
-		u.UsedPercentWeekly == nil && u.ResetsAtWeekly == nil
+		u.UsedPercentWeekly == nil && u.ResetsAtWeekly == nil &&
+		u.UsedPercentWeeklyClaude == nil && u.ResetsAtWeeklyClaude == nil &&
+		u.UsedPercentWeeklyGPT == nil && u.ResetsAtWeeklyGPT == nil
 }

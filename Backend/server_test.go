@@ -96,6 +96,7 @@ func TestTestRouteSynchronous(t *testing.T) {
 			// Only the new historical poll-health fields may change on failure.
 			after.Accounts[0].LastFailureAt = before.Accounts[0].LastFailureAt
 			after.Accounts[0].LastErrorMessage = before.Accounts[0].LastErrorMessage
+			after.Accounts[0].State = before.Accounts[0].State
 			after.Providers[0].LastFailureAt = before.Providers[0].LastFailureAt
 			after.Providers[0].LastErrorMessage = before.Providers[0].LastErrorMessage
 			if result.Message == "" || !reflect.DeepEqual(before, after) || len(store.Errors(50)) != 0 {

@@ -103,12 +103,15 @@ func TestSampleCacheRecoveryAndExpiry(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"version":1,"samples":[`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	s := NewStore(defaultConfig())
+	cfg := defaultConfig()
+	cfg.Claude.RoutesEnabled = []Route{RouteKeychain}
+	cfg.Codex.RoutesEnabled = []Route{RouteInjection}
+	s := NewStore(cfg)
 	if err := s.enablePersistence(path); err == nil {
 		t.Fatal("accepted corrupt cache")
 	}
 	s.SetSample(ProviderClaude, RouteKeychain, UsageData{UsedPercent5H: f(30)}, time.Now().Unix()-historyMaxAge-1)
-	restored := NewStore(defaultConfig())
+	restored := NewStore(cfg)
 	if err := restored.enablePersistence(path); err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +142,9 @@ func TestSampleCacheRecoveryAndExpiry(t *testing.T) {
 }
 
 func TestHistoryEndpoint(t *testing.T) {
-	s := NewServer(NewStore(defaultConfig()), nil, "")
+	cfg := defaultConfig()
+	cfg.Accounts = []AccountConfig{legacyAccount(ProviderClaude), legacyAccount(ProviderCodex), legacyAccount(ProviderAntigravity)}
+	s := NewServer(NewStore(cfg), nil, "")
 	s.authToken = "test"
 	s.store.SetSample(ProviderClaude, RouteKeychain, UsageData{UsedPercentWeekly: f(25)}, time.Now().Unix())
 	for _, tc := range []struct {
@@ -179,7 +184,9 @@ func TestHistoryEndpoint(t *testing.T) {
 }
 
 func TestConcurrentSamplePersistence(t *testing.T) {
-	s := NewStore(defaultConfig())
+	cfg := defaultConfig()
+	cfg.Claude.RoutesEnabled = []Route{RouteKeychain}
+	s := NewStore(cfg)
 	path := filepath.Join(t.TempDir(), "samples.json")
 	if err := s.enablePersistence(path); err != nil {
 		t.Fatal(err)
@@ -195,7 +202,7 @@ func TestConcurrentSamplePersistence(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-	restored := NewStore(defaultConfig())
+	restored := NewStore(cfg)
 	if err := restored.enablePersistence(path); err != nil {
 		t.Fatal(err)
 	}

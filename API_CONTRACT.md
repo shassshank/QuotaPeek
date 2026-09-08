@@ -38,8 +38,12 @@ Provider {
   "data": {
     "used_percent_5h": 42.1,        // 0-100, null if this provider has no 5h window
     "resets_at_5h": 1767561600,     // unix seconds, null if unknown
-    "used_percent_weekly": 18.0,    // 0-100, null if this provider has no weekly window
+    "used_percent_weekly": 18.0,    // 0-100, null if this provider has no weekly window (primary/Gemini quota for Antigravity)
     "resets_at_weekly": 1768080000, // unix seconds, null if unknown
+    "used_percent_weekly_claude": 6.0,  // 0-100, null if not applicable (Antigravity Claude-family weekly quota)
+    "resets_at_weekly_claude": 1768400000, // unix seconds, null if unknown
+    "used_percent_weekly_gpt": 6.0,     // 0-100, null if not applicable (Antigravity GPT-family weekly quota)
+    "resets_at_weekly_gpt": 1768400000,    // unix seconds, null if unknown
     "context_window_used_percent": 12.4 // 0-100, null if not applicable/unknown
   } | null,                          // null if no data has ever arrived from any route
   "as_of": 1767550000,               // unix seconds `data` was captured, null if data is null

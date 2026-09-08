@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -62,12 +63,36 @@ func parseAntigravityIngest(raw []byte) (UsageData, bool, error) {
 				at := time.Now().Unix() + int64(seconds)
 				reset = &at
 			}
-			label := key
+			label := strings.ToLower(key)
 			switch classifyQuotaLabel(label) {
 			case "weekly":
-				if data.UsedPercentWeekly == nil || used > *data.UsedPercentWeekly {
-					data.UsedPercentWeekly = &used
-					data.ResetsAtWeekly = reset
+				hasClaude := strings.Contains(label, "claude")
+				hasGPT := strings.Contains(label, "gpt")
+				has3P := strings.Contains(label, "3p")
+				if (hasClaude && hasGPT) || has3P {
+					if data.UsedPercentWeeklyClaude == nil || used > *data.UsedPercentWeeklyClaude {
+						data.UsedPercentWeeklyClaude = &used
+						data.ResetsAtWeeklyClaude = reset
+					}
+					if data.UsedPercentWeeklyGPT == nil || used > *data.UsedPercentWeeklyGPT {
+						data.UsedPercentWeeklyGPT = &used
+						data.ResetsAtWeeklyGPT = reset
+					}
+				} else if hasClaude {
+					if data.UsedPercentWeeklyClaude == nil || used > *data.UsedPercentWeeklyClaude {
+						data.UsedPercentWeeklyClaude = &used
+						data.ResetsAtWeeklyClaude = reset
+					}
+				} else if hasGPT {
+					if data.UsedPercentWeeklyGPT == nil || used > *data.UsedPercentWeeklyGPT {
+						data.UsedPercentWeeklyGPT = &used
+						data.ResetsAtWeeklyGPT = reset
+					}
+				} else {
+					if data.UsedPercentWeekly == nil || used > *data.UsedPercentWeekly {
+						data.UsedPercentWeekly = &used
+						data.ResetsAtWeekly = reset
+					}
 				}
 			case "5h":
 				if data.UsedPercent5H == nil || used > *data.UsedPercent5H {
@@ -75,6 +100,15 @@ func parseAntigravityIngest(raw []byte) (UsageData, bool, error) {
 					data.ResetsAt5H = reset
 				}
 			}
+		}
+	}
+	if data.UsedPercentWeekly == nil {
+		if data.UsedPercentWeeklyClaude != nil {
+			data.UsedPercentWeekly = data.UsedPercentWeeklyClaude
+			data.ResetsAtWeekly = data.ResetsAtWeeklyClaude
+		} else if data.UsedPercentWeeklyGPT != nil {
+			data.UsedPercentWeekly = data.UsedPercentWeeklyGPT
+			data.ResetsAtWeekly = data.ResetsAtWeeklyGPT
 		}
 	}
 	if ctx, ok := payload["context_window"].(map[string]any); ok {

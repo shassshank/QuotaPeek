@@ -175,6 +175,21 @@ def extra_status_segments():
             reset = format_reset(data.get(reset_field))
             if reset:
                 line = f"{line} {reset}"
+            if provider == "antigravity":
+                claude_pct = data.get("used_percent_weekly_claude")
+                gpt_pct = data.get("used_percent_weekly_gpt")
+                breakdown = []
+                has_c = isinstance(claude_pct, (int, float)) and not isinstance(claude_pct, bool) and math.isfinite(claude_pct) and 0 <= claude_pct <= 100
+                has_g = isinstance(gpt_pct, (int, float)) and not isinstance(gpt_pct, bool) and math.isfinite(gpt_pct) and 0 <= gpt_pct <= 100
+                if has_c and has_g and claude_pct == gpt_pct:
+                    breakdown.append(f"C/G:{claude_pct:.0f}%")
+                else:
+                    if has_c:
+                        breakdown.append(f"C:{claude_pct:.0f}%")
+                    if has_g:
+                        breakdown.append(f"G:{gpt_pct:.0f}%")
+                if breakdown:
+                    line = f"{line} ({' '.join(breakdown)})"
             selected[provider] = line
         return [f"{label} {selected[provider]}" for provider, label in
                 (("codex", "Codex"), ("antigravity", "Antigravity")) if provider in selected]

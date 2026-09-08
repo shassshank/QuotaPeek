@@ -161,6 +161,10 @@ struct ProviderData: Codable, Equatable {
     var resetsAt5h: Int?
     var usedPercentWeekly: Double?
     var resetsAtWeekly: Int?
+    var usedPercentWeeklyClaude: Double?
+    var resetsAtWeeklyClaude: Int?
+    var usedPercentWeeklyGPT: Double?
+    var resetsAtWeeklyGPT: Int?
     var contextWindowUsedPercent: Double?
 
     enum CodingKeys: String, CodingKey {
@@ -168,6 +172,10 @@ struct ProviderData: Codable, Equatable {
         case resetsAt5h = "resets_at_5h"
         case usedPercentWeekly = "used_percent_weekly"
         case resetsAtWeekly = "resets_at_weekly"
+        case usedPercentWeeklyClaude = "used_percent_weekly_claude"
+        case resetsAtWeeklyClaude = "resets_at_weekly_claude"
+        case usedPercentWeeklyGPT = "used_percent_weekly_gpt"
+        case resetsAtWeeklyGPT = "resets_at_weekly_gpt"
         case contextWindowUsedPercent = "context_window_used_percent"
     }
 }

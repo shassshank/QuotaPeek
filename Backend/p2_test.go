@@ -90,6 +90,7 @@ func TestPauseDrainsPollAndResume(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.ClaudePollingMode = "inference"
 	cfg.Accounts = []AccountConfig{legacyAccount(ProviderClaude), legacyAccount(ProviderCodex), legacyAccount(ProviderAntigravity)}
+	cfg.Claude.RoutesEnabled = []Route{RouteKeychain}
 	cfg.Codex.RoutesEnabled, cfg.Antigravity.RoutesEnabled = nil, nil
 	s := NewServer(NewStore(cfg), NewCollector(), filepath.Join(t.TempDir(), "config.json"))
 	s.authToken = "secret"
@@ -161,7 +162,9 @@ func TestCredentialReset(t *testing.T) {
 	for _, id := range []ProviderID{ProviderClaude, ProviderCodex, ProviderAntigravity} {
 		t.Run(string(id), func(t *testing.T) {
 			c := NewCollector()
-			s := NewServer(NewStore(defaultConfig()), c, "")
+			cfg := defaultConfig()
+			cfg.Accounts = []AccountConfig{legacyAccount(ProviderClaude), legacyAccount(ProviderCodex), legacyAccount(ProviderAntigravity)}
+			s := NewServer(NewStore(cfg), c, "")
 			s.authToken = "secret"
 			a, _ := s.store.account(defaultAccountID(id))
 			c = s.collectorFor(a)
@@ -193,7 +196,7 @@ func TestCredentialReset(t *testing.T) {
 				}
 				s.store.endPoll(id, route)
 			}
-			cfg := s.store.Config()
+			cfg = s.store.Config()
 			cfg.CollectionPaused = true
 			s.store.SetConfig(cfg)
 			w := p2Request(s, "POST", path, "", "secret")
@@ -223,7 +226,9 @@ func TestCredentialReset(t *testing.T) {
 
 func TestCredentialResetFailure(t *testing.T) {
 	c := NewCollector()
-	s := NewServer(NewStore(defaultConfig()), c, "")
+	cfg := defaultConfig()
+	cfg.Accounts = []AccountConfig{legacyAccount(ProviderClaude), legacyAccount(ProviderCodex), legacyAccount(ProviderAntigravity)}
+	s := NewServer(NewStore(cfg), c, "")
 	s.authToken = "secret"
 	if w := p2Request(s, "POST", "/accounts/nope/reset-credentials", "", "secret"); w.Code != 404 {
 		t.Fatal(w.Body.String())
@@ -251,7 +256,9 @@ func TestCredentialResetFailure(t *testing.T) {
 
 func TestProviderHealth(t *testing.T) {
 	c := NewCollector()
-	s := NewServer(NewStore(defaultConfig()), c, "")
+	cfg := defaultConfig()
+	cfg.Accounts = []AccountConfig{legacyAccount(ProviderClaude), legacyAccount(ProviderCodex), legacyAccount(ProviderAntigravity)}
+	s := NewServer(NewStore(cfg), c, "")
 	a, _ := s.store.account(defaultAccountID(ProviderCodex))
 	c = s.collectorFor(a)
 	p := s.status().Accounts[1]

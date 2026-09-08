@@ -337,6 +337,10 @@ private struct AccountCard: View {
             if let data = account.data {
                 windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
                 windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
+                if account.provider == .antigravity {
+                    windowRow(label: "Weekly (Claude)", percent: data.usedPercentWeeklyClaude, resetsAt: data.resetsAtWeeklyClaude)
+                    windowRow(label: "Weekly (GPT)", percent: data.usedPercentWeeklyGPT, resetsAt: data.resetsAtWeeklyGPT)
+                }
                 windowRow(label: "Context", percent: data.contextWindowUsedPercent, resetsAt: nil)
             } else {
                 Text("No data restored")
@@ -354,6 +358,10 @@ private struct AccountCard: View {
             if let data = account.data {
                 windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h, isMuted: true)
                 windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly, isMuted: true)
+                if account.provider == .antigravity {
+                    windowRow(label: "Weekly (Claude)", percent: data.usedPercentWeeklyClaude, resetsAt: data.resetsAtWeeklyClaude, isMuted: true)
+                    windowRow(label: "Weekly (GPT)", percent: data.usedPercentWeeklyGPT, resetsAt: data.resetsAtWeeklyGPT, isMuted: true)
+                }
                 windowRow(label: "Context", percent: data.contextWindowUsedPercent, resetsAt: nil, isMuted: true)
             } else {
                 Text("Data is stale")
@@ -372,6 +380,10 @@ private struct AccountCard: View {
             if let data = account.data {
                 windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
                 windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
+                if account.provider == .antigravity {
+                    windowRow(label: "Weekly (Claude)", percent: data.usedPercentWeeklyClaude, resetsAt: data.resetsAtWeeklyClaude)
+                    windowRow(label: "Weekly (GPT)", percent: data.usedPercentWeeklyGPT, resetsAt: data.resetsAtWeeklyGPT)
+                }
                 windowRow(label: "Context", percent: data.contextWindowUsedPercent, resetsAt: nil)
             } else {
                 Text("No data yet")
@@ -404,6 +416,10 @@ private struct AccountCard: View {
         }
     }
 
+    private var labelWidth: CGFloat {
+        account.provider == .antigravity ? 98 : 46
+    }
+
     private func windowRow(label: String, percent: Double?, resetsAt: Int?, isMuted: Bool = false) -> some View {
         guard let percent else { return AnyView(EmptyView()) }
 
@@ -429,7 +445,8 @@ private struct AccountCard: View {
             HStack(spacing: 8) {
                 Text(label)
                     .font(.caption)
-                    .frame(width: 46, alignment: .leading)
+                    .lineLimit(1)
+                    .frame(width: labelWidth, alignment: .leading)
                     .foregroundStyle(isMuted ? Color.secondary.opacity(0.7) : Color.secondary)
                 ProgressView(value: displayPercent, total: 100)
                     .tint(barColor)
