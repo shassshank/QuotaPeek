@@ -1,5 +1,4 @@
 import AppKit
-import Charts
 import SwiftUI
 
 struct PopoverView: View {
@@ -42,7 +41,6 @@ struct PopoverView: View {
                     ForEach(displayedAccounts) { account in
                         AccountCard(
                             account: account,
-                            history: store.history[account.id],
                             metric: displayPrefs.percentageMetric
                         )
                     }
@@ -199,15 +197,9 @@ struct PopoverView: View {
 
 private struct AccountCard: View {
     let account: Account
-    let history: [HistoryPoint]?
     let metric: PercentageMetric
 
     private var provider: Provider { account.provider }
-
-    private var sparklineTintColor: Color {
-        let latestUsage = history?.last?.usedPercent ?? account.data?.usedPercent5h ?? account.data?.usedPercentWeekly ?? 0
-        return colorForPercent(latestUsage, metric: metric)
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -354,9 +346,6 @@ private struct AccountCard: View {
             if let error = account.displayLastError {
                 errorLine(error)
             }
-            if let history, history.count >= 2 {
-                SparklineView(points: history, tintColor: sparklineTintColor)
-            }
         }
     }
 
@@ -373,9 +362,6 @@ private struct AccountCard: View {
             }
             if let error = account.displayLastError {
                 errorLine(error)
-            }
-            if let history, history.count >= 2 {
-                SparklineView(points: history, tintColor: sparklineTintColor.opacity(0.6))
             }
         }
         .opacity(0.85)
@@ -394,9 +380,6 @@ private struct AccountCard: View {
             }
             if let error = account.displayLastError {
                 errorLine(error)
-            }
-            if let history, history.count >= 2 {
-                SparklineView(points: history, tintColor: sparklineTintColor)
             }
         }
     }
@@ -508,85 +491,3 @@ private struct AccountCard: View {
     }
 }
 
-private struct SparklineView: View {
-    let points: [HistoryPoint]
-    var tintColor: Color = .accentColor
-
-    private var sortedPoints: [HistoryPoint] {
-        points.sorted { $0.at < $1.at }
-    }
-
-    private var burnRateText: String? {
-        let pts = sortedPoints
-        guard pts.count >= 2,
-              let first = pts.first,
-              let last = pts.last else { return nil }
-        let timeDiffHours = Double(last.at - first.at) / 3600.0
-        guard timeDiffHours >= 0.05 else { return nil } // at least 3 minutes between points
-        let usageDiff = last.usedPercent - first.usedPercent
-        let ratePerHour = usageDiff / timeDiffHours
-        let sign = ratePerHour >= 0 ? "+" : ""
-        return String(format: "%@%.1f%%/h", sign, ratePerHour)
-    }
-
-    private var yDomain: ClosedRange<Double> {
-        let values = sortedPoints.map(\.usedPercent)
-        let minVal = max(0, (values.min() ?? 0) - 2)
-        let maxVal = min(100, (values.max() ?? 100) + 2)
-        if minVal >= maxVal {
-            return max(0, minVal - 5)...min(100, maxVal + 5)
-        }
-        return minVal...maxVal
-    }
-
-    var body: some View {
-        if sortedPoints.count >= 2 {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Text("Trend")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    if let burnRate = burnRateText {
-                        Text(burnRate)
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .help("Burn rate per hour based on recent usage")
-                    }
-                }
-
-                Chart(sortedPoints) { point in
-                    AreaMark(
-                        x: .value("Time", point.date),
-                        y: .value("Usage", point.usedPercent)
-                    )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [tintColor.opacity(0.25), tintColor.opacity(0.02)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .interpolationMethod(.monotone)
-
-                    LineMark(
-                        x: .value("Time", point.date),
-                        y: .value("Usage", point.usedPercent)
-                    )
-                    .foregroundStyle(tintColor)
-                    .lineStyle(StrokeStyle(lineWidth: 1.5))
-                    .interpolationMethod(.monotone)
-                }
-                .chartXAxis(.hidden)
-                .chartYAxis(.hidden)
-                .chartYScale(domain: yDomain)
-                .frame(height: 30)
-            }
-            .padding(.top, 4)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Usage trend: \(burnRateText ?? "history sparkline")")
-        } else {
-            EmptyView()
-        }
-    }
-}
