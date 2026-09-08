@@ -159,15 +159,23 @@ def extra_status_segments():
             data = account.get("data")
             if not isinstance(data, dict):
                 continue
-            field = "used_percent_5h" if provider == "codex" else "used_percent_weekly"
-            pct = data.get(field)
+            pct_field, reset_field = (
+                ("used_percent_5h", "resets_at_5h") if provider == "codex"
+                else ("used_percent_weekly", "resets_at_weekly")
+            )
+            pct = data.get(pct_field)
             if not isinstance(pct, (int, float)) or isinstance(pct, bool):
                 continue
             if not math.isfinite(pct) or not 0 <= pct <= 100:
                 continue
             # One compact number per provider, from its first usable account.
-            if provider not in selected:
-                selected[provider] = f"{pct:.0f}%"
+            if provider in selected:
+                continue
+            line = f"{pct:.0f}% {progress_bar(pct)}"
+            reset = format_reset(data.get(reset_field))
+            if reset:
+                line = f"{line} {reset}"
+            selected[provider] = line
         return [f"{label} {selected[provider]}" for provider, label in
                 (("codex", "Codex"), ("antigravity", "Antigravity")) if provider in selected]
     except Exception:
