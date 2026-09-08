@@ -62,11 +62,57 @@ enum WidgetMetricKind: String, CaseIterable, Identifiable, Codable {
 }
 
 struct WidgetScope: Codable, Equatable {
-    // nil includes all enabled accounts; otherwise scopes to one account's ID.
-    var accountId: String?
+    // nil includes all enabled accounts (including future accounts); an empty set includes none.
+    var includedAccountIds: Set<String>?
 
-    static let allAgents = WidgetScope(accountId: nil)
-    static func singleAgent(_ accountId: String) -> WidgetScope { WidgetScope(accountId: accountId) }
+    static let allAgents = WidgetScope(includedAccountIds: nil)
+    static func singleAgent(_ accountId: String) -> WidgetScope {
+        WidgetScope(includedAccountIds: [accountId])
+    }
+
+    init(includedAccountIds: Set<String>?) {
+        self.includedAccountIds = includedAccountIds
+    }
+
+    func includes(_ accountId: String) -> Bool {
+        includedAccountIds?.contains(accountId) ?? true
+    }
+
+    mutating func setIncluded(_ accountId: String, isIncluded: Bool, enabledAccountIds: Set<String>) {
+        var selected = includedAccountIds ?? enabledAccountIds
+        if isIncluded {
+            selected.insert(accountId)
+        } else {
+            selected.remove(accountId)
+        }
+        includedAccountIds = !enabledAccountIds.isEmpty && enabledAccountIds.isSubset(of: selected)
+            ? nil : selected
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case includedAccountIds
+        case accountId
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if container.contains(.includedAccountIds) {
+            includedAccountIds = try container.decodeIfPresent(Set<String>.self, forKey: .includedAccountIds)
+        } else {
+            // Older widgets encoded only accountId, omitting it entirely for all accounts.
+            let legacyId = try container.decodeIfPresent(String.self, forKey: .accountId)
+            includedAccountIds = legacyId.map { [$0] }
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let includedAccountIds {
+            try container.encode(includedAccountIds.sorted(), forKey: .includedAccountIds)
+        } else {
+            try container.encodeNil(forKey: .includedAccountIds)
+        }
+    }
 }
 
 struct WidgetConfiguration: Identifiable, Codable, Equatable {

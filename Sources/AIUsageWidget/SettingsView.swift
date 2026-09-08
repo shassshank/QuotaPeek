@@ -1041,19 +1041,29 @@ private struct GeneralSettingsTab: View {
             }
             .pickerStyle(.menu)
 
-            Picker("Scope", selection: Binding<String?>(
-                get: { configuration.wrappedValue.scope.accountId },
-                set: { accountId in
-                    configuration.wrappedValue.scope = accountId.map { .singleAgent($0) } ?? .allAgents
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Included accounts")
+                    .font(.subheadline)
+                let enabledAccounts = store.accounts.filter { store.isAccountEnabled($0) }
+                ForEach(enabledAccounts) { account in
+                    Toggle("\(account.provider.displayName) — \(account.label)", isOn: Binding(
+                        get: { configuration.wrappedValue.scope.includes(account.id) },
+                        set: { isIncluded in
+                            configuration.wrappedValue.scope.setIncluded(
+                                account.id,
+                                isIncluded: isIncluded,
+                                enabledAccountIds: Set(enabledAccounts.map(\.id))
+                            )
+                        }
+                    ))
+                    .toggleStyle(.checkbox)
                 }
-            )) {
-                Text("All agents (combined)").tag(nil as String?)
-                ForEach(store.accounts.filter { store.isAccountEnabled($0) }) { account in
-                    Text("\(account.provider.displayName) — \(account.label)")
-                        .tag(Optional(account.id))
-                }
+                Text(enabledAccounts.isEmpty
+                     ? "Enable accounts in the Accounts tab to select them here."
+                     : "All checked includes all enabled accounts, including accounts added later.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .pickerStyle(.menu)
 
             ForEach(WidgetMetricKind.offerable) { metric in
                 Toggle(metric.displayName, isOn: Binding(
