@@ -122,18 +122,18 @@ func TestParseAntigravityQuotaRealStructure(t *testing.T) {
 		t.Fatalf("ResetsAtWeekly = %v, want 1789076566", data.ResetsAtWeekly)
 	}
 
-	// Claude and GPT models must be populated separately from the 3p weekly bucket
-	if data.UsedPercentWeeklyClaude == nil || *data.UsedPercentWeeklyClaude != 6.0 {
-		t.Fatalf("UsedPercentWeeklyClaude = %v, want 6.0", data.UsedPercentWeeklyClaude)
+	// Claude and GPT models group (3p) provides 5h and weekly third-party quota
+	if data.UsedPercentWeeklyThirdParty == nil || *data.UsedPercentWeeklyThirdParty != 6.0 {
+		t.Fatalf("UsedPercentWeeklyThirdParty = %v, want 6.0", data.UsedPercentWeeklyThirdParty)
 	}
-	if data.ResetsAtWeeklyClaude == nil || *data.ResetsAtWeeklyClaude != 1789428889 {
-		t.Fatalf("ResetsAtWeeklyClaude = %v, want 1789428889", data.ResetsAtWeeklyClaude)
+	if data.ResetsAtWeeklyThirdParty == nil || *data.ResetsAtWeeklyThirdParty != 1789428889 {
+		t.Fatalf("ResetsAtWeeklyThirdParty = %v, want 1789428889", data.ResetsAtWeeklyThirdParty)
 	}
-	if data.UsedPercentWeeklyGPT == nil || *data.UsedPercentWeeklyGPT != 6.0 {
-		t.Fatalf("UsedPercentWeeklyGPT = %v, want 6.0", data.UsedPercentWeeklyGPT)
+	if data.UsedPercent5HThirdParty == nil || *data.UsedPercent5HThirdParty != 0.0 {
+		t.Fatalf("UsedPercent5HThirdParty = %v, want 0.0", data.UsedPercent5HThirdParty)
 	}
-	if data.ResetsAtWeeklyGPT == nil || *data.ResetsAtWeeklyGPT != 1789428889 {
-		t.Fatalf("ResetsAtWeeklyGPT = %v, want 1789428889", data.ResetsAtWeeklyGPT)
+	if data.ResetsAt5HThirdParty == nil || *data.ResetsAt5HThirdParty != 1788874016 {
+		t.Fatalf("ResetsAt5HThirdParty = %v, want 1788874016", data.ResetsAt5HThirdParty)
 	}
 }
 
@@ -150,7 +150,8 @@ func TestParseAntigravityQuotaDistinctClaudeAndGPT(t *testing.T) {
 			{
 				"displayName": "Claude Models",
 				"buckets": [
-					{"bucketId": "claude-weekly", "window": "weekly", "remainingFraction": 0.80, "resetTime": "2026-09-14T20:00:00Z"}
+					{"bucketId": "claude-weekly", "window": "weekly", "remainingFraction": 0.80, "resetTime": "2026-09-14T20:00:00Z"},
+					{"bucketId": "claude-5h", "window": "5h", "remainingFraction": 0.85, "resetTime": "2026-09-08T12:00:00Z"}
 				]
 			},
 			{
@@ -173,11 +174,11 @@ func TestParseAntigravityQuotaDistinctClaudeAndGPT(t *testing.T) {
 	if data.UsedPercent5H == nil || *data.UsedPercent5H != 40.0 {
 		t.Fatalf("UsedPercent5H = %v, want 40.0", data.UsedPercent5H)
 	}
-	if data.UsedPercentWeeklyClaude == nil || *data.UsedPercentWeeklyClaude != 20.0 {
-		t.Fatalf("UsedPercentWeeklyClaude = %v, want 20.0", data.UsedPercentWeeklyClaude)
+	if data.UsedPercentWeeklyThirdParty == nil || *data.UsedPercentWeeklyThirdParty != 50.0 {
+		t.Fatalf("UsedPercentWeeklyThirdParty = %v, want 50.0", data.UsedPercentWeeklyThirdParty)
 	}
-	if data.UsedPercentWeeklyGPT == nil || *data.UsedPercentWeeklyGPT != 50.0 {
-		t.Fatalf("UsedPercentWeeklyGPT = %v, want 50.0", data.UsedPercentWeeklyGPT)
+	if data.UsedPercent5HThirdParty == nil || *data.UsedPercent5HThirdParty != 15.0 {
+		t.Fatalf("UsedPercent5HThirdParty = %v, want 15.0", data.UsedPercent5HThirdParty)
 	}
 }
 
@@ -187,7 +188,8 @@ func TestParseAntigravityIngestDistinctModels(t *testing.T) {
 			"gemini-weekly": {"remaining_fraction": 0.90, "reset_in_seconds": 7200},
 			"gemini-5h": {"remaining_fraction": 0.75, "reset_in_seconds": 1800},
 			"claude-weekly": {"remaining_fraction": 0.85, "reset_in_seconds": 14400},
-			"gpt-weekly": {"remaining_fraction": 0.80, "reset_in_seconds": 14400}
+			"gpt-weekly": {"remaining_fraction": 0.80, "reset_in_seconds": 14400},
+			"3p-5h": {"remaining_fraction": 0.70, "reset_in_seconds": 3600}
 		}
 	}`)
 	data, ok, err := parseAntigravityIngest(raw)
@@ -200,10 +202,10 @@ func TestParseAntigravityIngestDistinctModels(t *testing.T) {
 	if data.UsedPercent5H == nil || *data.UsedPercent5H != 25.0 {
 		t.Fatalf("UsedPercent5H = %v, want 25.0", data.UsedPercent5H)
 	}
-	if data.UsedPercentWeeklyClaude == nil || *data.UsedPercentWeeklyClaude != 15.0 {
-		t.Fatalf("UsedPercentWeeklyClaude = %v, want 15.0", data.UsedPercentWeeklyClaude)
+	if data.UsedPercentWeeklyThirdParty == nil || *data.UsedPercentWeeklyThirdParty != 20.0 {
+		t.Fatalf("UsedPercentWeeklyThirdParty = %v, want 20.0", data.UsedPercentWeeklyThirdParty)
 	}
-	if data.UsedPercentWeeklyGPT == nil || *data.UsedPercentWeeklyGPT != 20.0 {
-		t.Fatalf("UsedPercentWeeklyGPT = %v, want 20.0", data.UsedPercentWeeklyGPT)
+	if data.UsedPercent5HThirdParty == nil || *data.UsedPercent5HThirdParty != 30.0 {
+		t.Fatalf("UsedPercent5HThirdParty = %v, want 30.0", data.UsedPercent5HThirdParty)
 	}
 }

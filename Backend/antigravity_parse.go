@@ -36,17 +36,11 @@ func ParseAntigravityQuota(raw []byte) (UsageData, bool) {
 		switch win {
 		case "weekly":
 			switch fam {
-			case "claude":
-				data.UsedPercentWeeklyClaude = &used
-				data.ResetsAtWeeklyClaude = reset
-			case "gpt":
-				data.UsedPercentWeeklyGPT = &used
-				data.ResetsAtWeeklyGPT = reset
-			case "claude_gpt":
-				data.UsedPercentWeeklyClaude = &used
-				data.ResetsAtWeeklyClaude = reset
-				data.UsedPercentWeeklyGPT = &used
-				data.ResetsAtWeeklyGPT = reset
+			case "claude", "gpt", "claude_gpt":
+				if data.UsedPercentWeeklyThirdParty == nil || used > *data.UsedPercentWeeklyThirdParty {
+					data.UsedPercentWeeklyThirdParty = &used
+					data.ResetsAtWeeklyThirdParty = reset
+				}
 			case "gemini":
 				data.UsedPercentWeekly = &used
 				data.ResetsAtWeekly = reset
@@ -58,6 +52,11 @@ func ParseAntigravityQuota(raw []byte) (UsageData, bool) {
 			}
 		case "5h":
 			switch fam {
+			case "claude", "gpt", "claude_gpt":
+				if data.UsedPercent5HThirdParty == nil || used > *data.UsedPercent5HThirdParty {
+					data.UsedPercent5HThirdParty = &used
+					data.ResetsAt5HThirdParty = reset
+				}
 			case "gemini":
 				data.UsedPercent5H = &used
 				data.ResetsAt5H = reset
@@ -77,17 +76,19 @@ func ParseAntigravityQuota(raw []byte) (UsageData, bool) {
 		if genericWeekly != nil {
 			data.UsedPercentWeekly = genericWeekly
 			data.ResetsAtWeekly = genericWeeklyReset
-		} else if data.UsedPercentWeeklyClaude != nil {
-			data.UsedPercentWeekly = data.UsedPercentWeeklyClaude
-			data.ResetsAtWeekly = data.ResetsAtWeeklyClaude
-		} else if data.UsedPercentWeeklyGPT != nil {
-			data.UsedPercentWeekly = data.UsedPercentWeeklyGPT
-			data.ResetsAtWeekly = data.ResetsAtWeeklyGPT
+		} else if data.UsedPercentWeeklyThirdParty != nil {
+			data.UsedPercentWeekly = data.UsedPercentWeeklyThirdParty
+			data.ResetsAtWeekly = data.ResetsAtWeeklyThirdParty
 		}
 	}
-	if data.UsedPercent5H == nil && generic5H != nil {
-		data.UsedPercent5H = generic5H
-		data.ResetsAt5H = generic5HReset
+	if data.UsedPercent5H == nil {
+		if generic5H != nil {
+			data.UsedPercent5H = generic5H
+			data.ResetsAt5H = generic5HReset
+		} else if data.UsedPercent5HThirdParty != nil {
+			data.UsedPercent5H = data.UsedPercent5HThirdParty
+			data.ResetsAt5H = data.ResetsAt5HThirdParty
+		}
 	}
 
 	return data, !data.empty()

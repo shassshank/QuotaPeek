@@ -36,7 +36,7 @@ enum DesktopWidgetStyle: String, CaseIterable, Identifiable, Codable {
         case .combinedCircular: return "Combined (circular rings)"
         case .perAgentLinear: return "Per-agent (linear bars)"
         case .perAgentCircular: return "Per-agent (circular rings)"
-        case .concentricRings: return "Concentric rings (5h / weekly / context)"
+        case .concentricRings: return "Concentric rings (5h / weekly)"
         case .singleAgentFocus: return "Single agent focus"
         }
     }
@@ -48,13 +48,15 @@ enum WidgetMetricKind: String, CaseIterable, Identifiable, Codable {
     case context = "context"
     case claudeGptWeekly = "claude_gpt_weekly"
 
+    static let offerable: [WidgetMetricKind] = [.fiveHour, .weekly, .claudeGptWeekly]
+
     var id: String { rawValue }
     var displayName: String {
         switch self {
         case .fiveHour: return "5-hour window"
         case .weekly: return "Weekly window"
         case .context: return "Context window"
-        case .claudeGptWeekly: return "Claude/GPT (weekly)"
+        case .claudeGptWeekly: return "Claude/GPT quota"
         }
     }
 }
@@ -73,7 +75,7 @@ struct WidgetConfiguration: Identifiable, Codable, Equatable {
     var isEnabled: Bool = false
     var style: DesktopWidgetStyle = .combinedLinear
     var scope: WidgetScope = .allAgents
-    var visibleMetrics: Set<WidgetMetricKind> = Set(WidgetMetricKind.allCases)
+    var visibleMetrics: Set<WidgetMetricKind> = Set(WidgetMetricKind.offerable)
 }
 
 private struct FailableWidgetConfiguration: Decodable {
@@ -276,7 +278,7 @@ final class DisplayPreferences: ObservableObject {
                         dotColor = .systemPurple
                     case .fresh:
                         if let data = account.data {
-                            let usageValues = [data.usedPercent5h, data.usedPercentWeekly, data.contextWindowUsedPercent].compactMap { $0 }
+                            let usageValues = [data.usedPercent5h, data.usedPercentWeekly].compactMap { $0 }
                             if let maxVal = usageValues.max() {
                                 let displayed = displayPercent(forUsedPercent: maxVal)
                                 switch percentageMetric {

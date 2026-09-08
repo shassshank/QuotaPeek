@@ -40,10 +40,10 @@ Provider {
     "resets_at_5h": 1767561600,     // unix seconds, null if unknown
     "used_percent_weekly": 18.0,    // 0-100, null if this provider has no weekly window (primary/Gemini quota for Antigravity)
     "resets_at_weekly": 1768080000, // unix seconds, null if unknown
-    "used_percent_weekly_claude": 6.0,  // 0-100, null if not applicable (Antigravity Claude-family weekly quota)
-    "resets_at_weekly_claude": 1768400000, // unix seconds, null if unknown
-    "used_percent_weekly_gpt": 6.0,     // 0-100, null if not applicable (Antigravity GPT-family weekly quota)
-    "resets_at_weekly_gpt": 1768400000,    // unix seconds, null if unknown
+    "used_percent_5h_third_party": 0.0, // 0-100, null if not applicable (Antigravity Claude/GPT 3P 5h quota)
+    "resets_at_5h_third_party": 1767561600, // unix seconds, null if unknown
+    "used_percent_weekly_third_party": 6.0, // 0-100, null if not applicable (Antigravity Claude/GPT 3P weekly quota)
+    "resets_at_weekly_third_party": 1768400000, // unix seconds, null if unknown
     "context_window_used_percent": 12.4 // 0-100, null if not applicable/unknown
   } | null,                          // null if no data has ever arrived from any route
   "as_of": 1767550000,               // unix seconds `data` was captured, null if data is null
@@ -55,6 +55,7 @@ Provider {
 }
 
 Config {
+  "statusline_show_other_agents": true, // boolean; default true
   "staleAfterSeconds": 600,          // positive int64 seconds; default 600
   "collectionPaused": false,        // boolean; default false
   "claude_polling_mode": "inference", // "inference" (default) or "disabled"
@@ -85,8 +86,8 @@ ErrorEntry {
 ## Endpoints
 
 ### `GET /status`
-Returns `{ "providers": [Provider, Provider, Provider] }`, always all three,
-always in the order claude, codex, antigravity.
+Returns `{ "statusline_show_other_agents": true, "accounts": [Account, ...], "providers": [Provider, Provider, Provider] }`,
+always all three, always in the order claude, codex, antigravity.
 
 Polls are single-flight per provider/route across scheduled polls, refreshes,
 and diagnostics. An overlapping refresh skips the busy route and returns current

@@ -340,10 +340,9 @@ private struct AccountCard: View {
                 windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
                 windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
                 if account.provider == .antigravity && showAntigravityModelBreakdown {
-                    windowRow(label: "Weekly (Claude)", percent: data.usedPercentWeeklyClaude, resetsAt: data.resetsAtWeeklyClaude)
-                    windowRow(label: "Weekly (GPT)", percent: data.usedPercentWeeklyGPT, resetsAt: data.resetsAtWeeklyGPT)
+                    windowRow(label: "5h (C/G)", percent: data.usedPercent5hThirdParty, resetsAt: data.resetsAt5hThirdParty)
+                    windowRow(label: "Weekly (C/G)", percent: data.usedPercentWeeklyThirdParty, resetsAt: data.resetsAtWeeklyThirdParty)
                 }
-                windowRow(label: "Context", percent: data.contextWindowUsedPercent, resetsAt: nil)
             } else {
                 Text("No data restored")
                     .font(.caption)
@@ -361,10 +360,9 @@ private struct AccountCard: View {
                 windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h, isMuted: true)
                 windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly, isMuted: true)
                 if account.provider == .antigravity && showAntigravityModelBreakdown {
-                    windowRow(label: "Weekly (Claude)", percent: data.usedPercentWeeklyClaude, resetsAt: data.resetsAtWeeklyClaude, isMuted: true)
-                    windowRow(label: "Weekly (GPT)", percent: data.usedPercentWeeklyGPT, resetsAt: data.resetsAtWeeklyGPT, isMuted: true)
+                    windowRow(label: "5h (C/G)", percent: data.usedPercent5hThirdParty, resetsAt: data.resetsAt5hThirdParty, isMuted: true)
+                    windowRow(label: "Weekly (C/G)", percent: data.usedPercentWeeklyThirdParty, resetsAt: data.resetsAtWeeklyThirdParty, isMuted: true)
                 }
-                windowRow(label: "Context", percent: data.contextWindowUsedPercent, resetsAt: nil, isMuted: true)
             } else {
                 Text("Data is stale")
                     .font(.caption)
@@ -383,10 +381,9 @@ private struct AccountCard: View {
                 windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
                 windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
                 if account.provider == .antigravity && showAntigravityModelBreakdown {
-                    windowRow(label: "Weekly (Claude)", percent: data.usedPercentWeeklyClaude, resetsAt: data.resetsAtWeeklyClaude)
-                    windowRow(label: "Weekly (GPT)", percent: data.usedPercentWeeklyGPT, resetsAt: data.resetsAtWeeklyGPT)
+                    windowRow(label: "5h (C/G)", percent: data.usedPercent5hThirdParty, resetsAt: data.resetsAt5hThirdParty)
+                    windowRow(label: "Weekly (C/G)", percent: data.usedPercentWeeklyThirdParty, resetsAt: data.resetsAtWeeklyThirdParty)
                 }
-                windowRow(label: "Context", percent: data.contextWindowUsedPercent, resetsAt: nil)
             } else {
                 Text("No data yet")
                     .font(.caption)

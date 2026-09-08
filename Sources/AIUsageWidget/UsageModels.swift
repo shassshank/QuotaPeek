@@ -161,10 +161,10 @@ struct ProviderData: Codable, Equatable {
     var resetsAt5h: Int?
     var usedPercentWeekly: Double?
     var resetsAtWeekly: Int?
-    var usedPercentWeeklyClaude: Double?
-    var resetsAtWeeklyClaude: Int?
-    var usedPercentWeeklyGPT: Double?
-    var resetsAtWeeklyGPT: Int?
+    var usedPercent5hThirdParty: Double?
+    var resetsAt5hThirdParty: Int?
+    var usedPercentWeeklyThirdParty: Double?
+    var resetsAtWeeklyThirdParty: Int?
     var contextWindowUsedPercent: Double?
 
     enum CodingKeys: String, CodingKey {
@@ -172,10 +172,10 @@ struct ProviderData: Codable, Equatable {
         case resetsAt5h = "resets_at_5h"
         case usedPercentWeekly = "used_percent_weekly"
         case resetsAtWeekly = "resets_at_weekly"
-        case usedPercentWeeklyClaude = "used_percent_weekly_claude"
-        case resetsAtWeeklyClaude = "resets_at_weekly_claude"
-        case usedPercentWeeklyGPT = "used_percent_weekly_gpt"
-        case resetsAtWeeklyGPT = "resets_at_weekly_gpt"
+        case usedPercent5hThirdParty = "used_percent_5h_third_party"
+        case resetsAt5hThirdParty = "resets_at_5h_third_party"
+        case usedPercentWeeklyThirdParty = "used_percent_weekly_third_party"
+        case resetsAtWeeklyThirdParty = "resets_at_weekly_third_party"
         case contextWindowUsedPercent = "context_window_used_percent"
     }
 }
@@ -485,6 +485,7 @@ struct DaemonConfig: Codable, Equatable {
     var antigravity: ProviderConfig?
     var staleAfterSeconds: Int?
     var collectionPaused: Bool?
+    var statuslineShowOtherAgents: Bool?
 
     enum CodingKeys: String, CodingKey {
         case claudePollingMode = "claude_polling_mode"
@@ -496,6 +497,8 @@ struct DaemonConfig: Codable, Equatable {
         case staleAfterSecondsCamel = "staleAfterSeconds"
         case collectionPausedSnake = "collection_paused"
         case collectionPausedCamel = "collectionPaused"
+        case statuslineShowOtherAgentsSnake = "statusline_show_other_agents"
+        case statuslineShowOtherAgentsCamel = "statuslineShowOtherAgents"
     }
 
     init(
@@ -504,7 +507,8 @@ struct DaemonConfig: Codable, Equatable {
         codex: ProviderConfig? = nil,
         antigravity: ProviderConfig? = nil,
         staleAfterSeconds: Int? = nil,
-        collectionPaused: Bool? = nil
+        collectionPaused: Bool? = nil,
+        statuslineShowOtherAgents: Bool? = nil
     ) {
         self.claudePollingMode = claudePollingMode
         self.claude = claude
@@ -512,6 +516,7 @@ struct DaemonConfig: Codable, Equatable {
         self.antigravity = antigravity
         self.staleAfterSeconds = staleAfterSeconds
         self.collectionPaused = collectionPaused
+        self.statuslineShowOtherAgents = statuslineShowOtherAgents
     }
 
     init(from decoder: Decoder) throws {
@@ -525,6 +530,8 @@ struct DaemonConfig: Codable, Equatable {
             ?? (try? container.decodeIfPresent(Int.self, forKey: .staleAfterSecondsCamel))
         self.collectionPaused = (try? container.decodeIfPresent(Bool.self, forKey: .collectionPausedSnake))
             ?? (try? container.decodeIfPresent(Bool.self, forKey: .collectionPausedCamel))
+        self.statuslineShowOtherAgents = (try? container.decodeIfPresent(Bool.self, forKey: .statuslineShowOtherAgentsSnake))
+            ?? (try? container.decodeIfPresent(Bool.self, forKey: .statuslineShowOtherAgentsCamel))
     }
 
     func encode(to encoder: Encoder) throws {
@@ -535,6 +542,7 @@ struct DaemonConfig: Codable, Equatable {
         try container.encodeIfPresent(antigravity, forKey: .antigravity)
         try container.encodeIfPresent(staleAfterSeconds, forKey: .staleAfterSecondsCamel)
         try container.encodeIfPresent(collectionPaused, forKey: .collectionPausedCamel)
+        try container.encodeIfPresent(statuslineShowOtherAgents, forKey: .statuslineShowOtherAgentsSnake)
     }
 
     func config(for provider: Provider) -> ProviderConfig? {

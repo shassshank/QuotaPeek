@@ -121,12 +121,6 @@ def usage_line(entry):
     return f"{line} {reset}" if reset else line
 
 
-def context_percent(payload):
-    ctx = payload.get("context_window")
-    pct = ctx.get("used_percentage") if isinstance(ctx, dict) else None
-    return int(pct) if isinstance(pct, (int, float)) else None
-
-
 def build_status_line(payload):
     rate_limits = payload.get("rate_limits") if isinstance(payload.get("rate_limits"), dict) else {}
     segments = [p for p in [as_str(payload.get("model")), location_segment(payload, find_cwd(payload))] if p]
@@ -134,9 +128,6 @@ def build_status_line(payload):
         line = usage_line(entry)
         if line:
             segments.append(line)
-    ctx_pct = context_percent(payload)
-    if ctx_pct is not None:
-        segments.append(f"ctx {ctx_pct}%")
     return " | ".join(segments) if segments else "Claude Code"
 
 
@@ -145,7 +136,11 @@ def extra_status_segments():
     try:
         with urllib.request.urlopen(STATUS_URL, timeout=0.2) as response:
             status = json.load(response)
-        if not isinstance(status, dict) or not isinstance(status.get("accounts"), list):
+        if not isinstance(status, dict):
+            return []
+        if status.get("statusline_show_other_agents") is False:
+            return []
+        if not isinstance(status.get("accounts"), list):
             return []
         selected = {}
         for account in status["accounts"]:
@@ -174,22 +169,20 @@ def extra_status_segments():
             if reset:
                 line = f"{line} {reset}"
             if provider == "antigravity":
-                claude_pct = data.get("used_percent_weekly_claude")
-                gpt_pct = data.get("used_percent_weekly_gpt")
+                # Main figure above is the Gemini group's 5h window. The Claude/GPT
+                # ("third party") models share one combined quota pool per window,
+                # not separate per-model numbers - show both of its windows here.
+                cg_5h = data.get("used_percent_5h_third_party")
+                cg_weekly = data.get("used_percent_weekly_third_party")
+                has_5h = isinstance(cg_5h, (int, float)) and not isinstance(cg_5h, bool) and math.isfinite(cg_5h) and 0 <= cg_5h <= 100
+                has_weekly = isinstance(cg_weekly, (int, float)) and not isinstance(cg_weekly, bool) and math.isfinite(cg_weekly) and 0 <= cg_weekly <= 100
                 breakdown = []
-                has_c = isinstance(claude_pct, (int, float)) and not isinstance(claude_pct, bool) and math.isfinite(claude_pct) and 0 <= claude_pct <= 100
-                has_g = isinstance(gpt_pct, (int, float)) and not isinstance(gpt_pct, bool) and math.isfinite(gpt_pct) and 0 <= gpt_pct <= 100
-                if has_c and has_g and claude_pct == gpt_pct:
-                    breakdown.append(f"C/G:{claude_pct:.0f}%")
-                else:
-                    if has_c:
-                        breakdown.append(f"C:{claude_pct:.0f}%")
-                    if has_g:
-                        breakdown.append(f"G:{gpt_pct:.0f}%")
-                # Main figure above is the 5h Gemini window; this breakdown is weekly,
-                # so it's labeled to avoid implying the same window.
+                if has_5h:
+                    breakdown.append(f"5h:{cg_5h:.0f}%")
+                if has_weekly:
+                    breakdown.append(f"wk:{cg_weekly:.0f}%")
                 if breakdown:
-                    line = f"{line} (wk {' '.join(breakdown)})"
+                    line = f"{line} (C/G {' '.join(breakdown)})"
             selected[provider] = line
         return [f"{label} {selected[provider]}" for provider, label in
                 (("codex", "Codex"), ("antigravity", "Antigravity")) if provider in selected]

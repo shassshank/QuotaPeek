@@ -752,7 +752,7 @@ private struct AddAccountSheet: View {
 private struct GeneralSettingsTab: View {
     @ObservedObject var store: UsageStore
     @ObservedObject var displayPrefs: DisplayPreferences
-    @State private var draft: DaemonConfig = DaemonConfig()
+    @State private var draftConfig: DaemonConfig = DaemonConfig()
     @State private var saveStatus: String?
     @State private var isSaving: Bool = false
     @State private var hasInitialized: Bool = false
@@ -822,10 +822,10 @@ private struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
 
                 Stepper(
-                    "Mark data stale after: \(formatDuration(draft.staleAfterSeconds ?? 600))",
+                    "Mark data stale after: \(formatDuration(draftConfig.staleAfterSeconds ?? 600))",
                     value: Binding(
-                        get: { draft.staleAfterSeconds ?? 600 },
-                        set: { draft.staleAfterSeconds = max(60, $0) }
+                        get: { draftConfig.staleAfterSeconds ?? 600 },
+                        set: { draftConfig.staleAfterSeconds = max(60, $0) }
                     ),
                     in: 60...3600,
                     step: 60
@@ -855,6 +855,11 @@ private struct GeneralSettingsTab: View {
                 .accessibilityLabel("Percentage metric style")
 
                 Toggle("Show Antigravity Claude/GPT quota", isOn: $displayPrefs.showAntigravityModelBreakdown)
+
+                Toggle("Show Codex/Antigravity data in Claude Code's statusline", isOn: Binding(
+                    get: { draftConfig.statuslineShowOtherAgents ?? true },
+                    set: { draftConfig.statuslineShowOtherAgents = $0 }
+                ))
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Provider display order")
@@ -957,7 +962,7 @@ private struct GeneralSettingsTab: View {
         .formStyle(.grouped)
         .onAppear {
             if let config = store.config {
-                draft = config
+                draftConfig = config
                 hasInitialized = true
             }
             isLaunchAgentInstalled = LaunchAgentManager.isPlistInstalled
@@ -966,14 +971,14 @@ private struct GeneralSettingsTab: View {
         .onChange(of: store.config) { newConfig in
             if let newConfig {
                 if !hasInitialized {
-                    draft = newConfig
+                    draftConfig = newConfig
                     hasInitialized = true
-                } else if draft != newConfig && !isSaving {
-                    draft = newConfig
+                } else if draftConfig != newConfig && !isSaving {
+                    draftConfig = newConfig
                 }
             }
         }
-        .onChange(of: draft) { newDraft in
+        .onChange(of: draftConfig) { newDraft in
             guard hasInitialized else { return }
             guard newDraft != store.config else { return }
 
@@ -1050,7 +1055,7 @@ private struct GeneralSettingsTab: View {
             }
             .pickerStyle(.menu)
 
-            ForEach(WidgetMetricKind.allCases) { metric in
+            ForEach(WidgetMetricKind.offerable) { metric in
                 Toggle(metric.displayName, isOn: Binding(
                     get: { configuration.wrappedValue.visibleMetrics.contains(metric) },
                     set: { isVisible in

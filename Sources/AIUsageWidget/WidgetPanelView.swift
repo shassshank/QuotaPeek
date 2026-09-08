@@ -6,7 +6,7 @@ import SwiftUI
 /// 2. Combined, circular: Multi-gauge circular progress rings for each account.
 /// 3. Per-agent, linear: Single-account focus with large numbers and linear bars, paginated when multi-account.
 /// 4. Per-agent, circular: Single-account dial ring with secondary window metrics, paginated when multi-account.
-/// 5. Concentric rings: Nested circular progress rings (outer: 5h, middle: weekly, inner: context) with legend.
+/// 5. Concentric rings: Nested circular progress rings (outer: 5h, inner: weekly) with legend.
 /// 6. Single-agent focus: Minimal, unpaginated single-account glance card with a bold dominant metric.
 struct WidgetPanelView: View {
     @ObservedObject var store: UsageStore
@@ -285,12 +285,11 @@ private struct CombinedLinearAccountCard: View {
                     if let data = account.data {
                         let hasModelBreakdown = account.provider == .antigravity
                             && visibleMetrics.contains(.claudeGptWeekly)
-                            && (data.usedPercentWeeklyClaude != nil || data.usedPercentWeeklyGPT != nil)
+                            && (data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil)
                         let has5h = visibleMetrics.contains(.fiveHour) && data.usedPercent5h != nil
                         let hasWk = visibleMetrics.contains(.weekly) && data.usedPercentWeekly != nil
-                        let hasCtx = visibleMetrics.contains(.context) && data.contextWindowUsedPercent != nil
 
-                        if !has5h && !hasWk && !hasCtx {
+                        if !has5h && !hasWk {
                             if !hasModelBreakdown {
                                 Text("No usage data")
                                     .font(.caption2)
@@ -303,9 +302,6 @@ private struct CombinedLinearAccountCard: View {
                                 }
                                 if hasWk {
                                     linearRow(label: "Wk", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
-                                }
-                                if hasCtx {
-                                    linearRow(label: "Ctx", percent: data.contextWindowUsedPercent, resetsAt: nil)
                                 }
                             }
                             .opacity(account.state == .stale ? 0.75 : 1.0)
@@ -482,12 +478,11 @@ private struct CombinedCircularAccountCard: View {
                     if let data = account.data {
                         let hasModelBreakdown = account.provider == .antigravity
                             && visibleMetrics.contains(.claudeGptWeekly)
-                            && (data.usedPercentWeeklyClaude != nil || data.usedPercentWeeklyGPT != nil)
+                            && (data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil)
                         let has5h = visibleMetrics.contains(.fiveHour) && data.usedPercent5h != nil
                         let hasWk = visibleMetrics.contains(.weekly) && data.usedPercentWeekly != nil
-                        let hasCtx = visibleMetrics.contains(.context) && data.contextWindowUsedPercent != nil
 
-                        if !has5h && !hasWk && !hasCtx {
+                        if !has5h && !hasWk {
                             if !hasModelBreakdown {
                                 Text("No usage data")
                                     .font(.caption2)
@@ -500,9 +495,6 @@ private struct CombinedCircularAccountCard: View {
                                 }
                                 if hasWk, let pWk = data.usedPercentWeekly {
                                     circularMetricItem(label: "Weekly", percent: pWk, resetsAt: data.resetsAtWeekly)
-                                }
-                                if hasCtx, let pCtx = data.contextWindowUsedPercent {
-                                    circularMetricItem(label: "Context", percent: pCtx, resetsAt: nil)
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -653,7 +645,7 @@ private struct PerAgentLinearWidgetView: View {
                             if let data = account.data {
                                 let hasModelBreakdown = account.provider == .antigravity
                                     && visibleMetrics.contains(.claudeGptWeekly)
-                                    && (data.usedPercentWeeklyClaude != nil || data.usedPercentWeeklyGPT != nil)
+                                    && (data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil)
                                 let (primaryMetric, secondaryMetrics) = categorizeMetrics(data: data)
                                 if let primary = primaryMetric {
                                     VStack(spacing: 6) {
@@ -717,9 +709,6 @@ private struct PerAgentLinearWidgetView: View {
         }
         if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeekly {
             items.append(MetricItem(kind: .weekly, title: "Weekly", percent: pWk, resetsAt: data.resetsAtWeekly))
-        }
-        if visibleMetrics.contains(.context), let pCtx = data.contextWindowUsedPercent {
-            items.append(MetricItem(kind: .context, title: "Context", percent: pCtx, resetsAt: nil))
         }
 
         guard let first = items.first else { return (nil, []) }
@@ -898,7 +887,7 @@ private struct PerAgentCircularWidgetView: View {
                             if let data = account.data {
                                 let hasModelBreakdown = account.provider == .antigravity
                                     && visibleMetrics.contains(.claudeGptWeekly)
-                                    && (data.usedPercentWeeklyClaude != nil || data.usedPercentWeeklyGPT != nil)
+                                    && (data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil)
                                 let (primaryMetric, secondaryMetrics) = categorizeMetrics(data: data)
                                 if let primary = primaryMetric {
                                     VStack(spacing: 8) {
@@ -961,9 +950,6 @@ private struct PerAgentCircularWidgetView: View {
         }
         if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeekly {
             items.append(MetricItem(kind: .weekly, title: "Weekly", percent: pWk, resetsAt: data.resetsAtWeekly))
-        }
-        if visibleMetrics.contains(.context), let pCtx = data.contextWindowUsedPercent {
-            items.append(MetricItem(kind: .context, title: "Context", percent: pCtx, resetsAt: nil))
         }
 
         guard let first = items.first else { return (nil, []) }
@@ -1134,23 +1120,10 @@ private func extractRings(
             id: .weekly,
             kind: .weekly,
             label: "Weekly",
-            positionName: rings.isEmpty ? "Outer" : "Mid",
+            positionName: rings.isEmpty ? "Outer" : "Inner",
             percent: displayVal,
             color: color,
             resetsAt: data.resetsAtWeekly
-        ))
-    }
-    if visibleMetrics.contains(.context), let pCtx = data.contextWindowUsedPercent {
-        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: pCtx, metric: metric)
-        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
-        rings.append(RingData(
-            id: .context,
-            kind: .context,
-            label: "Context",
-            positionName: rings.isEmpty ? "Outer" : (rings.count == 1 ? "Mid" : "Inner"),
-            percent: displayVal,
-            color: color,
-            resetsAt: nil
         ))
     }
     return rings
@@ -1243,7 +1216,7 @@ private struct SingleAccountConcentricCard: View {
                     if let data = account.data {
                         let hasModelBreakdown = account.provider == .antigravity
                             && visibleMetrics.contains(.claudeGptWeekly)
-                            && (data.usedPercentWeeklyClaude != nil || data.usedPercentWeeklyGPT != nil)
+                            && (data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil)
                         let rings = extractRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
                         if rings.isEmpty {
                             if !hasModelBreakdown {
@@ -1398,7 +1371,7 @@ private struct MultiAccountConcentricCell: View {
                 if let data = account.data {
                     let hasModelBreakdown = account.provider == .antigravity
                         && visibleMetrics.contains(.claudeGptWeekly)
-                        && (data.usedPercentWeeklyClaude != nil || data.usedPercentWeeklyGPT != nil)
+                        && (data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil)
                     let rings = extractRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
                     if rings.isEmpty {
                         if !hasModelBreakdown {
@@ -1539,7 +1512,7 @@ private struct SingleAgentFocusWidgetView: View {
                         if let data = account.data {
                             let hasModelBreakdown = account.provider == .antigravity
                                 && visibleMetrics.contains(.claudeGptWeekly)
-                                && (data.usedPercentWeeklyClaude != nil || data.usedPercentWeeklyGPT != nil)
+                                && (data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil)
                             let (dominantMetric, secondaryMetrics) = pickDominantAndSecondary(data: data)
                             if let dominant = dominantMetric {
                                 dominantFocusCard(dominant: dominant)
@@ -1588,9 +1561,6 @@ private struct SingleAgentFocusWidgetView: View {
         }
         if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeekly {
             candidates.append(MetricCandidate(kind: .weekly, title: "Weekly Window", percent: pWk, resetsAt: data.resetsAtWeekly))
-        }
-        if visibleMetrics.contains(.context), let pCtx = data.contextWindowUsedPercent {
-            candidates.append(MetricCandidate(kind: .context, title: "Context Window", percent: pCtx, resetsAt: nil))
         }
 
         guard !candidates.isEmpty else { return (nil, []) }
@@ -1695,8 +1665,8 @@ private struct AntigravityModelQuotaRows: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            quotaRow(label: "Weekly (Claude)", percent: data.usedPercentWeeklyClaude, resetsAt: data.resetsAtWeeklyClaude)
-            quotaRow(label: "Weekly (GPT)", percent: data.usedPercentWeeklyGPT, resetsAt: data.resetsAtWeeklyGPT)
+            quotaRow(label: "5h (C/G)", percent: data.usedPercent5hThirdParty, resetsAt: data.resetsAt5hThirdParty)
+            quotaRow(label: "Weekly (C/G)", percent: data.usedPercentWeeklyThirdParty, resetsAt: data.resetsAtWeeklyThirdParty)
         }
     }
 

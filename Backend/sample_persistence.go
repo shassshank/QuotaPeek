@@ -33,7 +33,7 @@ func validSampleKey(p ProviderID, r Route) bool {
 	return (p == ProviderClaude || p == ProviderCodex || p == ProviderAntigravity) && (r == RouteKeychain || r == RouteInjection)
 }
 func validUsage(d UsageData) bool {
-	for _, v := range []*float64{d.UsedPercent5H, d.UsedPercentWeekly, d.UsedPercentWeeklyClaude, d.UsedPercentWeeklyGPT, d.ContextWindowUsedPercent} {
+	for _, v := range []*float64{d.UsedPercent5H, d.UsedPercentWeekly, d.UsedPercent5HThirdParty, d.UsedPercentWeeklyThirdParty, d.ContextWindowUsedPercent} {
 		if v != nil && (math.IsNaN(*v) || math.IsInf(*v, 0) || *v < 0 || *v > 100) {
 			return false
 		}

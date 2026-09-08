@@ -283,7 +283,7 @@ final class UsageStore: ObservableObject {
             // Under P5: when state == .unknown or .error, never display data as a number
             guard account.state != .unknown && account.state != .error else { continue }
             guard let data = account.data else { continue }
-            let values = [data.usedPercent5h, data.usedPercentWeekly, data.contextWindowUsedPercent].compactMap { $0 }
+            let values = [data.usedPercent5h, data.usedPercentWeekly].compactMap { $0 }
             if let maxVal = values.max() {
                 highest = max(highest ?? 0, maxVal)
             }

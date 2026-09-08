@@ -69,24 +69,10 @@ func parseAntigravityIngest(raw []byte) (UsageData, bool, error) {
 				hasClaude := strings.Contains(label, "claude")
 				hasGPT := strings.Contains(label, "gpt")
 				has3P := strings.Contains(label, "3p")
-				if (hasClaude && hasGPT) || has3P {
-					if data.UsedPercentWeeklyClaude == nil || used > *data.UsedPercentWeeklyClaude {
-						data.UsedPercentWeeklyClaude = &used
-						data.ResetsAtWeeklyClaude = reset
-					}
-					if data.UsedPercentWeeklyGPT == nil || used > *data.UsedPercentWeeklyGPT {
-						data.UsedPercentWeeklyGPT = &used
-						data.ResetsAtWeeklyGPT = reset
-					}
-				} else if hasClaude {
-					if data.UsedPercentWeeklyClaude == nil || used > *data.UsedPercentWeeklyClaude {
-						data.UsedPercentWeeklyClaude = &used
-						data.ResetsAtWeeklyClaude = reset
-					}
-				} else if hasGPT {
-					if data.UsedPercentWeeklyGPT == nil || used > *data.UsedPercentWeeklyGPT {
-						data.UsedPercentWeeklyGPT = &used
-						data.ResetsAtWeeklyGPT = reset
+				if hasClaude || hasGPT || has3P {
+					if data.UsedPercentWeeklyThirdParty == nil || used > *data.UsedPercentWeeklyThirdParty {
+						data.UsedPercentWeeklyThirdParty = &used
+						data.ResetsAtWeeklyThirdParty = reset
 					}
 				} else {
 					if data.UsedPercentWeekly == nil || used > *data.UsedPercentWeekly {
@@ -95,20 +81,33 @@ func parseAntigravityIngest(raw []byte) (UsageData, bool, error) {
 					}
 				}
 			case "5h":
-				if data.UsedPercent5H == nil || used > *data.UsedPercent5H {
-					data.UsedPercent5H = &used
-					data.ResetsAt5H = reset
+				hasClaude := strings.Contains(label, "claude")
+				hasGPT := strings.Contains(label, "gpt")
+				has3P := strings.Contains(label, "3p")
+				if hasClaude || hasGPT || has3P {
+					if data.UsedPercent5HThirdParty == nil || used > *data.UsedPercent5HThirdParty {
+						data.UsedPercent5HThirdParty = &used
+						data.ResetsAt5HThirdParty = reset
+					}
+				} else {
+					if data.UsedPercent5H == nil || used > *data.UsedPercent5H {
+						data.UsedPercent5H = &used
+						data.ResetsAt5H = reset
+					}
 				}
 			}
 		}
 	}
 	if data.UsedPercentWeekly == nil {
-		if data.UsedPercentWeeklyClaude != nil {
-			data.UsedPercentWeekly = data.UsedPercentWeeklyClaude
-			data.ResetsAtWeekly = data.ResetsAtWeeklyClaude
-		} else if data.UsedPercentWeeklyGPT != nil {
-			data.UsedPercentWeekly = data.UsedPercentWeeklyGPT
-			data.ResetsAtWeekly = data.ResetsAtWeeklyGPT
+		if data.UsedPercentWeeklyThirdParty != nil {
+			data.UsedPercentWeekly = data.UsedPercentWeeklyThirdParty
+			data.ResetsAtWeekly = data.ResetsAtWeeklyThirdParty
+		}
+	}
+	if data.UsedPercent5H == nil {
+		if data.UsedPercent5HThirdParty != nil {
+			data.UsedPercent5H = data.UsedPercent5HThirdParty
+			data.ResetsAt5H = data.ResetsAt5HThirdParty
 		}
 	}
 	if ctx, ok := payload["context_window"].(map[string]any); ok {

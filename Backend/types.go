@@ -19,19 +19,19 @@ const (
 )
 
 type UsageData struct {
-	UsedPercent5H            *float64 `json:"used_percent_5h"`
-	ResetsAt5H               *int64   `json:"resets_at_5h"`
+	UsedPercent5H               *float64 `json:"used_percent_5h"`
+	ResetsAt5H                  *int64   `json:"resets_at_5h"`
 	// UsedPercentWeekly and ResetsAtWeekly represent the primary/Gemini model family
 	// weekly quota for Antigravity (aligned with UsedPercent5H / ResetsAt5H), ensuring
 	// 5h and weekly metrics and resets are not mismatched across model families.
 	// For Claude and Codex providers, this remains their standard weekly quota.
-	UsedPercentWeekly        *float64 `json:"used_percent_weekly"`
-	ResetsAtWeekly           *int64   `json:"resets_at_weekly"`
-	UsedPercentWeeklyClaude  *float64 `json:"used_percent_weekly_claude,omitempty"`
-	ResetsAtWeeklyClaude     *int64   `json:"resets_at_weekly_claude,omitempty"`
-	UsedPercentWeeklyGPT     *float64 `json:"used_percent_weekly_gpt,omitempty"`
-	ResetsAtWeeklyGPT        *int64   `json:"resets_at_weekly_gpt,omitempty"`
-	ContextWindowUsedPercent *float64 `json:"context_window_used_percent"`
+	UsedPercentWeekly           *float64 `json:"used_percent_weekly"`
+	ResetsAtWeekly              *int64   `json:"resets_at_weekly"`
+	UsedPercent5HThirdParty     *float64 `json:"used_percent_5h_third_party,omitempty"`
+	ResetsAt5HThirdParty        *int64   `json:"resets_at_5h_third_party,omitempty"`
+	UsedPercentWeeklyThirdParty *float64 `json:"used_percent_weekly_third_party,omitempty"`
+	ResetsAtWeeklyThirdParty    *int64   `json:"resets_at_weekly_third_party,omitempty"`
+	ContextWindowUsedPercent    *float64 `json:"context_window_used_percent"`
 }
 
 func (u UsageData) empty() bool {
@@ -39,10 +39,10 @@ func (u UsageData) empty() bool {
 		u.ResetsAt5H == nil &&
 		u.UsedPercentWeekly == nil &&
 		u.ResetsAtWeekly == nil &&
-		u.UsedPercentWeeklyClaude == nil &&
-		u.ResetsAtWeeklyClaude == nil &&
-		u.UsedPercentWeeklyGPT == nil &&
-		u.ResetsAtWeeklyGPT == nil &&
+		u.UsedPercent5HThirdParty == nil &&
+		u.ResetsAt5HThirdParty == nil &&
+		u.UsedPercentWeeklyThirdParty == nil &&
+		u.ResetsAtWeeklyThirdParty == nil &&
 		u.ContextWindowUsedPercent == nil
 }
 
@@ -70,8 +70,9 @@ type ProviderStatus struct {
 }
 
 type StatusResponse struct {
-	Accounts  []Account        `json:"accounts"`
-	Providers []ProviderStatus `json:"-"`
+	Accounts                  []Account        `json:"accounts"`
+	Providers                 []ProviderStatus `json:"-"`
+	StatuslineShowOtherAgents bool             `json:"statusline_show_other_agents"`
 }
 
 type ProviderConfig struct {
@@ -81,13 +82,14 @@ type ProviderConfig struct {
 }
 
 type Config struct {
-	Accounts          []AccountConfig `json:"accounts"`
-	StaleAfterSeconds int64           `json:"staleAfterSeconds"`
-	CollectionPaused  bool            `json:"collectionPaused"`
-	ClaudePollingMode string          `json:"claude_polling_mode"`
-	Claude            ProviderConfig  `json:"claude"`
-	Codex             ProviderConfig  `json:"codex"`
-	Antigravity       ProviderConfig  `json:"antigravity"`
+	Accounts                  []AccountConfig `json:"accounts"`
+	StaleAfterSeconds         int64           `json:"staleAfterSeconds"`
+	CollectionPaused          bool            `json:"collectionPaused"`
+	StatuslineShowOtherAgents bool            `json:"statusline_show_other_agents"`
+	ClaudePollingMode         string          `json:"claude_polling_mode"`
+	Claude                    ProviderConfig  `json:"claude"`
+	Codex                     ProviderConfig  `json:"codex"`
+	Antigravity               ProviderConfig  `json:"antigravity"`
 }
 
 type routeSample struct {
@@ -101,6 +103,6 @@ type routeSample struct {
 func (u UsageData) quotaEmpty() bool {
 	return u.UsedPercent5H == nil && u.ResetsAt5H == nil &&
 		u.UsedPercentWeekly == nil && u.ResetsAtWeekly == nil &&
-		u.UsedPercentWeeklyClaude == nil && u.ResetsAtWeeklyClaude == nil &&
-		u.UsedPercentWeeklyGPT == nil && u.ResetsAtWeeklyGPT == nil
+		u.UsedPercent5HThirdParty == nil && u.ResetsAt5HThirdParty == nil &&
+		u.UsedPercentWeeklyThirdParty == nil && u.ResetsAtWeeklyThirdParty == nil
 }

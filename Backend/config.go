@@ -9,11 +9,12 @@ import (
 
 func defaultConfig() Config {
 	return Config{
-		StaleAfterSeconds: 600,
-		ClaudePollingMode: "disabled",
-		Claude:            ProviderConfig{RoutesEnabled: []Route{}, KeychainPollIntervalSec: 60},
-		Codex:             ProviderConfig{RoutesEnabled: []Route{}, KeychainPollIntervalSec: 60},
-		Antigravity:       ProviderConfig{RoutesEnabled: []Route{}, KeychainPollIntervalSec: 120},
+		StaleAfterSeconds:         600,
+		StatuslineShowOtherAgents: true,
+		ClaudePollingMode:         "disabled",
+		Claude:                    ProviderConfig{RoutesEnabled: []Route{}, KeychainPollIntervalSec: 60},
+		Codex:                     ProviderConfig{RoutesEnabled: []Route{}, KeychainPollIntervalSec: 60},
+		Antigravity:               ProviderConfig{RoutesEnabled: []Route{}, KeychainPollIntervalSec: 120},
 	}
 }
 
@@ -55,12 +56,13 @@ func saveConfig(path string, cfg Config) error {
 }
 
 type partialConfig struct {
-	StaleAfterSeconds *int64          `json:"staleAfterSeconds"`
-	CollectionPaused  *bool           `json:"collectionPaused"`
-	ClaudePollingMode *string         `json:"claude_polling_mode"`
-	Claude            *ProviderConfig `json:"claude"`
-	Codex             *ProviderConfig `json:"codex"`
-	Antigravity       *ProviderConfig `json:"antigravity"`
+	StaleAfterSeconds         *int64          `json:"staleAfterSeconds"`
+	CollectionPaused          *bool           `json:"collectionPaused"`
+	StatuslineShowOtherAgents *bool           `json:"statusline_show_other_agents"`
+	ClaudePollingMode         *string         `json:"claude_polling_mode"`
+	Claude                    *ProviderConfig `json:"claude"`
+	Codex                     *ProviderConfig `json:"codex"`
+	Antigravity               *ProviderConfig `json:"antigravity"`
 }
 
 func mergePartialConfig(current Config, patch partialConfig) (Config, error) {
@@ -72,6 +74,9 @@ func mergePartialConfig(current Config, patch partialConfig) (Config, error) {
 	}
 	if patch.CollectionPaused != nil {
 		current.CollectionPaused = *patch.CollectionPaused
+	}
+	if patch.StatuslineShowOtherAgents != nil {
+		current.StatuslineShowOtherAgents = *patch.StatuslineShowOtherAgents
 	}
 	if patch.ClaudePollingMode != nil {
 		current.ClaudePollingMode = *patch.ClaudePollingMode

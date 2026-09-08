@@ -117,12 +117,6 @@ def usage_line(entry):
     return f"{line} {reset}" if reset else line
 
 
-def context_percent(payload):
-    ctx = payload.get("context_window")
-    pct = ctx.get("used_percentage") if isinstance(ctx, dict) else None
-    return int(pct) if isinstance(pct, (int, float)) else None
-
-
 def build_status_line(payload):
     five_hour, weekly = split_quota(payload)
     segments = [p for p in [as_str(payload.get("model")), location_segment(find_cwd(payload), payload.get("vcs"))] if p]
@@ -130,9 +124,6 @@ def build_status_line(payload):
         line = usage_line(entry)
         if line:
             segments.append(line)
-    ctx_pct = context_percent(payload)
-    if ctx_pct is not None:
-        segments.append(f"ctx {ctx_pct}%")
     return " | ".join(segments) if segments else "Antigravity"
 
 

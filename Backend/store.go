@@ -128,7 +128,11 @@ func (s *Store) Errors(limit int) []ErrorEntry {
 func (s *Store) Status(now int64) StatusResponse {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := StatusResponse{Accounts: []Account{}, Providers: []ProviderStatus{}}
+	out := StatusResponse{
+		Accounts:                  []Account{},
+		Providers:                 []ProviderStatus{},
+		StatuslineShowOtherAgents: s.cfg.StatuslineShowOtherAgents,
+	}
 	for _, p := range []ProviderID{ProviderClaude, ProviderCodex, ProviderAntigravity} {
 		out.Providers = append(out.Providers, s.providerStatusLocked(s.keyLocked(p), providerConfig(s.cfg, p), now))
 		for _, a := range s.cfg.Accounts {
