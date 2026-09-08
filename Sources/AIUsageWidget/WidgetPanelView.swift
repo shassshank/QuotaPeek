@@ -1468,60 +1468,51 @@ private struct MultiAccountConcentricCell: View {
 
     @ViewBuilder
     private func multiAccountClaudeGptIndicator(data: ProviderData) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(spacing: 3) {
             Text("Claude / GPT Quota")
                 .font(.system(size: 7.5, weight: .bold))
                 .foregroundStyle(.secondary)
 
-            HStack(spacing: 6) {
+            HStack(alignment: .top, spacing: 6) {
                 if let p5h = data.usedPercent5hThirdParty {
-                    let displayVal = WidgetMetrics.displayPercent(forUsedPercent: p5h, metric: metric)
-                    let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
-                    HStack(spacing: 2.5) {
-                        Circle()
-                            .fill(color)
-                            .frame(width: 4.5, height: 4.5)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text("5h \(Int(displayVal))%")
-                                .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                            if let resetsAt = data.resetsAt5hThirdParty {
-                                Text(WidgetMetrics.formatCountdown(resetsAt))
-                                    .font(.system(size: 6.5, design: .monospaced))
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Claude/GPT 5h: \(Int(displayVal)) percent")
+                    multiAccountClaudeGptGauge(label: "5h", percent: p5h, resetsAt: data.resetsAt5hThirdParty)
                 }
 
                 if let pWk = data.usedPercentWeeklyThirdParty {
-                    let displayVal = WidgetMetrics.displayPercent(forUsedPercent: pWk, metric: metric)
-                    let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
-                    HStack(spacing: 2.5) {
-                        Circle()
-                            .fill(color)
-                            .frame(width: 4.5, height: 4.5)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text("Wk \(Int(displayVal))%")
-                                .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                            if let resetsAt = data.resetsAtWeeklyThirdParty {
-                                Text(WidgetMetrics.formatCountdown(resetsAt))
-                                    .font(.system(size: 6.5, design: .monospaced))
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Claude/GPT Weekly: \(Int(displayVal)) percent")
+                    multiAccountClaudeGptGauge(label: "Weekly", percent: pWk, resetsAt: data.resetsAtWeeklyThirdParty)
                 }
             }
         }
         .padding(.horizontal, 5)
         .padding(.vertical, 3.5)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
     }
+
+    private func multiAccountClaudeGptGauge(label: String, percent: Double, resetsAt: Int?) -> some View {
+        let displayed = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
+        let ring = RingData(id: .claudeGptWeekly, kind: .claudeGptWeekly, label: label,
+                            positionName: "Outer", percent: displayed,
+                            color: WidgetMetrics.colorForPercent(displayed, metric: metric), resetsAt: resetsAt)
+        return VStack(spacing: 2) {
+            ZStack {
+                ConcentricRingsGauge(rings: [ring], baseSize: 32, ringWidth: 3, ringSpacing: 2)
+                Text("\(Int(displayed))%")
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+            }
+            Text(label)
+                .font(.system(size: 7.5, weight: .semibold))
+                .foregroundStyle(.secondary)
+            if let resetsAt {
+                Text(WidgetMetrics.formatCountdown(resetsAt))
+                    .font(.system(size: 6.5, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Claude/GPT \(label): \(Int(displayed)) percent")
+    }
+
 }
 
 // MARK: - Style 6: Single-Agent Focus Widget View
