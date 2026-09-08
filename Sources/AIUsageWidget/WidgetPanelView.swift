@@ -308,7 +308,7 @@ private struct CombinedLinearAccountCard: View {
                         }
 
                         if hasModelBreakdown {
-                            AntigravityModelQuotaRows(data: data, metric: metric)
+                            combinedLinearClaudeGptSection(data: data, hasGeminiMetrics: has5h || hasWk)
                                 .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                         }
                     } else {
@@ -321,6 +321,45 @@ private struct CombinedLinearAccountCard: View {
         }
         .padding(8)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func combinedLinearClaudeGptSection(data: ProviderData, hasGeminiMetrics: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if hasGeminiMetrics {
+                Divider()
+                    .opacity(0.3)
+                    .padding(.vertical, 1)
+            }
+
+            HStack(spacing: 4) {
+                Text("Claude / GPT")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            VStack(spacing: 4) {
+                if let p5h = data.usedPercent5hThirdParty {
+                    linearRow(
+                        label: "5h C/G",
+                        percent: p5h,
+                        resetsAt: data.resetsAt5hThirdParty,
+                        labelWidth: 40,
+                        accessibilityLabelText: "Claude/GPT 5h"
+                    )
+                }
+                if let pWk = data.usedPercentWeeklyThirdParty {
+                    linearRow(
+                        label: "Wk C/G",
+                        percent: pWk,
+                        resetsAt: data.resetsAtWeeklyThirdParty,
+                        labelWidth: 40,
+                        accessibilityLabelText: "Claude/GPT Weekly"
+                    )
+                }
+            }
+        }
     }
 
     private var accountHeader: some View {
@@ -371,7 +410,13 @@ private struct CombinedLinearAccountCard: View {
     }
 
     @ViewBuilder
-    private func linearRow(label: String, percent: Double?, resetsAt: Int?) -> some View {
+    private func linearRow(
+        label: String,
+        percent: Double?,
+        resetsAt: Int?,
+        labelWidth: CGFloat = 24,
+        accessibilityLabelText: String? = nil
+    ) -> some View {
         if let percent {
             let displayVal = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
             let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
@@ -381,7 +426,7 @@ private struct CombinedLinearAccountCard: View {
                 Text(label)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .frame(width: 24, alignment: .leading)
+                    .frame(width: labelWidth, alignment: .leading)
 
                 LinearProgressBar(percent: displayVal, color: color, height: 4)
 
@@ -398,7 +443,7 @@ private struct CombinedLinearAccountCard: View {
                 }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(account.provider.displayName) \(label): \(Int(displayVal)) percent")
+            .accessibilityLabel("\(accessibilityLabelText ?? "\(account.provider.displayName) \(label)"): \(Int(displayVal)) percent")
         }
     }
 }
@@ -502,7 +547,7 @@ private struct CombinedCircularAccountCard: View {
                         }
 
                         if hasModelBreakdown {
-                            AntigravityModelQuotaRows(data: data, metric: metric)
+                            combinedCircularClaudeGptSection(data: data)
                                 .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                         }
                     } else {
@@ -515,6 +560,57 @@ private struct CombinedCircularAccountCard: View {
         }
         .padding(10)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func combinedCircularClaudeGptSection(data: ProviderData) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("Claude / GPT")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            HStack(spacing: 14) {
+                if let p5h = data.usedPercent5hThirdParty {
+                    circularModelItem(label: "5h (C/G)", percent: p5h, resetsAt: data.resetsAt5hThirdParty)
+                }
+                if let pWk = data.usedPercentWeeklyThirdParty {
+                    circularModelItem(label: "Weekly (C/G)", percent: pWk, resetsAt: data.resetsAtWeeklyThirdParty)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .padding(6)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func circularModelItem(label: String, percent: Double, resetsAt: Int?) -> some View {
+        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
+        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+
+        return VStack(spacing: 2) {
+            ZStack {
+                CircularRingProgress(percent: displayVal, color: color, lineWidth: 3, size: 34)
+
+                Text("\(Int(displayVal))%")
+                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(.primary)
+            }
+
+            Text(label)
+                .font(.system(size: 8.5, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            if let resetsAt {
+                Text(WidgetMetrics.formatCountdown(resetsAt))
+                    .font(.system(size: 7.5, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Claude/GPT \(label): \(Int(displayVal)) percent")
     }
 
     private func circularMetricItem(label: String, percent: Double, resetsAt: Int?) -> some View {
@@ -678,7 +774,7 @@ private struct PerAgentLinearWidgetView: View {
                                 }
 
                                 if hasModelBreakdown {
-                                    AntigravityModelQuotaRows(data: data, metric: metric)
+                                    perAgentLinearClaudeGptSection(data: data)
                                         .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                                 }
                             } else {
@@ -785,7 +881,30 @@ private struct PerAgentLinearWidgetView: View {
         .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private func secondaryRow(label: String, percent: Double, resetsAt: Int?) -> some View {
+    @ViewBuilder
+    private func perAgentLinearClaudeGptSection(data: ProviderData) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("Claude / GPT Quota")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            VStack(spacing: 5) {
+                if let p5h = data.usedPercent5hThirdParty {
+                    secondaryRow(label: "5h (C/G)", percent: p5h, resetsAt: data.resetsAt5hThirdParty, labelWidth: 68)
+                }
+                if let pWk = data.usedPercentWeeklyThirdParty {
+                    secondaryRow(label: "Weekly (C/G)", percent: pWk, resetsAt: data.resetsAtWeeklyThirdParty, labelWidth: 68)
+                }
+            }
+        }
+        .padding(8)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func secondaryRow(label: String, percent: Double, resetsAt: Int?, labelWidth: CGFloat = 48) -> some View {
         let displayVal = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
         let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
 
@@ -793,7 +912,7 @@ private struct PerAgentLinearWidgetView: View {
             Text(label)
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 48, alignment: .leading)
+                .frame(width: labelWidth, alignment: .leading)
 
             LinearProgressBar(percent: displayVal, color: color, height: 4)
 
@@ -808,6 +927,8 @@ private struct PerAgentLinearWidgetView: View {
                     .frame(width: 36, alignment: .trailing)
             }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label): \(Int(displayVal)) percent")
     }
 }
 
@@ -919,7 +1040,7 @@ private struct PerAgentCircularWidgetView: View {
                                 }
 
                                 if hasModelBreakdown {
-                                    AntigravityModelQuotaRows(data: data, metric: metric)
+                                    perAgentCircularClaudeGptSection(data: data)
                                         .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                                 }
                             } else {
@@ -1055,6 +1176,59 @@ private struct PerAgentCircularWidgetView: View {
         .frame(maxWidth: .infinity)
         .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
     }
+
+    @ViewBuilder
+    private func perAgentCircularClaudeGptSection(data: ProviderData) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Claude / GPT Quota")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            HStack(spacing: 16) {
+                if let p5h = data.usedPercent5hThirdParty {
+                    circularItem(label: "5h (C/G)", percent: p5h, resetsAt: data.resetsAt5hThirdParty)
+                }
+                if let pWk = data.usedPercentWeeklyThirdParty {
+                    circularItem(label: "Weekly (C/G)", percent: pWk, resetsAt: data.resetsAtWeeklyThirdParty)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .padding(8)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func circularItem(label: String, percent: Double, resetsAt: Int?) -> some View {
+        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
+        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+
+        return VStack(spacing: 3) {
+            ZStack {
+                CircularRingProgress(percent: displayVal, color: color, lineWidth: 3.5, size: 40)
+
+                VStack(spacing: 0) {
+                    Text("\(Int(displayVal))%")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(.primary)
+                }
+            }
+
+            Text(label)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            if let resetsAt {
+                Text(WidgetMetrics.formatCountdown(resetsAt))
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Claude/GPT \(label): \(Int(displayVal)) percent")
+    }
 }
 
 // MARK: - Style 5: Concentric Rings Widget View
@@ -1124,6 +1298,40 @@ private func extractRings(
             percent: displayVal,
             color: color,
             resetsAt: data.resetsAtWeekly
+        ))
+    }
+    return rings
+}
+
+private func extractClaudeGptRings(
+    from data: ProviderData,
+    metric: PercentageMetric
+) -> [RingData] {
+    var rings: [RingData] = []
+    if let p5h = data.usedPercent5hThirdParty {
+        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: p5h, metric: metric)
+        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+        rings.append(RingData(
+            id: .fiveHour,
+            kind: .fiveHour,
+            label: "5h (C/G)",
+            positionName: "Outer",
+            percent: displayVal,
+            color: color,
+            resetsAt: data.resetsAt5hThirdParty
+        ))
+    }
+    if let pWk = data.usedPercentWeeklyThirdParty {
+        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: pWk, metric: metric)
+        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+        rings.append(RingData(
+            id: .weekly,
+            kind: .weekly,
+            label: "Weekly (C/G)",
+            positionName: rings.isEmpty ? "Outer" : "Inner",
+            percent: displayVal,
+            color: color,
+            resetsAt: data.resetsAtWeeklyThirdParty
         ))
     }
     return rings
@@ -1281,7 +1489,7 @@ private struct SingleAccountConcentricCard: View {
                         }
 
                         if hasModelBreakdown {
-                            AntigravityModelQuotaRows(data: data, metric: metric)
+                            singleAccountClaudeGptRingsSection(data: data)
                                 .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                         }
                     } else {
@@ -1294,6 +1502,73 @@ private struct SingleAccountConcentricCard: View {
         }
         .padding(10)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    @ViewBuilder
+    private func singleAccountClaudeGptRingsSection(data: ProviderData) -> some View {
+        let cgRings = extractClaudeGptRings(from: data, metric: metric)
+        if !cgRings.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Claude / GPT Quota")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+
+                HStack(spacing: 14) {
+                    ZStack {
+                        ConcentricRingsGauge(
+                            rings: cgRings,
+                            baseSize: 52,
+                            ringWidth: 4.5,
+                            ringSpacing: 3
+                        )
+
+                        Text("C/G")
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Claude and GPT quota concentric rings gauge")
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        ForEach(cgRings) { ring in
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(ring.color)
+                                    .frame(width: 5, height: 5)
+
+                                VStack(alignment: .leading, spacing: 0) {
+                                    Text(ring.label)
+                                        .font(.system(size: 8.5, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                    Text(ring.positionName)
+                                        .font(.system(size: 7))
+                                        .foregroundStyle(.tertiary)
+                                }
+
+                                Spacer()
+
+                                VStack(alignment: .trailing, spacing: 0) {
+                                    Text("\(Int(ring.percent))%")
+                                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                        .foregroundStyle(.primary)
+
+                                    if let resetsAt = ring.resetsAt {
+                                        Text(WidgetMetrics.formatCountdown(resetsAt))
+                                            .font(.system(size: 7.5, design: .monospaced))
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(8)
+            .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        }
     }
 }
 
@@ -1408,7 +1683,7 @@ private struct MultiAccountConcentricCell: View {
                     }
 
                     if hasModelBreakdown {
-                        AntigravityModelQuotaRows(data: data, metric: metric)
+                        multiAccountClaudeGptIndicator(data: data)
                             .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                     }
                 } else {
@@ -1422,6 +1697,59 @@ private struct MultiAccountConcentricCell: View {
         .padding(6)
         .frame(maxWidth: .infinity)
         .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private func multiAccountClaudeGptIndicator(data: ProviderData) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Claude / GPT")
+                .font(.system(size: 7.5, weight: .bold))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 6) {
+                if let p5h = data.usedPercent5hThirdParty {
+                    let displayVal = WidgetMetrics.displayPercent(forUsedPercent: p5h, metric: metric)
+                    let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+                    HStack(spacing: 2.5) {
+                        Circle()
+                            .fill(color)
+                            .frame(width: 4.5, height: 4.5)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("5h \(Int(displayVal))%")
+                                .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                            if let resetsAt = data.resetsAt5hThirdParty {
+                                Text(WidgetMetrics.formatCountdown(resetsAt))
+                                    .font(.system(size: 6.5, design: .monospaced))
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                }
+
+                if let pWk = data.usedPercentWeeklyThirdParty {
+                    let displayVal = WidgetMetrics.displayPercent(forUsedPercent: pWk, metric: metric)
+                    let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+                    HStack(spacing: 2.5) {
+                        Circle()
+                            .fill(color)
+                            .frame(width: 4.5, height: 4.5)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("Wk \(Int(displayVal))%")
+                                .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                            if let resetsAt = data.resetsAtWeeklyThirdParty {
+                                Text(WidgetMetrics.formatCountdown(resetsAt))
+                                    .font(.system(size: 6.5, design: .monospaced))
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 5)
+        .padding(.vertical, 3.5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -1531,7 +1859,7 @@ private struct SingleAgentFocusWidgetView: View {
                             }
 
                             if hasModelBreakdown {
-                                AntigravityModelQuotaRows(data: data, metric: metric)
+                                singleAgentClaudeGptSection(data: data)
                                     .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                             }
                         } else {
@@ -1656,43 +1984,56 @@ private struct SingleAgentFocusWidgetView: View {
         }
         .padding(.top, 2)
     }
-}
-
-/// Secondary quota rows keep the existing headline and ring metrics unchanged.
-private struct AntigravityModelQuotaRows: View {
-    let data: ProviderData
-    let metric: PercentageMetric
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            quotaRow(label: "5h (C/G)", percent: data.usedPercent5hThirdParty, resetsAt: data.resetsAt5hThirdParty)
-            quotaRow(label: "Weekly (C/G)", percent: data.usedPercentWeeklyThirdParty, resetsAt: data.resetsAtWeeklyThirdParty)
-        }
-    }
 
     @ViewBuilder
-    private func quotaRow(label: String, percent: Double?, resetsAt: Int?) -> some View {
-        if let percent {
-            let displayed = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
-            let color = WidgetMetrics.colorForPercent(displayed, metric: metric)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(label)
-                    .font(.system(size: 9, weight: .medium))
+    private func singleAgentClaudeGptSection(data: ProviderData) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("Claude / GPT Quota")
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
-                HStack(spacing: 4) {
-                    Text("\(Int(displayed))%\(metric == .remaining ? " remaining" : " used")")
-                        .font(.system(size: 9, weight: .semibold))
-                    Spacer(minLength: 0)
-                    if let resetsAt {
-                        Text(WidgetMetrics.formatCountdown(resetsAt))
-                            .font(.system(size: 8, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                LinearProgressBar(percent: displayed, color: color, height: 3.5)
+                Spacer()
             }
-            .accessibilityElement(children: .combine)
+
+            VStack(spacing: 5) {
+                if let p5h = data.usedPercent5hThirdParty {
+                    singleAgentCGRow(label: "5h (C/G)", percent: p5h, resetsAt: data.resetsAt5hThirdParty)
+                }
+                if let pWk = data.usedPercentWeeklyThirdParty {
+                    singleAgentCGRow(label: "Weekly (C/G)", percent: pWk, resetsAt: data.resetsAtWeeklyThirdParty)
+                }
+            }
         }
+        .padding(8)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func singleAgentCGRow(label: String, percent: Double, resetsAt: Int?) -> some View {
+        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
+        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+
+        return HStack(spacing: 6) {
+            Text(label)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 66, alignment: .leading)
+
+            LinearProgressBar(percent: displayVal, color: color, height: 3.5)
+
+            Text("\(Int(displayVal))%")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.primary)
+                .frame(width: 30, alignment: .trailing)
+
+            if let resetsAt {
+                Text(WidgetMetrics.formatCountdown(resetsAt))
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 36, alignment: .trailing)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Claude/GPT \(label): \(Int(displayVal)) percent")
     }
 }
 
