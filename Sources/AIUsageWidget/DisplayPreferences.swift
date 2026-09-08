@@ -74,6 +74,21 @@ struct WidgetConfiguration: Identifiable, Codable, Equatable {
     var visibleMetrics: Set<WidgetMetricKind> = Set(WidgetMetricKind.allCases)
 }
 
+private struct FailableWidgetConfiguration: Decodable {
+    let value: WidgetConfiguration?
+
+    init(from decoder: Decoder) throws {
+        do {
+            value = try WidgetConfiguration(from: decoder)
+        } catch {
+            value = nil
+            NSLog("[DisplayPreferences] Dropping malformed widget configuration at %@: %@",
+                  decoder.codingPath.map { $0.stringValue }.joined(separator: "."),
+                  String(describing: error))
+        }
+    }
+}
+
 /// Whether percentages represent used quota or remaining quota.
 enum PercentageMetric: String, CaseIterable, Identifiable {
     case used = "used"
@@ -133,8 +148,8 @@ final class DisplayPreferences: ObservableObject {
     private init() {
         let defaults = UserDefaults.standard
         if let data = defaults.data(forKey: Keys.widgetConfigurations),
-           let configurations = try? JSONDecoder().decode([WidgetConfiguration].self, from: data) {
-            self.widgetConfigurations = configurations
+           let configurations = try? JSONDecoder().decode([FailableWidgetConfiguration].self, from: data) {
+            self.widgetConfigurations = configurations.compactMap(\.value)
         } else if defaults.object(forKey: Keys.isDesktopWidgetEnabled) != nil
                     || defaults.object(forKey: Keys.desktopWidgetStyle) != nil {
             let style = defaults.string(forKey: Keys.desktopWidgetStyle)

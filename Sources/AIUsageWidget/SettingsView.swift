@@ -189,7 +189,7 @@ private struct AccountsSettingsTab: View {
                 selectedAccountId = store.accounts.first?.id
             }
             if let cfg = store.config {
-                draftConfig = cfg
+                initializeDraftConfig(cfg)
                 hasInitializedConfig = true
             }
             if let acct = selectedAccount {
@@ -203,7 +203,7 @@ private struct AccountsSettingsTab: View {
         }
         .onChange(of: store.config) { newCfg in
             if let newCfg, !hasInitializedConfig {
-                draftConfig = newCfg
+                initializeDraftConfig(newCfg)
                 hasInitializedConfig = true
             }
         }
@@ -347,7 +347,7 @@ private struct AccountsSettingsTab: View {
                     label: "Enable inference polling (Keychain route)",
                     binding: binding,
                     isOnOverride: Binding(
-                        get: { draftConfig.claudePollingMode == "inference" },
+                        get: { draftConfig.claudePollingMode == "inference" && binding.wrappedValue.routesEnabled.contains(.keychain) },
                         set: { isOn in
                             draftConfig.claudePollingMode = isOn ? "inference" : "disabled"
                             var routes = binding.wrappedValue.routesEnabled
@@ -538,6 +538,23 @@ private struct AccountsSettingsTab: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
+        }
+    }
+
+    private func initializeDraftConfig(_ config: DaemonConfig) {
+        var normalized = config
+        var claude = config.claude ?? ProviderConfig(routesEnabled: [.keychain], keychainPollIntervalSec: 60)
+        // Polling mode is authoritative: repair the route without enabling disabled inference.
+        if config.claudePollingMode == "inference", !claude.routesEnabled.contains(.keychain) {
+            claude.routesEnabled.append(.keychain)
+            normalized.claude = claude
+        } else if config.claudePollingMode == "disabled", claude.routesEnabled.contains(.keychain) {
+            claude.routesEnabled.removeAll { $0 == .keychain }
+            normalized.claude = claude
+        }
+        draftConfig = normalized
+        if normalized != config {
+            Task { _ = await store.saveConfig(normalized) }
         }
     }
 

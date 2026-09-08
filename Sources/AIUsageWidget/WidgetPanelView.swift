@@ -537,6 +537,19 @@ private struct CombinedCircularAccountCard: View {
 
 // MARK: - Style 3: Per-Agent Linear Widget View
 
+@ViewBuilder
+private func freshnessBadge(for account: Account) -> some View {
+    if account.state == .restored || account.state == .stale {
+        let color: Color = account.state == .restored ? .purple : .orange
+        Text(account.state == .restored ? "Last known — stale since restart" : "Stale")
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+    }
+}
+
 private struct PerAgentLinearWidgetView: View {
     let accounts: [Account]
     @Binding var selectedIndex: Int
@@ -576,6 +589,8 @@ private struct PerAgentLinearWidgetView: View {
                                         .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
                                 }
                             }
+
+                            freshnessBadge(for: account)
 
                             if let asOf = account.asOf {
                                 Text(WidgetMetrics.syncAge(asOf))
@@ -638,7 +653,7 @@ private struct PerAgentLinearWidgetView: View {
                                             .padding(.top, 2)
                                         }
                                     }
-                                    .opacity(account.state == .stale ? 0.75 : 1.0)
+                                    .opacity(account.state == .restored || account.state == .stale ? 0.85 : 1.0)
                                 } else {
                                     Text("No usage data")
                                         .font(.caption)
@@ -1092,7 +1107,7 @@ private func extractRings(
             id: .context,
             kind: .context,
             label: "Context",
-            positionName: rings.isEmpty ? "Outer" : "Inner",
+            positionName: rings.isEmpty ? "Outer" : (rings.count == 1 ? "Mid" : "Inner"),
             percent: displayVal,
             color: color,
             resetsAt: nil
@@ -1282,44 +1297,7 @@ private struct MultiAccountConcentricView: View {
                         )
                     }
                 }
-
-                // Global Ring Legend Bar
-                legendBar
             }
-        }
-    }
-
-    private var legendBar: some View {
-        HStack(spacing: 8) {
-            Text("RINGS")
-                .font(.system(size: 8, weight: .bold, design: .rounded))
-                .foregroundStyle(.tertiary)
-
-            Spacer()
-
-            if visibleMetrics.contains(.fiveHour) {
-                legendItem(name: "5h", pos: "outer")
-            }
-            if visibleMetrics.contains(.weekly) {
-                legendItem(name: "Wk", pos: "mid")
-            }
-            if visibleMetrics.contains(.context) {
-                legendItem(name: "Ctx", pos: "inner")
-            }
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
-    }
-
-    private func legendItem(name: String, pos: String) -> some View {
-        HStack(spacing: 3) {
-            Circle()
-                .fill(Color.primary.opacity(0.4))
-                .frame(width: 5, height: 5)
-            Text("\(name) (\(pos))")
-                .font(.system(size: 8, weight: .medium))
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -1344,6 +1322,15 @@ private struct MultiAccountConcentricCell: View {
                         .fill(statusColor(for: account.state))
                         .frame(width: 5, height: 5)
                 }
+            }
+
+            if !account.label.isEmpty && account.label != "Default" {
+                Text(account.label)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
             }
 
             switch account.state {
@@ -1381,6 +1368,15 @@ private struct MultiAccountConcentricCell: View {
                             }
                         }
                         .opacity(account.state == .stale ? 0.75 : 1.0)
+
+                        // Missing metrics differ per account, so label each card's actual rings.
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(rings) { ring in
+                                Text("\(ring.label) (\(ring.positionName.lowercased()))")
+                                    .font(.system(size: 8, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 } else {
                     Text("No data")
@@ -1442,6 +1438,8 @@ private struct SingleAgentFocusWidgetView: View {
                             }
                         }
 
+                        freshnessBadge(for: account)
+
                         if let asOf = account.asOf {
                             Text(WidgetMetrics.syncAge(asOf))
                                 .font(.system(size: 9))
@@ -1482,11 +1480,11 @@ private struct SingleAgentFocusWidgetView: View {
                             let (dominantMetric, secondaryMetrics) = pickDominantAndSecondary(data: data)
                             if let dominant = dominantMetric {
                                 dominantFocusCard(dominant: dominant)
-                                    .opacity(account.state == .stale ? 0.75 : 1.0)
+                                    .opacity(account.state == .restored || account.state == .stale ? 0.85 : 1.0)
 
                                 if !secondaryMetrics.isEmpty {
                                     secondaryMetricsList(metrics: secondaryMetrics)
-                                        .opacity(account.state == .stale ? 0.75 : 1.0)
+                                        .opacity(account.state == .restored || account.state == .stale ? 0.85 : 1.0)
                                 }
                             } else {
                                 Text("No usage data")
