@@ -11,6 +11,8 @@
 #   - registers the statusLine hook in ~/.claude/settings.json and
 #     ~/.gemini/antigravity-cli/settings.json (merged in, existing settings
 #     preserved) - this is what powers the "Injection" route
+#   - the hook scripts read their own auth token from the auth-token file
+#     at run time, so they're copied to BIN_DIR as-is
 #
 # Safe to re-run: it overwrites its own previously-installed files only, and
 # the settings.json merge only ever touches the "statusLine" key.
@@ -59,19 +61,6 @@ cp "$REPO_DIR/Scripts/antigravity-statusline-hook.py" "$BIN_DIR/"
 cp "$REPO_DIR/Scripts/uninstall.sh" "$BIN_DIR/uninstall.sh"
 cp "$REPO_DIR/Scripts/run-with-log-rotation.sh" "$BIN_DIR/run-with-log-rotation.sh"
 chmod +x "$BIN_DIR/uninstall.sh" "$BIN_DIR/run-with-log-rotation.sh"
-# Add auth to installed hook copies; repository hook sources remain untouched.
-"$PYTHON3" - "$BIN_DIR" <<'PYAUTH'
-from pathlib import Path
-import sys
-for name in ("claude-statusline-hook.py", "antigravity-statusline-hook.py"):
-    path = Path(sys.argv[1]) / name
-    source = path.read_text()
-    old = 'headers={"Content-Type": "application/json"}'
-    new = 'headers={"Content-Type": "application/json", "X-Auth-Token": open(os.path.expanduser("~/Library/Application Support/AIUsageWidget/auth-token")).read().strip()}'
-    if old not in source:
-        raise SystemExit("Cannot add hook authentication: " + name)
-    path.write_text(source.replace(old, new))
-PYAUTH
 chmod +x "$BIN_DIR"/*.py "$BIN_DIR/aiusaged"
 
 echo "==> Installing LaunchAgents"
