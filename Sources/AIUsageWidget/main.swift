@@ -32,13 +32,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.action = #selector(togglePopover)
+            button.action = #selector(handleStatusItemClick)
             button.target = self
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
         updateStatusItem()
 
-        store.$providers
+        store.$accounts
             .combineLatest(store.$isDaemonReachable, store.$config, store.$isCollectionPaused)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -67,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         popover = NSPopover()
         popover.behavior = .transient
+        popover.delegate = self
         popover.contentViewController = hostingController
         popover.contentSize = PopoverLayout.initialContentSize
 
@@ -104,6 +106,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let metric = displayPrefs.percentageMetric
         let isWarning = store.isStaleOrFailing
 
+        let enabledAccounts = displayPrefs.providerOrder.flatMap { provider in
+            store.accounts.filter { $0.provider == provider && store.isAccountEnabled($0) }
+        }
+
         if isWarning {
             button.setAccessibilityLabel("AI Usage: Service warning")
             button.setAccessibilityValue("Service unreachable or provider error")
@@ -117,18 +123,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 button.imagePosition = .imageLeading
                 button.title = " !"
             case .coloredDots:
-                let providers = displayPrefs.providerOrder
-                    .filter { store.isProviderEnabled($0) }
-                    .map { ($0, store.providers[$0]) }
-                button.image = displayPrefs.generateDotsImage(providers: providers, isStaleOrFailing: true)
+                button.image = displayPrefs.generateDotsImage(accounts: enabledAccounts, isDaemonReachable: store.isDaemonReachable)
                 button.title = ""
             }
             return
         }
 
-        let maxUsage = store.highestUsagePercent ?? 0.0
-        let displayVal = displayPrefs.displayPercent(forUsedPercent: maxUsage)
+        // Task B5: Stop substituting 0.0 for missing/no-observation data! Show distinct "no data" indicator
+        guard let maxUsage = store.highestUsagePercent else {
+            let accessibilityDesc = "AI Usage: No recent data"
+            button.setAccessibilityLabel("AI Usage")
+            button.setAccessibilityValue(accessibilityDesc)
 
+            switch mode {
+            case .iconOnly:
+                button.image = noDataImage(accessibilityDesc: accessibilityDesc)
+                button.title = ""
+            case .percentageText:
+                button.image = noDataImage(accessibilityDesc: accessibilityDesc)
+                button.imagePosition = .imageLeading
+                button.title = " --%"
+            case .coloredDots:
+                button.image = displayPrefs.generateDotsImage(accounts: enabledAccounts, isDaemonReachable: store.isDaemonReachable)
+                button.title = ""
+            }
+            return
+        }
+
+        let displayVal = displayPrefs.displayPercent(forUsedPercent: maxUsage)
         let accessibilityDesc = "AI Usage: \(Int(displayVal))% \(metric.displayName.lowercased())"
         button.setAccessibilityLabel("AI Usage")
         button.setAccessibilityValue(accessibilityDesc)
@@ -144,12 +166,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.imagePosition = .imageLeading
             button.title = " \(Int(displayVal))%"
         case .coloredDots:
-            let providers = displayPrefs.providerOrder
-                .filter { store.isProviderEnabled($0) }
-                .map { ($0, store.providers[$0]) }
-            button.image = displayPrefs.generateDotsImage(providers: providers, isStaleOrFailing: false)
+            button.image = displayPrefs.generateDotsImage(accounts: enabledAccounts, isDaemonReachable: store.isDaemonReachable)
             button.title = ""
         }
+    }
+
+    private func noDataImage(accessibilityDesc: String) -> NSImage? {
+        let image = NSImage(systemSymbolName: "gauge.with.dots.needle.bottom.50percent", accessibilityDescription: accessibilityDesc)
+            ?? NSImage(systemSymbolName: "gauge", accessibilityDescription: accessibilityDesc)
+        image?.isTemplate = true
+        return image
     }
 
     private func warningImage() -> NSImage? {
@@ -185,11 +211,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return image
     }
 
+    @objc private func handleStatusItemClick() {
+        guard let event = NSApp.currentEvent else { return }
+        if event.type == .rightMouseUp {
+            let menu = NSMenu()
+            let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettingsMenuAction), keyEquivalent: ",")
+            settingsItem.target = self
+            menu.addItem(settingsItem)
+
+            let refreshItem = NSMenuItem(title: "Refresh Now", action: #selector(refreshMenuAction), keyEquivalent: "r")
+            refreshItem.target = self
+            menu.addItem(refreshItem)
+
+            menu.addItem(.separator())
+
+            let quitItem = NSMenuItem(title: "Quit", action: #selector(quitMenuAction), keyEquivalent: "q")
+            quitItem.target = self
+            menu.addItem(quitItem)
+
+            let stopItem = NSMenuItem(title: "Quit and stop background service", action: #selector(quitAndStopMenuAction), keyEquivalent: "")
+            stopItem.target = self
+            menu.addItem(stopItem)
+
+            statusItem.menu = menu
+            statusItem.button?.performClick(nil)
+            DispatchQueue.main.async { [weak self] in
+                self?.statusItem.menu = nil
+            }
+        } else {
+            togglePopover()
+        }
+    }
+
+    @objc private func openSettingsMenuAction() {
+        openSettings()
+    }
+
+    @objc private func refreshMenuAction() {
+        Task { await store.refresh() }
+    }
+
+    @objc private func quitMenuAction() {
+        NSApp.terminate(nil)
+    }
+
+    @objc private func quitAndStopMenuAction() {
+        AppDelegate.quitAndStopDaemon()
+    }
+
+    /// Shells out to unload the LaunchAgent daemon plist and terminates app (Task C8)
+    static func quitAndStopDaemon() {
+        let plistPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/com.aiusagewidget.daemon.plist")
+            .path
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["unload", "-w", plistPath]
+        try? process.run()
+        process.waitUntilExit()
+        NSApp.terminate(nil)
+    }
+
     @objc private func togglePopover() {
         guard let button = statusItem.button else { return }
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            store.setPopoverVisible(true)
             Task { await store.reload() }
             NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
@@ -213,6 +301,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+}
+
+extension AppDelegate: NSPopoverDelegate {
+    func popoverWillShow(_ notification: Notification) {
+        store.setPopoverVisible(true)
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        store.setPopoverVisible(false)
     }
 }
 

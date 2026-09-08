@@ -7,16 +7,18 @@ struct SettingsView: View {
 
     var body: some View {
         TabView {
+            AccountsSettingsTab(store: store)
+                .tabItem { Label("Accounts", systemImage: "person.2") }
             GeneralSettingsTab(store: store, displayPrefs: displayPrefs)
                 .tabItem { Label("General", systemImage: "slider.horizontal.3") }
             ProviderHealthTab(store: store)
-                .tabItem { Label("Provider Health", systemImage: "person.badge.shield.checkmark") }
+                .tabItem { Label("Account Health", systemImage: "person.badge.shield.checkmark") }
             DiagnosticsSettingsTab(store: store)
                 .tabItem { Label("Diagnostics", systemImage: "stethoscope") }
             AdvancedSettingsTab()
                 .tabItem { Label("Advanced", systemImage: "gearshape.2") }
         }
-        .frame(minWidth: 520, idealWidth: 560, maxWidth: 680, minHeight: 560, idealHeight: 700)
+        .frame(minWidth: 560, idealWidth: 620, maxWidth: 720, minHeight: 580, idealHeight: 720)
         .task {
             await store.loadConfig()
             await store.loadErrors()
@@ -26,6 +28,7 @@ struct SettingsView: View {
 }
 
 private struct RouteKey: Hashable {
+    let accountId: String
     let provider: Provider
     let route: Route
 }
@@ -86,6 +89,609 @@ private enum LaunchAgentManager {
     }
 }
 
+// MARK: - Accounts Tab (Task A3)
+
+private struct AccountsSettingsTab: View {
+    @ObservedObject var store: UsageStore
+    @State private var selectedAccountId: String?
+    @State private var isShowingAddSheet = false
+    @State private var editingLabel = ""
+    @State private var isRenaming = false
+    @State private var renameError: String?
+    @State private var accountToDelete: Account?
+    @State private var showDeleteConfirmation = false
+    @State private var testStatuses: [RouteKey: RouteTestState] = [:]
+    @State private var draftConfig: DaemonConfig = DaemonConfig()
+    @State private var hasInitializedConfig = false
+
+    private var selectedAccount: Account? {
+        store.accounts.first { $0.id == selectedAccountId } ?? store.accounts.first
+    }
+
+    var body: some View {
+        HSplitView {
+            // Left list of accounts grouped by provider
+            VStack(alignment: .leading, spacing: 0) {
+                List(selection: $selectedAccountId) {
+                    ForEach(Provider.allCases) { provider in
+                        let providerAccounts = store.accounts.filter { $0.provider == provider }
+                        Section(header: Label(provider.displayName, systemImage: provider.symbolName)) {
+                            if providerAccounts.isEmpty {
+                                Text("No accounts configured")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            } else {
+                                ForEach(providerAccounts) { account in
+                                    accountListRow(account)
+                                        .tag(account.id)
+                                }
+                            }
+                        }
+                    }
+                }
+                .listStyle(.sidebar)
+
+                Divider()
+
+                HStack {
+                    Button {
+                        isShowingAddSheet = true
+                    } label: {
+                        Label("Add Account", systemImage: "plus")
+                    }
+                    .buttonStyle(.borderless)
+                    .padding(8)
+
+                    Spacer()
+                }
+                .background(.quaternary.opacity(0.2))
+            }
+            .frame(minWidth: 200, idealWidth: 220, maxWidth: 260)
+
+            // Right detail pane for selected account
+            ScrollView {
+                if let account = selectedAccount {
+                    VStack(alignment: .leading, spacing: 16) {
+                        accountHeader(account)
+
+                        Divider()
+
+                        accountRenameSection(account)
+
+                        Divider()
+
+                        accountRouteConfigSection(account)
+
+                        Divider()
+
+                        accountActionsSection(account)
+                    }
+                    .padding(16)
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: "person.crop.circle.badge.plus")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.secondary)
+                        Text("No account selected")
+                            .font(.headline)
+                        Text("Select an account on the left or click 'Add Account'.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding()
+                }
+            }
+            .frame(minWidth: 320)
+        }
+        .onAppear {
+            if selectedAccountId == nil {
+                selectedAccountId = store.accounts.first?.id
+            }
+            if let cfg = store.config {
+                draftConfig = cfg
+                hasInitializedConfig = true
+            }
+            if let acct = selectedAccount {
+                editingLabel = acct.label
+            }
+        }
+        .onChange(of: selectedAccountId) { _ in
+            if let acct = selectedAccount {
+                editingLabel = acct.label
+            }
+        }
+        .onChange(of: store.config) { newCfg in
+            if let newCfg, !hasInitializedConfig {
+                draftConfig = newCfg
+                hasInitializedConfig = true
+            }
+        }
+        .sheet(isPresented: $isShowingAddSheet) {
+            AddAccountSheet(store: store) { newAccount in
+                selectedAccountId = newAccount.id
+                editingLabel = newAccount.label
+            }
+        }
+        .alert("Remove Account?", isPresented: $showDeleteConfirmation) {
+            Button("Remove", role: .destructive) {
+                if let acct = accountToDelete {
+                    Task {
+                        _ = await store.deleteAccount(id: acct.id)
+                        if selectedAccountId == acct.id {
+                            selectedAccountId = store.accounts.first?.id
+                        }
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                accountToDelete = nil
+            }
+        } message: {
+            Text("Are you sure you want to remove '\(accountToDelete?.label ?? "")'? Its stored quota history will be deleted. CLI credentials on your Mac remain untouched.")
+        }
+    }
+
+    private func accountListRow(_ account: Account) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(account.label)
+                    .font(.body)
+                    .bold(account.label == "Default")
+
+                if let dir = account.credentialLocation?.configDir {
+                    Text(shortenPath(dir))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else if account.credentialLocation?.kind == "daemon_token" {
+                    Text("daemon token")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            stateTag(account.state)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func stateTag(_ state: AccountTrustState) -> some View {
+        Text(state.displayName)
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(stateColor(state).opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+            .foregroundStyle(stateColor(state))
+    }
+
+    private func stateColor(_ state: AccountTrustState) -> Color {
+        switch state {
+        case .fresh: return .green
+        case .stale: return .orange
+        case .restored: return .purple
+        case .error: return .red
+        case .unknown: return .gray
+        }
+    }
+
+    private func accountHeader(_ account: Account) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label(account.provider.displayName, systemImage: account.provider.symbolName)
+                    .font(.title2).bold()
+                Spacer()
+                stateTag(account.state)
+            }
+
+            if let dir = account.credentialLocation?.configDir {
+                HStack {
+                    Text("Config Dir:").font(.caption).foregroundStyle(.secondary)
+                    Text(dir).font(.caption.monospaced()).textSelection(.enabled)
+                }
+            } else if account.credentialLocation?.kind == "daemon_token" {
+                Text("Credential: Managed by daemon (OAuth token)").font(.caption).foregroundStyle(.secondary)
+            }
+
+            if let effective = account.effectiveAccount, !effective.isEmpty {
+                HStack {
+                    Text("Logged in as:").font(.caption).foregroundStyle(.secondary)
+                    Text(effective).font(.caption.bold())
+                }
+            }
+        }
+    }
+
+    private func accountRenameSection(_ account: Account) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Account Label").font(.headline)
+            HStack {
+                TextField("Label", text: $editingLabel)
+                    .textFieldStyle(.roundedBorder)
+
+                Button("Save Label") {
+                    let newLabel = editingLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !newLabel.isEmpty, newLabel != account.label else { return }
+                    isRenaming = true
+                    Task {
+                        let res = await store.updateAccount(id: account.id, label: newLabel)
+                        isRenaming = false
+                        if case .failure(let err) = res {
+                            renameError = "Failed to rename: \(err)"
+                        }
+                    }
+                }
+                .disabled(isRenaming || editingLabel.trimmingCharacters(in: .whitespacesAndNewlines) == account.label || editingLabel.isEmpty)
+            }
+            if let err = renameError {
+                Text(err).font(.caption).foregroundStyle(.red)
+            }
+        }
+    }
+
+    private func accountRouteConfigSection(_ account: Account) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Routes & Polling for \(account.provider.displayName)")
+                .font(.headline)
+
+            let binding = configBinding(for: account.provider)
+
+            routeToggleRow(for: account, route: .keychain, label: "Keychain (poll CLI credentials)", binding: binding)
+
+            if account.provider == .codex {
+                routeToggleRow(for: account, route: .injection, label: "Local RPC (poll `codex app-server`)", binding: binding)
+            } else {
+                routeToggleRow(for: account, route: .injection, label: "Injection (real-time CLI hook push)", binding: binding)
+            }
+
+            Stepper(
+                "Poll interval: \(binding.wrappedValue.keychainPollIntervalSec)s",
+                value: Binding(
+                    get: { binding.wrappedValue.keychainPollIntervalSec },
+                    set: {
+                        binding.wrappedValue.keychainPollIntervalSec = $0
+                        Task { _ = await store.saveConfig(draftConfig) }
+                    }
+                ),
+                in: 30...600,
+                step: 30
+            )
+            .font(.caption)
+
+            Toggle("Notify near limit", isOn: Binding(
+                get: { binding.wrappedValue.notifyThresholdPercent != nil },
+                set: { isOn in
+                    if isOn {
+                        binding.wrappedValue.notifyThresholdPercent = binding.wrappedValue.notifyThresholdPercent ?? 90
+                        Task {
+                            await NotificationManager.shared.requestAuthorization()
+                            _ = await store.saveConfig(draftConfig)
+                        }
+                    } else {
+                        binding.wrappedValue.notifyThresholdPercent = nil
+                        Task { _ = await store.saveConfig(draftConfig) }
+                    }
+                }
+            ))
+            .font(.caption)
+
+            if let threshold = binding.wrappedValue.notifyThresholdPercent {
+                Stepper(
+                    "Threshold: \(threshold)%",
+                    value: Binding(
+                        get: { binding.wrappedValue.notifyThresholdPercent ?? 90 },
+                        set: {
+                            binding.wrappedValue.notifyThresholdPercent = $0
+                            Task { _ = await store.saveConfig(draftConfig) }
+                        }
+                    ),
+                    in: 1...100,
+                    step: 5
+                )
+                .font(.caption)
+                .padding(.leading, 16)
+            }
+        }
+    }
+
+    private func routeToggleRow(
+        for account: Account,
+        route: Route,
+        label: String,
+        binding: Binding<ProviderConfig>
+    ) -> some View {
+        let key = RouteKey(accountId: account.id, provider: account.provider, route: route)
+        let testState = testStatuses[key]
+
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Toggle(label, isOn: Binding(
+                    get: { binding.wrappedValue.routesEnabled.contains(route) },
+                    set: { isOn in
+                        var routes = binding.wrappedValue.routesEnabled
+                        if isOn, !routes.contains(route) {
+                            routes.append(route)
+                        } else if !isOn {
+                            routes.removeAll { $0 == route }
+                        }
+                        binding.wrappedValue.routesEnabled = routes
+                        Task { _ = await store.saveConfig(draftConfig) }
+                    }
+                ))
+                .font(.caption)
+
+                Spacer()
+
+                if testState?.isLoading == true {
+                    ProgressView().controlSize(.small)
+                } else if let result = testState?.result {
+                    Image(systemName: result.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundStyle(result.ok ? .green : .red)
+                }
+
+                Button("Test") {
+                    testRoute(account: account, route: route)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(testState?.isLoading == true)
+            }
+
+            if let result = testState?.result, let msg = result.message, !msg.isEmpty {
+                Text(msg)
+                    .font(.caption2)
+                    .foregroundStyle(result.ok ? Color.secondary : Color.red)
+                    .padding(.leading, 18)
+            }
+        }
+    }
+
+    private func testRoute(account: Account, route: Route) {
+        let key = RouteKey(accountId: account.id, provider: account.provider, route: route)
+        testStatuses[key] = RouteTestState(isLoading: true, result: nil)
+        Task {
+            let res = await store.testRoute(accountId: account.id, provider: account.provider, route: route)
+            let result: TestRouteResponse
+            switch res {
+            case .success(let response):
+                result = response
+            case .failure(let error):
+                let msg: String
+                switch error {
+                case .unreachable: msg = "Daemon unreachable"
+                case .badResponse(let code): msg = "Daemon error (\(code))"
+                case .decodeFailed: msg = "Failed to parse response"
+                }
+                result = TestRouteResponse(ok: false, provider: account.provider, route: route, message: msg)
+            }
+            testStatuses[key] = RouteTestState(isLoading: false, result: result)
+
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            if testStatuses[key]?.isLoading == false {
+                testStatuses[key] = nil
+            }
+        }
+    }
+
+    private func accountActionsSection(_ account: Account) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Account Actions").font(.headline)
+
+            HStack(spacing: 12) {
+                Button {
+                    Task {
+                        _ = await store.resetCredentials(accountId: account.id)
+                    }
+                } label: {
+                    Label("Reset Credentials", systemImage: "arrow.counterclockwise.circle")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Spacer()
+
+                Button(role: .destructive) {
+                    accountToDelete = account
+                    showDeleteConfirmation = true
+                } label: {
+                    Label("Remove Account", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+    }
+
+    private func configBinding(for provider: Provider) -> Binding<ProviderConfig> {
+        Binding(
+            get: {
+                switch provider {
+                case .claude: return draftConfig.claude ?? ProviderConfig(routesEnabled: [.keychain], keychainPollIntervalSec: 60)
+                case .codex: return draftConfig.codex ?? ProviderConfig(routesEnabled: [.injection], keychainPollIntervalSec: 120)
+                case .antigravity: return draftConfig.antigravity ?? ProviderConfig(routesEnabled: [.keychain], keychainPollIntervalSec: 60)
+                }
+            },
+            set: { newValue in
+                switch provider {
+                case .claude: draftConfig.claude = newValue
+                case .codex: draftConfig.codex = newValue
+                case .antigravity: draftConfig.antigravity = newValue
+                }
+            }
+        )
+    }
+
+    private func shortenPath(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if path.hasPrefix(home) {
+            return "~" + path.dropFirst(home.count)
+        }
+        return path
+    }
+}
+
+// MARK: - Add Account Sheet
+
+private struct AddAccountSheet: View {
+    @ObservedObject var store: UsageStore
+    var onCreated: (Account) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var selectedProvider: Provider = .claude
+    @State private var label: String = ""
+    @State private var configDir: String = "~/.claude"
+    @State private var antigravityRefreshToken: String = ""
+    @State private var antigravityEmail: String = ""
+    @State private var isCreating = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Add Account")
+                .font(.headline)
+
+            Picker("Provider", selection: $selectedProvider) {
+                ForEach(Provider.allCases) { prov in
+                    Text(prov.displayName).tag(prov)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: selectedProvider) { prov in
+                switch prov {
+                case .claude:
+                    configDir = "~/.claude"
+                    if label.isEmpty || label == "Codex" || label == "Antigravity" { label = "Claude Work" }
+                case .codex:
+                    configDir = "~/.codex"
+                    if label.isEmpty || label == "Claude" || label == "Antigravity" { label = "Codex Work" }
+                case .antigravity:
+                    if label.isEmpty || label == "Claude" || label == "Codex" { label = "Personal Gmail" }
+                }
+            }
+
+            TextField("Account Label (e.g. Work, Personal)", text: $label)
+                .textFieldStyle(.roundedBorder)
+
+            if selectedProvider == .claude || selectedProvider == .codex {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Configuration Directory")
+                        .font(.caption).bold()
+                    TextField("Config Dir (e.g. ~/.claude-work)", text: $configDir)
+                        .textFieldStyle(.roundedBorder)
+                    Text("The daemon isolates credentials per account by targeting this directory (\(selectedProvider == .claude ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME")).")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                // Antigravity manual capture flow
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Google OAuth Token (Advanced/Manual)")
+                        .font(.caption).bold()
+                    SecureField("OAuth Refresh Token", text: $antigravityRefreshToken)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Account Email", text: $antigravityEmail)
+                        .textFieldStyle(.roundedBorder)
+                    Text("Enter your OAuth refresh token and associated email address. The daemon will securely store and refresh this token directly.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let err = errorMessage {
+                Text(err)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Button("Cancel") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Spacer()
+
+                Button("Add Account") {
+                    createAccount()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isSubmitDisabled)
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(.top, 8)
+        }
+        .padding(20)
+        .frame(width: 420)
+        .onAppear {
+            if label.isEmpty {
+                label = "Work"
+            }
+        }
+    }
+
+    private var isSubmitDisabled: Bool {
+        if isCreating { return true }
+        if label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+        if selectedProvider == .claude || selectedProvider == .codex {
+            return configDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } else {
+            return antigravityRefreshToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || antigravityEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private func createAccount() {
+        isCreating = true
+        errorMessage = nil
+
+        let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let req: CreateAccountRequest
+        if selectedProvider == .claude || selectedProvider == .codex {
+            let expanded = (configDir.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath
+            req = CreateAccountRequest(
+                provider: selectedProvider,
+                label: trimmedLabel,
+                credentialLocation: CredentialLocation(kind: "config_dir", configDir: expanded)
+            )
+        } else {
+            req = CreateAccountRequest(
+                provider: .antigravity,
+                label: trimmedLabel,
+                credentialLocation: CredentialLocation(kind: "daemon_token"),
+                oauthBootstrap: OAuthBootstrap(
+                    refreshToken: antigravityRefreshToken.trimmingCharacters(in: .whitespacesAndNewlines),
+                    email: antigravityEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            )
+        }
+
+        Task {
+            let result = await store.createAccount(req)
+            isCreating = false
+            switch result {
+            case .success(let account):
+                onCreated(account)
+                dismiss()
+            case .failure(let error):
+                switch error {
+                case .badResponse(let code):
+                    if code == 409 {
+                        errorMessage = "An account with this configuration directory already exists."
+                    } else {
+                        errorMessage = "Server error (\(code)). Check daemon logs."
+                    }
+                case .unreachable:
+                    errorMessage = "Background service is not reachable."
+                case .decodeFailed:
+                    errorMessage = "Failed to parse daemon response."
+                }
+            }
+        }
+    }
+}
+
+// MARK: - General Tab
+
 private struct GeneralSettingsTab: View {
     @ObservedObject var store: UsageStore
     @ObservedObject var displayPrefs: DisplayPreferences
@@ -94,9 +700,15 @@ private struct GeneralSettingsTab: View {
     @State private var isSaving: Bool = false
     @State private var hasInitialized: Bool = false
     @State private var saveTask: Task<Void, Never>?
-    @State private var testStatuses: [RouteKey: RouteTestState] = [:]
     @State private var isLaunchAgentInstalled: Bool = false
     @State private var isLaunchAtLoginEnabled: Bool = false
+    @State private var launchAtLoginError: String?
+    @State private var pauseError: String?
+
+    // Uninstall state (Task D11)
+    @State private var showUninstallConfirmation = false
+    @State private var uninstallResultAlert: String?
+    @State private var isUninstallSuccessful = false
 
     var body: some View {
         Form {
@@ -104,14 +716,26 @@ private struct GeneralSettingsTab: View {
                 Toggle("Launch at login", isOn: Binding(
                     get: { isLaunchAtLoginEnabled },
                     set: { enable in
-                        isLaunchAtLoginEnabled = enable
-                        LaunchAgentManager.setEnabled(enable)
+                        let prev = isLaunchAtLoginEnabled
+                        let success = LaunchAgentManager.setEnabled(enable)
+                        if success {
+                            isLaunchAtLoginEnabled = enable
+                        } else {
+                            // Revert on failure (Task D9)
+                            isLaunchAtLoginEnabled = prev
+                            launchAtLoginError = "Failed to update launch at login setting via launchctl."
+                        }
                     }
                 ))
                 .disabled(!isLaunchAgentInstalled)
                 .help(isLaunchAgentInstalled ? "Start AI Usage Widget automatically when logging in" : "App was not installed via install.sh")
                 .accessibilityLabel("Launch at login")
-                .accessibilityHint("Start AI Usage Widget automatically when logging into macOS")
+
+                if let err = launchAtLoginError {
+                    Text(err)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                }
             }
 
             Section("Data Collection") {
@@ -119,12 +743,22 @@ private struct GeneralSettingsTab: View {
                     get: { store.isCollectionPaused },
                     set: { paused in
                         Task {
-                            _ = await store.setCollectionPaused(paused)
+                            let res = await store.setCollectionPaused(paused)
+                            if case .failure(let err) = res {
+                                pauseError = "Failed to update pause state: \(err)"
+                            } else {
+                                pauseError = nil
+                            }
                         }
                     }
                 ))
                 .accessibilityLabel("Pause data collection")
-                .accessibilityHint("Temporarily halts background polling and quota requests without quitting the app")
+
+                if let err = pauseError {
+                    Text(err)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                }
 
                 Text("Temporarily halts background polling and quota requests without stopping the daemon or quitting the app.")
                     .font(.caption)
@@ -140,7 +774,6 @@ private struct GeneralSettingsTab: View {
                     step: 60
                 )
                 .accessibilityLabel("Freshness policy threshold")
-                .accessibilityValue(formatDuration(draft.staleAfterSeconds ?? 600))
 
                 Text("Controls when cached provider usage data is shown as \"stale\" with a warning indicator. Minimum threshold is 60 seconds.")
                     .font(.caption)
@@ -164,10 +797,6 @@ private struct GeneralSettingsTab: View {
                 .pickerStyle(.segmented)
                 .accessibilityLabel("Percentage metric style")
 
-                Text("Choose whether percentages throughout the widget and menu bar reflect quota used or quota remaining.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Provider display order")
                         .font(.subheadline)
@@ -177,7 +806,6 @@ private struct GeneralSettingsTab: View {
                         HStack(spacing: 8) {
                             Image(systemName: "line.3.horizontal")
                                 .foregroundStyle(.tertiary)
-                                .help("Drag to reorder")
 
                             Label(provider.displayName, systemImage: provider.symbolName)
                                 .font(.body)
@@ -191,8 +819,6 @@ private struct GeneralSettingsTab: View {
                             }
                             .buttonStyle(.borderless)
                             .disabled(index == 0)
-                            .help("Move up")
-                            .accessibilityLabel("Move \(provider.displayName) up")
 
                             Button {
                                 displayPrefs.moveDown(provider: provider)
@@ -201,26 +827,29 @@ private struct GeneralSettingsTab: View {
                             }
                             .buttonStyle(.borderless)
                             .disabled(index == displayPrefs.providerOrder.count - 1)
-                            .help("Move down")
-                            .accessibilityLabel("Move \(provider.displayName) down")
                         }
-                        .padding(.vertical, 3)
+                        .padding(.vertical, 2)
                     }
                 }
                 .padding(.top, 4)
             }
 
-            Section("Claude") {
-                routeToggles(for: .claude)
-            }
-            Section("Codex") {
-                Text("Keychain reads Codex's own OAuth token (from macOS Keychain if `codex login` uses keyring storage, otherwise from ~/.codex/auth.json) and polls OpenAI directly. Local RPC instead polls a spawned `codex app-server` process - Codex has no push-based hook, so unlike Claude/Antigravity this is not real-time injection.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                routeToggles(for: .codex)
-            }
-            Section("Antigravity") {
-                routeToggles(for: .antigravity)
+            // Task D11: Uninstall button with confirmation dialog
+            Section("Maintenance & Uninstall") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Uninstall AI Usage Widget")
+                            .font(.body)
+                        Text("Stops the background service, removes launch agents, and clears installed hooks.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Uninstall AIUsageWidget…", role: .destructive) {
+                        showUninstallConfirmation = true
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
 
             Section {
@@ -280,13 +909,30 @@ private struct GeneralSettingsTab: View {
                 saveStatus = ok ? "Saved automatically" : "Could not save - background service unreachable"
             }
         }
-        .onDisappear {
-            saveTask?.cancel()
-            if hasInitialized && draft != store.config {
-                Task {
-                    await store.saveConfig(draft)
+        .alert("Uninstall AIUsageWidget?", isPresented: $showUninstallConfirmation) {
+            Button("Uninstall", role: .destructive) {
+                runUninstallScript()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This will invoke the official uninstaller to remove the background daemon LaunchAgent, clear statusLine hooks, and remove installed binaries.")
+        }
+        .alert("Uninstall Result", isPresented: Binding(
+            get: { uninstallResultAlert != nil },
+            set: { if !$0 {
+                uninstallResultAlert = nil
+                if isUninstallSuccessful {
+                    NSApp.terminate(nil)
+                }
+            }}
+        )) {
+            Button("OK", role: .cancel) {
+                if isUninstallSuccessful {
+                    NSApp.terminate(nil)
                 }
             }
+        } message: {
+            Text(uninstallResultAlert ?? "")
         }
     }
 
@@ -303,177 +949,48 @@ private struct GeneralSettingsTab: View {
         }
     }
 
-    @ViewBuilder
-    private func routeToggles(for provider: Provider, allowKeychain: Bool = true) -> some View {
-        let binding = configBinding(for: provider)
-        if allowKeychain {
-            routeToggleRow(for: provider, route: .keychain, label: "Keychain (poll the provider's API directly)", binding: binding)
+    /// Task D11: Executes fixed contract uninstaller at ~/Library/Application Support/AIUsageWidget/bin/uninstall.sh
+    private func runUninstallScript() {
+        let scriptPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/AIUsageWidget/bin/uninstall.sh")
+            .path
+
+        guard FileManager.default.fileExists(atPath: scriptPath) else {
+            uninstallResultAlert = "Uninstaller script not found at expected path:\n\(scriptPath)"
+            isUninstallSuccessful = false
+            return
         }
-        if provider == .codex {
-            routeToggleRow(for: provider, route: .injection, label: "Local RPC (poll `codex app-server` directly, no network call)", binding: binding)
-        } else {
-            routeToggleRow(for: provider, route: .injection, label: "Injection (real-time push from the provider's own CLI)", binding: binding)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [scriptPath]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            if process.terminationStatus == 0 {
+                isUninstallSuccessful = true
+                uninstallResultAlert = "AIUsageWidget uninstalled successfully. The application will now close."
+            } else {
+                isUninstallSuccessful = false
+                uninstallResultAlert = "Uninstall failed with exit code \(process.terminationStatus)."
+            }
+        } catch {
+            isUninstallSuccessful = false
+            uninstallResultAlert = "Failed to run uninstall script: \(error.localizedDescription)"
         }
-        Stepper(
-            "Poll interval: \(binding.wrappedValue.keychainPollIntervalSec)s",
-            value: Binding(
-                get: { binding.wrappedValue.keychainPollIntervalSec },
-                set: { binding.wrappedValue.keychainPollIntervalSec = $0 }
-            ),
-            in: 30...600,
-            step: 30
-        )
-        .accessibilityLabel("\(provider.displayName) poll interval")
-
-        Toggle("Notify near limit", isOn: Binding(
-            get: { binding.wrappedValue.notifyThresholdPercent != nil },
-            set: { isOn in
-                if isOn {
-                    binding.wrappedValue.notifyThresholdPercent = binding.wrappedValue.notifyThresholdPercent ?? 90
-                    Task {
-                        await NotificationManager.shared.requestAuthorization()
-                    }
-                } else {
-                    binding.wrappedValue.notifyThresholdPercent = nil
-                }
-            }
-        ))
-        .accessibilityLabel("\(provider.displayName) notify near limit")
-
-        if let threshold = binding.wrappedValue.notifyThresholdPercent {
-            Stepper(
-                "Threshold: \(threshold)%",
-                value: Binding(
-                    get: { binding.wrappedValue.notifyThresholdPercent ?? 90 },
-                    set: { binding.wrappedValue.notifyThresholdPercent = $0 }
-                ),
-                in: 1...100,
-                step: 5
-            )
-            .padding(.leading, 18)
-            .accessibilityLabel("\(provider.displayName) notification threshold")
-
-            Button("Send test notification") {
-                NotificationManager.shared.sendTestNotification(for: provider)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .padding(.leading, 18)
-            .accessibilityLabel("Send test notification for \(provider.displayName)")
-        }
-    }
-
-    @ViewBuilder
-    private func routeToggleRow(
-        for provider: Provider,
-        route: Route,
-        label: String,
-        binding: Binding<ProviderConfig>
-    ) -> some View {
-        let key = RouteKey(provider: provider, route: route)
-        let testState = testStatuses[key]
-
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Toggle(label, isOn: routeBinding(binding, route))
-                    .accessibilityLabel("Enable \(route.rawValue) for \(provider.displayName)")
-                Spacer()
-                if testState?.isLoading == true {
-                    ProgressView()
-                        .controlSize(.small)
-                } else if let result = testState?.result {
-                    Image(systemName: result.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundStyle(result.ok ? .green : .red)
-                }
-                Button("Test") {
-                    testRoute(provider: provider, route: route)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(testState?.isLoading == true)
-                .accessibilityLabel("Test \(route.rawValue) for \(provider.displayName)")
-            }
-
-            if let result = testState?.result, let message = result.message, !message.isEmpty {
-                HStack(alignment: .top, spacing: 4) {
-                    Image(systemName: result.ok ? "checkmark" : "xmark")
-                        .font(.caption2)
-                        .foregroundStyle(result.ok ? .green : .red)
-                        .padding(.top, 1)
-                    Text(message)
-                        .font(.caption2)
-                        .foregroundStyle(result.ok ? Color.secondary : Color.red)
-                }
-                .padding(.leading, 18)
-            }
-        }
-    }
-
-    private func testRoute(provider: Provider, route: Route) {
-        let key = RouteKey(provider: provider, route: route)
-        testStatuses[key] = RouteTestState(isLoading: true, result: nil)
-        Task {
-            let res = await store.testRoute(provider: provider, route: route)
-            let result: TestRouteResponse
-            switch res {
-            case .success(let response):
-                result = response
-            case .failure(let error):
-                let message: String
-                switch error {
-                case .unreachable: message = "Daemon unreachable"
-                case .badResponse(let code): message = "Daemon returned error (\(code))"
-                case .decodeFailed: message = "Failed to parse response"
-                }
-                result = TestRouteResponse(ok: false, provider: provider, route: route, message: message)
-            }
-            testStatuses[key] = RouteTestState(isLoading: false, result: result)
-
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
-            if testStatuses[key]?.isLoading == false {
-                testStatuses[key] = nil
-            }
-        }
-    }
-
-    private func configBinding(for provider: Provider) -> Binding<ProviderConfig> {
-        Binding(
-            get: {
-                switch provider {
-                case .claude: return draft.claude ?? ProviderConfig(routesEnabled: [.keychain], keychainPollIntervalSec: 60)
-                case .codex: return draft.codex ?? ProviderConfig(routesEnabled: [.injection], keychainPollIntervalSec: 120)
-                case .antigravity: return draft.antigravity ?? ProviderConfig(routesEnabled: [.keychain], keychainPollIntervalSec: 60)
-                }
-            },
-            set: { newValue in
-                switch provider {
-                case .claude: draft.claude = newValue
-                case .codex: draft.codex = newValue
-                case .antigravity: draft.antigravity = newValue
-                }
-            }
-        )
-    }
-
-    private func routeBinding(_ config: Binding<ProviderConfig>, _ route: Route) -> Binding<Bool> {
-        Binding(
-            get: { config.wrappedValue.routesEnabled.contains(route) },
-            set: { isOn in
-                var routes = config.wrappedValue.routesEnabled
-                if isOn, !routes.contains(route) {
-                    routes.append(route)
-                } else if !isOn {
-                    routes.removeAll { $0 == route }
-                }
-                config.wrappedValue.routesEnabled = routes
-            }
-        )
     }
 }
 
+// MARK: - Health Tab (Per-Account Health)
+
 private struct ProviderHealthTab: View {
     @ObservedObject var store: UsageStore
-    @State private var providerToReset: Provider?
+    @State private var accountToReset: Account?
     @State private var showResetConfirmation: Bool = false
     @State private var isResetting: Bool = false
     @State private var resetResultAlert: String?
@@ -481,23 +998,30 @@ private struct ProviderHealthTab: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                ForEach(Provider.allCases) { provider in
-                    providerHealthCard(for: provider)
+                if store.accounts.isEmpty {
+                    Text("No accounts found.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding()
+                } else {
+                    ForEach(store.accounts) { account in
+                        accountHealthCard(for: account)
+                    }
                 }
             }
             .padding()
         }
-        .alert("Reset \(providerToReset?.displayName ?? "") Credentials?", isPresented: $showResetConfirmation) {
+        .alert("Reset \(accountToReset?.label ?? "") (\(accountToReset?.provider.displayName ?? "")) Credentials?", isPresented: $showResetConfirmation) {
             Button("Reset Credentials", role: .destructive) {
-                if let provider = providerToReset {
-                    performReset(for: provider)
+                if let account = accountToReset {
+                    performReset(for: account)
                 }
             }
             Button("Cancel", role: .cancel) {
-                providerToReset = nil
+                accountToReset = nil
             }
         } message: {
-            Text("This will clear cached OAuth tokens and stored session credentials for \(providerToReset?.displayName ?? ""). You may need to log in again using its command-line tool.")
+            Text("This will clear daemon credential discovery caches and daemon-owned tokens for \(accountToReset?.label ?? ""). CLI credentials and Keychain items are not deleted.")
         }
         .alert(resetResultAlert ?? "Notice", isPresented: Binding(
             get: { resetResultAlert != nil },
@@ -507,31 +1031,20 @@ private struct ProviderHealthTab: View {
         }
     }
 
-    private func providerHealthCard(for provider: Provider) -> some View {
-        let status = store.providers[provider]
-
-        return VStack(alignment: .leading, spacing: 10) {
+    private func accountHealthCard(for account: Account) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label(provider.displayName, systemImage: provider.symbolName)
+                Label("\(account.provider.displayName) - \(account.label)", systemImage: account.provider.symbolName)
                     .font(.headline)
 
                 Spacer()
 
-                if let route = status?.activeRoute, route != .none {
-                    Text(route == .injection ? (provider == .codex ? "Local RPC" : "Injection") : "Keychain")
-                        .font(.caption2.weight(.medium))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.blue.opacity(0.15), in: Capsule())
-                        .foregroundStyle(Color.blue)
-                } else {
-                    Text("Inactive")
-                        .font(.caption2.weight(.medium))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.15), in: Capsule())
-                        .foregroundStyle(.secondary)
-                }
+                Text(account.state.displayName)
+                    .font(.caption2.weight(.medium))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(healthStateColor(account.state).opacity(0.15), in: Capsule())
+                    .foregroundStyle(healthStateColor(account.state))
             }
 
             Divider()
@@ -539,22 +1052,26 @@ private struct ProviderHealthTab: View {
             VStack(spacing: 6) {
                 healthRow(
                     title: "Credential Source",
-                    value: status?.credentialSource ?? defaultCredentialSource(for: provider),
+                    value: account.credentialSource ?? "Discovered on poll",
                     icon: "key.fill"
                 )
 
-                if let account = status?.effectiveAccount, !account.isEmpty {
-                    healthRow(title: "Account", value: account, icon: "person.crop.circle")
+                if let loc = account.credentialLocation?.configDir {
+                    healthRow(title: "Config Directory", value: loc, icon: "folder.fill")
+                }
+
+                if let email = account.effectiveAccount, !email.isEmpty {
+                    healthRow(title: "Effective Account", value: email, icon: "person.crop.circle")
                 }
 
                 healthRow(
                     title: "Last Success",
-                    value: status?.lastSuccessAt != nil ? relativeTimestamp(status!.lastSuccessAt!) : "No recorded success",
+                    value: account.lastSuccessAt != nil ? relativeTimestamp(account.lastSuccessAt!) : "No recorded success",
                     icon: "checkmark.circle",
-                    tint: status?.lastSuccessAt != nil ? .green : .secondary
+                    tint: account.lastSuccessAt != nil ? .green : .secondary
                 )
 
-                if let failureAt = status?.lastFailureAt {
+                if let failureAt = account.lastFailureAt {
                     healthRow(
                         title: "Last Failure",
                         value: relativeTimestamp(failureAt),
@@ -563,7 +1080,7 @@ private struct ProviderHealthTab: View {
                     )
                 }
 
-                if let error = status?.displayLastError, !error.isEmpty {
+                if let error = account.displayLastError, !error.isEmpty {
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
@@ -588,7 +1105,7 @@ private struct ProviderHealthTab: View {
             HStack {
                 Spacer()
                 Button(role: .destructive) {
-                    providerToReset = provider
+                    accountToReset = account
                     showResetConfirmation = true
                 } label: {
                     HStack(spacing: 4) {
@@ -599,13 +1116,22 @@ private struct ProviderHealthTab: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(isResetting)
-                .accessibilityLabel("Reset credentials for \(provider.displayName)")
             }
             .padding(.top, 4)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func healthStateColor(_ state: AccountTrustState) -> Color {
+        switch state {
+        case .fresh: return .green
+        case .stale: return .orange
+        case .restored: return .purple
+        case .error: return .red
+        case .unknown: return .gray
+        }
     }
 
     private func healthRow(title: String, value: String, icon: String, tint: Color = .primary) -> some View {
@@ -621,14 +1147,8 @@ private struct ProviderHealthTab: View {
             Text(value)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(tint)
-        }
-    }
-
-    private func defaultCredentialSource(for provider: Provider) -> String {
-        switch provider {
-        case .claude: return "macOS Keychain / Session"
-        case .codex: return "Keychain / ~/.codex/auth.json"
-        case .antigravity: return "macOS Keychain / OAuth"
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
     }
 
@@ -639,20 +1159,22 @@ private struct ProviderHealthTab: View {
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 
-    private func performReset(for provider: Provider) {
+    private func performReset(for account: Account) {
         isResetting = true
         Task {
-            let result = await store.resetCredentials(for: provider)
+            let result = await store.resetCredentials(accountId: account.id)
             isResetting = false
             switch result {
             case .success(let response):
-                resetResultAlert = response.message ?? "Credentials for \(provider.displayName) have been reset."
+                resetResultAlert = response.message ?? "Credentials for \(account.label) have been reset."
             case .failure(let error):
                 resetResultAlert = "Failed to reset credentials: \(error)"
             }
         }
     }
 }
+
+// MARK: - Diagnostics Tab
 
 private struct DiagnosticsSettingsTab: View {
     @ObservedObject var store: UsageStore
@@ -710,14 +1232,12 @@ private struct DiagnosticsSettingsTab: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .accessibilityLabel("Reveal configuration folder in Finder")
 
                     Button("Reveal Log in Finder") {
                         revealInFinder(path: logFilePath)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .accessibilityLabel("Reveal daemon log file in Finder")
                 }
             }
             .padding(.top, 4)
@@ -743,6 +1263,8 @@ private struct DiagnosticsSettingsTab: View {
     }
 }
 
+// MARK: - Advanced Tab
+
 private struct AdvancedSettingsTab: View {
     private var appSupportPath: String {
         FileManager.default.homeDirectoryForCurrentUser
@@ -760,14 +1282,21 @@ private struct AdvancedSettingsTab: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
+                Text("Multi-Account Model (P5)").font(.headline)
+                Text("Accounts are managed independently with their own configuration directories or tokens. Claude and Codex accounts point to isolated config directories (like ~/.claude-work or ~/.codex-personal). Antigravity accounts use daemon-managed OAuth tokens.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Routes explained").font(.headline)
-                Text("**Keychain** - the app polls the provider's API directly, using credentials already stored by that CLI on this Mac.")
+                Text("**Keychain** - the app polls the provider's API directly using credentials discovered from CLI stores.")
                     .font(.caption)
-                Text("**Injection** - the provider's own CLI pushes live usage data to this app in real time via a small hook, when that provider supports it (Claude, Antigravity).")
+                Text("**Injection** - provider CLIs push live usage updates to the daemon in real time via statusLine hooks (Claude, Antigravity).")
                     .font(.caption)
-                Text("**Local RPC** (Codex only) - Codex has no push hook, so this app instead spawns `codex app-server` and polls its RPC directly; it's labeled \"Polled\" rather than \"Live\" for that reason.")
+                Text("**Local RPC** (Codex only) - Codex polls `codex app-server` RPC without external network calls.")
                     .font(.caption)
-                Text("If both routes are enabled for a provider, the freshest data wins; a stale sample falls back to the other route automatically.")
+                Text("Trust states: fresh (live), stale (exceeded freshness threshold), restored (stale since daemon restart), unknown (no recent observation), error (poll failure).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.aiusagewidget.app</string>
+    <key>CFBundleName</key>
+    <string>AIUsageWidget</string>
+    <key>CFBundleDisplayName</key>
+    <string>AI Usage Widget</string>
+    <key>CFBundleExecutable</key>
+    <string>AIUsageWidget</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <!-- LSUIElement = true: the app is a background/menu-bar-only agent.
+         This prevents a Dock icon from appearing on launch.
+         The Swift code also calls NSApp.setActivationPolicy(.accessory) at
+         runtime, but without this plist key macOS may briefly flash a Dock
+         icon before the runtime call takes effect. -->
+    <key>LSUIElement</key>
+    <true/>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSSupportsAutomaticTermination</key>
+    <false/>
+    <key>NSSupportsSuddenTermination</key>
+    <false/>
+</dict>
+</plist>

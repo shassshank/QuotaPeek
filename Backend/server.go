@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -14,17 +16,21 @@ import (
 )
 
 type Server struct {
-	store      *Store
-	collector  *Collector
-	configPath string
-	poller     *Poller
-	configMu   sync.Mutex
-	authToken  string
+	accountMu         sync.Mutex
+	accountCollectors map[string]*Collector
+	store             *Store
+	collector         *Collector
+	configPath        string
+	poller            *Poller
+	configMu          sync.Mutex
+	authToken         string
 }
 
 func NewServer(store *Store, collector *Collector, configPath string) *Server {
-	s := &Server{store: store, collector: collector, configPath: configPath}
+	store.migrateAccounts()
+	s := &Server{store: store, collector: collector, configPath: configPath, accountCollectors: map[string]*Collector{}}
 	s.poller = NewPoller(store, collector)
+	s.poller.server = s
 	return s
 }
 
@@ -33,7 +39,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /status", s.handleStatus)
 	mux.HandleFunc("GET /history", s.handleHistory)
 	mux.HandleFunc("POST /refresh", s.handleRefresh)
-	mux.HandleFunc("POST /providers/{name}/reset-credentials", s.handleResetCredentials)
+	mux.HandleFunc("GET /accounts", s.handleAccounts)
+	mux.HandleFunc("POST /accounts", s.handleAccounts)
+	mux.HandleFunc("PATCH /accounts/{id}", s.handleAccount)
+	mux.HandleFunc("DELETE /accounts/{id}", s.handleAccount)
+	mux.HandleFunc("POST /accounts/{id}/reset-credentials", s.handleResetCredentials)
 	mux.HandleFunc("POST /test-route", s.handleTestRoute)
 	mux.HandleFunc("GET /config", s.handleGetConfig)
 	mux.HandleFunc("PUT /config", s.handlePutConfig)
@@ -41,7 +51,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /ingest/claude", s.handleIngestClaude)
 	mux.HandleFunc("POST /ingest/antigravity", s.handleIngestAntigravity)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/status" && (s.authToken == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Auth-Token")), []byte(s.authToken)) != 1) {
+		if !(r.Method == http.MethodGet && (r.URL.Path == "/status" || r.URL.Path == "/accounts")) && (s.authToken == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Auth-Token")), []byte(s.authToken)) != 1) {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
@@ -54,34 +64,47 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
-	cfg := s.store.Config()
+	var req struct {
+		AccountID string `json:"accountId"`
+	}
+	if r.Body != nil {
+		d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+		d.DisallowUnknownFields()
+		err := d.Decode(&req)
+		if err != io.EOF && (err != nil || d.Decode(new(any)) != io.EOF) {
+			http.Error(w, "invalid JSON", 400)
+			return
+		}
+	}
+	if req.AccountID != "" {
+		if _, ok := s.store.account(req.AccountID); !ok {
+			http.Error(w, "unknown account", 404)
+			return
+		}
+	}
 	var wg sync.WaitGroup
-	if hasRoute(cfg.Claude.RoutesEnabled, RouteKeychain) {
-		wg.Add(1)
-		go func() { defer wg.Done(); s.pollProvider(r.Context(), ProviderClaude) }()
-	}
-	if hasRoute(cfg.Antigravity.RoutesEnabled, RouteKeychain) {
-		wg.Add(1)
-		go func() { defer wg.Done(); s.pollProvider(r.Context(), ProviderAntigravity) }()
-	}
-	if hasRoute(cfg.Codex.RoutesEnabled, RouteInjection) || hasRoute(cfg.Codex.RoutesEnabled, RouteKeychain) {
-		wg.Add(1)
-		go func() { defer wg.Done(); s.pollProvider(r.Context(), ProviderCodex) }()
+	for _, a := range s.store.Config().Accounts {
+		if req.AccountID == "" || a.ID == req.AccountID {
+			wg.Add(1)
+			go func(a AccountConfig) { defer wg.Done(); s.pollProvider(r.Context(), ProviderID(a.ID)) }(a)
+		}
 	}
 	wg.Wait()
 	writeJSON(w, s.status())
 }
 
 type testRouteRequest struct {
-	Provider ProviderID `json:"provider"`
-	Route    Route      `json:"route"`
+	AccountID string     `json:"accountId"`
+	Provider  ProviderID `json:"provider"`
+	Route     Route      `json:"route"`
 }
 
 type testRouteResponse struct {
-	OK       bool       `json:"ok"`
-	Provider ProviderID `json:"provider"`
-	Route    Route      `json:"route"`
-	Message  string     `json:"message,omitempty"`
+	AccountID string     `json:"accountId,omitempty"`
+	OK        bool       `json:"ok"`
+	Provider  ProviderID `json:"provider"`
+	Route     Route      `json:"route"`
+	Message   string     `json:"message,omitempty"`
 }
 
 func (s *Server) handleTestRoute(w http.ResponseWriter, r *http.Request) {
@@ -104,14 +127,20 @@ func (s *Server) handleTestRoute(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid route", http.StatusBadRequest)
 		return
 	}
-	result := testRouteResponse{Provider: req.Provider, Route: req.Route}
+	a, ok := s.store.account(req.AccountID)
+	if !ok || a.Provider != req.Provider {
+		http.Error(w, "invalid or mismatched accountId", 400)
+		return
+	}
+	key := ProviderID(a.ID)
+	result := testRouteResponse{AccountID: a.ID, Provider: req.Provider, Route: req.Route}
 	if s.store.Config().CollectionPaused {
 		result.Message = "Collection is paused."
 		writeJSON(w, result)
 		return
 	}
 	if req.Route == RouteInjection && req.Provider != ProviderCodex {
-		result.OK = s.store.RouteFresh(req.Provider, req.Route, time.Now().Unix())
+		result.OK = s.store.RouteFresh(key, req.Route, time.Now().Unix())
 		result.Message = "Push-only route: the daemon cannot trigger a push; no recent quota push has been received."
 		if result.OK {
 			result.Message = "Push-only route: the daemon cannot trigger a push; a recent quota push has been received."
@@ -119,37 +148,24 @@ func (s *Server) handleTestRoute(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, result)
 		return
 	}
-	started, available := s.store.beginPoll(req.Provider, req.Route)
+	started, available := s.store.beginPoll(key, req.Route)
 	if !available {
 		result.Message = "Collection paused, credentials resetting, or route poll already in flight."
 		writeJSON(w, result)
 		return
 	}
-	defer s.store.endPoll(req.Provider, req.Route)
+	defer s.store.endPoll(key, req.Route)
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
-	var data UsageData
-	var err error
-	switch req.Provider {
-	case ProviderClaude:
-		data, err = s.collector.FetchClaudeWithMode(ctx, s.store.Config().ClaudePollingMode)
-	case ProviderAntigravity:
-		data, err = s.collector.FetchAntigravity(ctx)
-	case ProviderCodex:
-		if req.Route == RouteKeychain {
-			data, err = s.collector.FetchCodexKeychain(ctx)
-		} else {
-			data, err = FetchCodex(ctx)
-		}
+	data, err := s.fetchAccount(ctx, a, req.Route)
+	if err == nil && !s.store.SetSampleAt(key, req.Route, data, started) {
+		err = errors.New("Fetch returned invalid, empty, or older quota data.")
 	}
-	s.store.recordPoll(req.Provider, data, err)
+	s.store.recordPoll(key, data, err)
 	if err != nil {
 		result.Message = redactMessage(err.Error())
-	} else if data.quotaEmpty() {
-		result.Message = "Fetch returned no quota data."
 	} else {
 		result.OK = true
-		s.store.SetSampleAt(req.Provider, req.Route, data, started)
 	}
 	// Failed diagnostics update health, but never alter samples or headline errors.
 	writeJSON(w, result)
@@ -194,11 +210,16 @@ func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleIngestClaude(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	raw, _ := io.ReadAll(io.LimitReader(r.Body, 2<<20))
+	key, matched := s.ingestAccount(ProviderClaude, raw)
+	if !matched {
+		writeJSON(w, map[string]bool{"ok": true})
+		return
+	}
 	data, ok, err := parseClaudeIngest(raw)
 	if err != nil {
-		s.store.AddError(ProviderClaude, RouteInjection, "claude ingest parse failed: "+err.Error())
+		s.store.AddError(key, RouteInjection, "claude ingest parse failed: "+err.Error())
 	} else if ok {
-		s.store.SetSampleAt(ProviderClaude, RouteInjection, data, started)
+		s.store.SetSampleAt(key, RouteInjection, data, started)
 	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
@@ -206,54 +227,67 @@ func (s *Server) handleIngestClaude(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleIngestAntigravity(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	raw, _ := io.ReadAll(io.LimitReader(r.Body, 2<<20))
+	key, matched := s.ingestAccount(ProviderAntigravity, raw)
+	if !matched {
+		writeJSON(w, map[string]bool{"ok": true})
+		return
+	}
 	data, ok, err := parseAntigravityIngest(raw)
 	if err != nil {
-		s.store.AddError(ProviderAntigravity, RouteInjection, "antigravity ingest parse failed: "+err.Error())
+		s.store.AddError(key, RouteInjection, "antigravity ingest parse failed: "+err.Error())
 	} else if ok {
-		s.store.SetSampleAt(ProviderAntigravity, RouteInjection, data, started)
+		s.store.SetSampleAt(key, RouteInjection, data, started)
 	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-func (s *Server) pollProvider(ctx context.Context, provider ProviderID) {
-	if provider == ProviderClaude && s.store.Config().ClaudePollingMode == "disabled" {
+func (s *Server) fetchAccount(ctx context.Context, a AccountConfig, route Route) (UsageData, error) {
+	c := s.collectorFor(a)
+	switch a.Provider {
+	case ProviderClaude:
+		return c.FetchClaudeWithMode(ctx, s.store.Config().ClaudePollingMode)
+	case ProviderAntigravity:
+		return c.FetchAntigravity(ctx)
+	case ProviderCodex:
+		if route == RouteInjection {
+			return FetchCodexAt(ctx, c.configDir)
+		}
+		return c.FetchCodexKeychain(ctx)
+	}
+	return UsageData{}, errUnknownProvider
+}
+func (s *Server) pollProvider(ctx context.Context, key ProviderID) {
+	a, ok := s.store.account(string(key))
+	if !ok {
+		a, ok = s.store.account(defaultAccountID(key))
+	}
+	if !ok {
 		return
 	}
+	if a.Provider == ProviderClaude && s.store.Config().ClaudePollingMode == "disabled" {
+		return
+	}
+	key = ProviderID(a.ID)
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-
-	if provider == ProviderCodex {
-		cfg := s.store.Config().Codex
-		if hasRoute(cfg.RoutesEnabled, RouteInjection) {
-			s.pollCodexRoute(ctx, RouteInjection, FetchCodex)
+	for _, route := range providerConfig(s.store.Config(), a.Provider).RoutesEnabled {
+		if route == RouteInjection && a.Provider != ProviderCodex {
+			continue
 		}
-		if hasRoute(cfg.RoutesEnabled, RouteKeychain) {
-			s.pollCodexRoute(ctx, RouteKeychain, s.collector.FetchCodexKeychain)
+		started, ok := s.store.beginPoll(key, route)
+		if !ok {
+			continue
 		}
-		return
+		data, err := s.fetchAccount(ctx, a, route)
+		if err == nil && !s.store.SetSampleAt(key, route, data, started) {
+			err = errors.New("Fetch returned invalid, empty, or older quota data.")
+		}
+		s.store.recordPoll(key, data, err)
+		if err != nil {
+			s.store.AddError(key, route, err.Error())
+		}
+		s.store.endPoll(key, route)
 	}
-
-	started, available := s.store.beginPoll(provider, RouteKeychain)
-	if !available {
-		return
-	}
-	defer s.store.endPoll(provider, RouteKeychain)
-	var data UsageData
-	var err error
-	switch provider {
-	case ProviderClaude:
-		data, err = s.collector.FetchClaudeWithMode(ctx, s.store.Config().ClaudePollingMode)
-	case ProviderAntigravity:
-		data, err = s.collector.FetchAntigravity(ctx)
-	default:
-		err = errUnknownProvider
-	}
-	s.store.recordPoll(provider, data, err)
-	if err != nil {
-		s.store.AddError(provider, RouteKeychain, err.Error())
-		return
-	}
-	s.store.SetSampleAt(provider, RouteKeychain, data, started)
 }
 
 func (s *Server) pollCodexRoute(ctx context.Context, route Route, fetch func(context.Context) (UsageData, error)) {
@@ -263,12 +297,14 @@ func (s *Server) pollCodexRoute(ctx context.Context, route Route, fetch func(con
 	}
 	defer s.store.endPoll(ProviderCodex, route)
 	data, err := fetch(ctx)
+	if err == nil && !s.store.SetSampleAt(ProviderCodex, route, data, started) {
+		err = errors.New("Fetch returned invalid, empty, or older quota data.")
+	}
 	s.store.recordPoll(ProviderCodex, data, err)
 	if err != nil {
 		s.store.AddError(ProviderCodex, route, err.Error())
 		return
 	}
-	s.store.SetSampleAt(ProviderCodex, route, data, started)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -295,6 +331,7 @@ func hasRoute(routes []Route, route Route) bool {
 }
 
 type Poller struct {
+	server    *Server
 	store     *Store
 	collector *Collector
 	mu        sync.Mutex
@@ -316,13 +353,13 @@ func (p *Poller) Reschedule(cfg Config) {
 	if cfg.CollectionPaused {
 		return
 	}
-	p.startProvider(ctx, ProviderClaude, cfg.Claude)
-	p.startProvider(ctx, ProviderCodex, cfg.Codex)
-	p.startProvider(ctx, ProviderAntigravity, cfg.Antigravity)
+	for _, a := range cfg.Accounts {
+		p.startProvider(ctx, ProviderID(a.ID), providerConfig(cfg, a.Provider))
+	}
 }
 
 func (p *Poller) startProvider(ctx context.Context, provider ProviderID, cfg ProviderConfig) {
-	shouldPoll := hasRoute(cfg.RoutesEnabled, RouteKeychain) || provider == ProviderCodex && hasRoute(cfg.RoutesEnabled, RouteInjection)
+	shouldPoll := hasRoute(cfg.RoutesEnabled, RouteKeychain) || (provider == ProviderCodex || func() bool { a, ok := p.store.account(string(provider)); return ok && a.Provider == ProviderCodex }()) && hasRoute(cfg.RoutesEnabled, RouteInjection)
 	if !shouldPoll {
 		return
 	}
@@ -354,8 +391,9 @@ func (p *Poller) pollOnce(_ context.Context, provider ProviderID) {
 	// which would otherwise abort an in-flight fetch mid-request. The
 	// scheduling ctx should only stop future ticks, never abort a fetch
 	// that's already running.
-	s := Server{store: p.store, collector: p.collector}
-	s.pollProvider(context.Background(), provider)
+	if p.server != nil {
+		p.server.pollProvider(context.Background(), provider)
+	}
 }
 
 func (p *Poller) Stop() {
@@ -373,6 +411,11 @@ type providerError struct{ message string }
 func (e *providerError) Error() string { return e.message }
 
 func run() error {
+	listener, err := net.Listen("tcp", "127.0.0.1:47831")
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
 	path, err := configPath()
 	if err != nil {
 		return err
@@ -389,6 +432,16 @@ func run() error {
 		log.Printf("sample restore failed: %v", err)
 	}
 	server := NewServer(store, NewCollector(), path)
+	cfg = store.Config()
+	if err := saveConfig(path, cfg); err != nil {
+		return err
+	}
+	store.mu.Lock()
+	err = store.persistLocked()
+	store.mu.Unlock()
+	if err != nil {
+		log.Printf("sample migration save failed: %v", err)
+	}
 	server.authToken, err = createAuthToken(filepath.Join(filepath.Dir(path), "auth-token"))
 	if err != nil {
 		return err
@@ -397,50 +450,70 @@ func run() error {
 	server.collector.antigravityTokens.path = filepath.Join(filepath.Dir(path), "oauth-antigravity.json")
 	server.poller.Reschedule(cfg)
 	log.Println("aiusaged listening on 127.0.0.1:47831")
-	return http.ListenAndServe("127.0.0.1:47831", server.routes())
+	defer server.poller.Stop()
+	return http.Serve(listener, server.routes())
 }
 
 func (s *Server) status() StatusResponse {
 	status := s.store.Status(time.Now().Unix())
-	if s.collector != nil {
-		status = s.collector.decorateStatus(status)
+	for i := range status.Accounts {
+		a := &status.Accounts[i]
+		c := s.collectorFor(a.AccountConfig)
+		c.mu.Lock()
+		info, ok := c.credentials[a.Provider]
+		c.mu.Unlock()
+		if ok {
+			a.CredentialSource = info.source
+			if info.account != "" {
+				v := info.account
+				a.EffectiveAccount = &v
+			}
+		}
 	}
 	return status
 }
+
 func (s *Server) handleResetCredentials(w http.ResponseWriter, r *http.Request) {
-	id := ProviderID(r.PathValue("name"))
+	id := r.PathValue("id")
+	a, ok := s.store.account(id)
 	fail := func(code int, message string) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(code)
-		writeJSON(w, map[string]any{"ok": false, "provider": id, "message": redactMessage(message)})
+		writeJSON(w, map[string]any{"ok": false, "accountId": id, "provider": a.Provider, "message": redactMessage(message)})
 	}
-	if id != ProviderClaude && id != ProviderCodex && id != ProviderAntigravity {
-		fail(404, "Unknown provider.")
+	if !ok {
+		fail(404, "Unknown account.")
 		return
 	}
-	if !s.store.beginCredentialReset(id) {
-		fail(409, "Provider poll or credential reset already in flight.")
+	key := ProviderID(id)
+	if !s.store.beginCredentialReset(key) {
+		fail(409, "Account poll or credential reset already in flight.")
 		return
 	}
-	defer s.store.endCredentialReset(id)
+	defer s.store.endCredentialReset(key)
 	if s.collector == nil {
 		fail(500, "Collector unavailable.")
 		return
 	}
-	if err := s.collector.resetCredentials(id); err != nil {
+	if err := s.collectorFor(a).resetCredentials(a.Provider); err != nil {
 		fail(500, err.Error())
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "provider": id})
+	out := map[string]any{"ok": true, "accountId": id, "provider": a.Provider}
+	if a.Provider == ProviderClaude {
+		out["message"] = "Claude has no daemon-cached credentials; run the claude CLI to refresh."
+	}
+	writeJSON(w, out)
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
-	provider, route := ProviderID(r.URL.Query().Get("provider")), Route(r.URL.Query().Get("route"))
-	if !validSampleKey(provider, route) {
-		http.Error(w, "invalid or missing provider/route", http.StatusBadRequest)
+	id, route := r.URL.Query().Get("accountId"), Route(r.URL.Query().Get("route"))
+	a, ok := s.store.account(id)
+	if !ok || !validSampleKey(a.Provider, route) {
+		http.Error(w, "invalid or missing accountId/route", http.StatusBadRequest)
 		return
 	}
 	writeJSON(w, struct {
 		Points []HistoryPoint `json:"points"`
-	}{s.store.History(provider, route, time.Now().Unix())})
+	}{s.store.History(ProviderID(id), route, time.Now().Unix())})
 }

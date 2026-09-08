@@ -12,7 +12,12 @@ import (
 )
 
 func TestStatusDisabledRoutesEncodeArray(t *testing.T) {
-	raw, err := json.Marshal(NewStore(Config{}).Status(1000))
+	cfg := defaultConfig()
+	cfg.Accounts = []AccountConfig{legacyAccount(ProviderClaude), legacyAccount(ProviderCodex), legacyAccount(ProviderAntigravity)}
+	cfg.Claude.RoutesEnabled = nil
+	cfg.Codex.RoutesEnabled = nil
+	cfg.Antigravity.RoutesEnabled = nil
+	raw, err := json.Marshal(NewStore(cfg).Status(1000))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -35,8 +35,8 @@ func TestFreshnessPolicy(t *testing.T) {
 		fresh    bool
 		route    Route
 	}{
-		{600, 60, true, RouteInjection}, {150, 60, false, RouteKeychain},
-		{1, 100, true, RouteInjection}, {1, 99, false, RouteKeychain},
+		{600, 60, true, RouteKeychain}, {150, 60, false, RouteKeychain},
+		{1, 100, true, RouteKeychain}, {1, 99, false, RouteKeychain},
 	} {
 		cfg.StaleAfterSeconds, cfg.Claude.KeychainPollIntervalSec = tc.age, tc.interval
 		s.SetConfig(cfg)
@@ -88,6 +88,8 @@ func TestFreshnessAndPauseConfigAPI(t *testing.T) {
 
 func TestPauseDrainsPollAndResume(t *testing.T) {
 	cfg := defaultConfig()
+	cfg.ClaudePollingMode = "inference"
+	cfg.Accounts = []AccountConfig{legacyAccount(ProviderClaude), legacyAccount(ProviderCodex), legacyAccount(ProviderAntigravity)}
 	cfg.Codex.RoutesEnabled, cfg.Antigravity.RoutesEnabled = nil, nil
 	s := NewServer(NewStore(cfg), NewCollector(), filepath.Join(t.TempDir(), "config.json"))
 	s.authToken = "secret"
@@ -130,7 +132,7 @@ func TestPauseDrainsPollAndResume(t *testing.T) {
 	p2Request(s, "POST", "/refresh", "", "secret")
 	for _, id := range []string{"claude", "codex", "antigravity"} {
 		for _, route := range []string{"keychain", "injection"} {
-			w := p2Request(s, "POST", "/test-route", `{"provider":"`+id+`","route":"`+route+`"}`, "secret")
+			w := p2Request(s, "POST", "/test-route", `{"accountId":"acct_`+id+`_default","provider":"`+id+`","route":"`+route+`"}`, "secret")
 			if !strings.Contains(w.Body.String(), "Collection is paused.") {
 				t.Fatal(w.Body.String())
 			}
@@ -161,6 +163,8 @@ func TestCredentialReset(t *testing.T) {
 			c := NewCollector()
 			s := NewServer(NewStore(defaultConfig()), c, "")
 			s.authToken = "secret"
+			a, _ := s.store.account(defaultAccountID(id))
+			c = s.collectorFor(a)
 			cache := &c.codexTokens
 			if id == ProviderAntigravity {
 				cache = &c.antigravityTokens
@@ -173,7 +177,7 @@ func TestCredentialReset(t *testing.T) {
 			c.cachedDiscovery = &antigravityDiscovery{project: "old"}
 			c.cachedAntigravityPair = &oauthPair{}
 			c.setCredentialInfo(id, "keychain", "old-account")
-			path := "/providers/" + string(id) + "/reset-credentials"
+			path := "/accounts/" + defaultAccountID(id) + "/reset-credentials"
 			if w := p2Request(s, "POST", path, "", ""); w.Code != 401 {
 				t.Fatal("reset bypassed auth")
 			}
@@ -221,15 +225,17 @@ func TestCredentialResetFailure(t *testing.T) {
 	c := NewCollector()
 	s := NewServer(NewStore(defaultConfig()), c, "")
 	s.authToken = "secret"
-	if w := p2Request(s, "POST", "/providers/nope/reset-credentials", "", "secret"); w.Code != 404 {
+	if w := p2Request(s, "POST", "/accounts/nope/reset-credentials", "", "secret"); w.Code != 404 {
 		t.Fatal(w.Body.String())
 	}
+	a, _ := s.store.account(defaultAccountID(ProviderCodex))
+	c = s.collectorFor(a)
 	c.codexTokens.path = t.TempDir()
 	if err := os.WriteFile(filepath.Join(c.codexTokens.path, "keep"), []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	c.codexTokens.access = "retained"
-	w := p2Request(s, "POST", "/providers/codex/reset-credentials", "", "secret")
+	w := p2Request(s, "POST", "/accounts/acct_codex_default/reset-credentials", "", "secret")
 	var result map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
@@ -246,7 +252,9 @@ func TestCredentialResetFailure(t *testing.T) {
 func TestProviderHealth(t *testing.T) {
 	c := NewCollector()
 	s := NewServer(NewStore(defaultConfig()), c, "")
-	p := s.status().Providers[1]
+	a, _ := s.store.account(defaultAccountID(ProviderCodex))
+	c = s.collectorFor(a)
+	p := s.status().Accounts[1]
 	if p.CredentialSource != "unknown" || p.EffectiveAccount != nil || p.LastSuccessAt != nil || p.LastFailureAt != nil || p.LastErrorMessage != nil {
 		t.Fatalf("initial health: %+v", p)
 	}
@@ -256,7 +264,7 @@ func TestProviderHealth(t *testing.T) {
 	for i := 0; i < 210; i++ {
 		s.store.AddError(ProviderClaude, RouteInjection, "other")
 	}
-	p = s.status().Providers[1]
+	p = s.status().Accounts[1]
 	if p.CredentialSource != "oauth" || p.EffectiveAccount == nil || *p.EffectiveAccount != "account-123" || p.LastSuccessAt == nil || p.LastFailureAt == nil || p.LastErrorMessage == nil || strings.Contains(*p.LastErrorMessage, "sk-secret") {
 		t.Fatalf("health: %+v", p)
 	}

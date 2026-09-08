@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: Backend/go.mod
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build Go daemon
+        run: |
+          cd Backend
+          go build -o ../.build-go/aiusaged .
+
+      - name: Build Swift app
+        run: swift build -c release
+
+      - name: Assemble .app bundle and ad-hoc sign
+        run: |
+          bash Scripts/build-app-bundle.sh \
+            --version "${{ steps.version.outputs.version }}" \
+            --build "${{ github.run_number }}"
+
+      - name: Package release tarball
+        run: |
+          STAGING="$(mktemp -d)"
+          # App bundle
+          cp -R .build/release/AIUsageWidget.app "$STAGING/"
+          # Daemon binary
+          cp .build-go/aiusaged "$STAGING/"
+          # Hook scripts
+          cp Scripts/claude-statusline-hook.py "$STAGING/"
+          cp Scripts/antigravity-statusline-hook.py "$STAGING/"
+          # Utility scripts
+          cp Scripts/run-with-log-rotation.sh "$STAGING/"
+          cp Scripts/uninstall.sh "$STAGING/"
+          # LaunchAgent templates (remote-install.sh needs these)
+          cp LaunchAgents/com.aiusagewidget.daemon.plist.template "$STAGING/"
+          cp LaunchAgents/com.aiusagewidget.app.plist.template "$STAGING/"
+          # Create tarball
+          tar czf aiusagewidget-macos.tar.gz -C "$STAGING" .
+          rm -rf "$STAGING"
+
+      - name: Build DMG
+        run: |
+          bash Scripts/build-dmg.sh \
+            --version "${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: AIUsageWidget ${{ steps.version.outputs.tag }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            aiusagewidget-macos.tar.gz
+            .build/release/AIUsageWidget-${{ steps.version.outputs.version }}.dmg

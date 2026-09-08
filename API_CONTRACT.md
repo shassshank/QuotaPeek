@@ -429,3 +429,159 @@ with the same bounds applied on load and query. Reading a disabled route is
 allowed; this endpoint never triggers collection. Missing/invalid provider or
 route returns HTTP 400 with plain-text `invalid or missing provider/route`.
 Missing/invalid authentication returns HTTP 401 as for other protected endpoints.
+
+## P5 Multi-account model and trust-state (supersedes single-Provider status shape)
+
+This section is the authoritative spec for the account model. Backend and Swift
+sides build against it in parallel; treat every other endpoint above that
+mentions "provider" in `GET /status`, `POST /refresh`, `POST /test-route`,
+`GET /history`, and credential reset as **replaced** by the `Account`-keyed
+versions below. The raw ingest payload schemas (`POST /ingest/claude`,
+`POST /ingest/antigravity`) are unchanged, except each carries an added
+`accountId` field described under Ingest below.
+
+### Why: the trust-state field
+
+Reviews found that stale or missing data can render with full confidence (a
+missing observation showing as `0%`, stale data keeping a green/live badge).
+The fix is a single server-computed `state` enum per account — the daemon
+computes it once, the UI only switches on it, and never re-derives freshness
+from `as_of`/`restoredFromDisk` itself.
+
+```jsonc
+// state derivation, in order:
+// - "unknown": data is null, OR age > hardExpirySeconds (age too large to trust as a number)
+// - "restored": restoredFromDisk == true (this daemon run hasn't received a fresh sample for this route yet)
+// - "fresh":    age <= max(staleAfterSeconds, 2 * keychain_poll_interval_sec)   [existing freshness cutoff]
+// - "stale":    freshnessCutoff < age <= hardExpirySeconds
+// - "error":    lastError is set AND data is null (no sample to fall back on at all)
+//
+// hardExpirySeconds = 4 * max(staleAfterSeconds, 2 * keychain_poll_interval_sec)
+// When state == "unknown" due to age, the UI must not display `data` as a number —
+// render "No recent data" instead, even though the daemon still retains the sample internally.
+```
+
+### Account object
+
+```jsonc
+Account {
+  "id": "acct_ab12cd34",              // stable, generated at creation; never reused after delete
+  "provider": "claude" | "codex" | "antigravity",
+  "label": "Work",                    // user-editable; auto-created accounts default to "Default"
+  "credentialLocation": {
+    "kind": "config_dir" | "daemon_token",
+    "configDir": "/Users/x/.claude-work" | null   // required when kind=="config_dir"; null for daemon_token
+  },
+  // Per-account mirror of today's per-provider fields:
+  "credentialSource": "keychain" | "oauth" | "api-key" | "env" | "unknown", // discovered kind, distinct from credentialLocation above
+  "effectiveAccount": "account identifier or email" | null,
+  "lastSuccessAt": int64 | null,
+  "lastFailureAt": int64 | null,
+  "lastError": "string, secrets redacted" | null,
+  "routes_enabled": ["keychain", "injection"],
+  "active_route": "keychain" | "injection" | "none",
+  "data": { "used_percent_5h": ..., "resets_at_5h": ..., "used_percent_weekly": ..., "resets_at_weekly": ..., "context_window_used_percent": ... } | null,
+  "as_of": int64 | null,
+  "last_error": { "route": "keychain"|"injection", "message": "...", "at": int64 } | null,
+  "restoredFromDisk": boolean,
+  "state": "unknown" | "fresh" | "stale" | "restored" | "error"
+}
+```
+
+`credentialLocation.kind`:
+- `"config_dir"` — used for Claude and Codex accounts. The daemon sets
+  `CLAUDE_CONFIG_DIR` (Claude) or `CODEX_HOME` (Codex) to `configDir` for every
+  collector call and credential lookup for that account. Claude Keychain
+  service name for a non-default configDir is
+  `"Claude Code-credentials-" + hex(sha256(NFC(configDir)))[:8]`, account `$USER`
+  (matches the CLI's own scheme — default/legacy configDir `~/.claude` keeps
+  using the unsuffixed `"Claude Code-credentials"` service for backward compat).
+  Codex Keychain account is `"cli|" + hex(sha256(canonical(configDir)))[:16]`
+  under service `"Codex Auth"` (reuses the existing `codexKeyringAccount` helper
+  in `codex_chatgpt.go` — just stop hardcoding `~/.codex` as its input).
+- `"daemon_token"` — used for Antigravity accounts (the `agy` CLI itself has no
+  profile concept, so a second account's OAuth token is captured once and owned
+  entirely by the daemon, not read from the CLI's Keychain item). The daemon
+  stores it in its own per-account oauth cache file (extend the existing
+  `oauth-antigravity.json` pattern from "Credential persistence and lifecycle"
+  above to `oauth-antigravity-<accountId>.json`) and refreshes/polls it directly
+  against the same Cloud Code endpoints the default account already uses.
+
+### Migration for existing installs
+
+On first startup after upgrade, for each provider that has any `routes_enabled`
+or existing samples under the old single-Provider model, the daemon
+auto-creates exactly one Account with `label:"Default"`:
+- Claude → `credentialLocation: {kind:"config_dir", configDir: "~/.claude"}` (or
+  `$CLAUDE_CONFIG_DIR` if that env var was set for the daemon process).
+- Codex → `credentialLocation: {kind:"config_dir", configDir: "~/.codex"}` (or
+  `$CODEX_HOME`).
+- Antigravity → `credentialLocation: {kind:"daemon_token"}`, and its existing
+  Keychain-sourced credential continues to be read as today until the user
+  explicitly adds a second Antigravity account (at which point that second
+  account's token comes from the new capture flow, while the first/"Default"
+  Antigravity account keeps reading the CLI's Keychain item exactly as before —
+  it is not migrated into a daemon-owned token file).
+Existing `samples.json`/`config.json` provider-keyed data is migrated to be
+keyed by this new Default account's generated id; the id is deterministic
+(`"acct_" + provider + "_default"`) so migration is idempotent across restarts.
+
+### Endpoints (Account-keyed)
+
+`GET /accounts` — `{"accounts": [{id, provider, label, credentialLocation}]}`,
+config only, no live data, no auth required (same tier as `GET /status`).
+
+`POST /accounts` (requires `X-Auth-Token`) — body:
+```json
+{"provider":"claude","label":"Work","credentialLocation":{"kind":"config_dir","configDir":"/Users/x/.claude-work"}}
+```
+or, for Antigravity's daemon_token kind:
+```json
+{"provider":"antigravity","label":"Personal Gmail","credentialLocation":{"kind":"daemon_token"},"oauthBootstrap":{"refreshToken":"...","email":"..."}}
+```
+Returns HTTP 201 with the created `Account` (data null, state "unknown", until
+the first poll). `configDir` must be an absolute path; a `config_dir` account
+pointing at a path that has no valid credentials yet is allowed (state stays
+"unknown"/"error" until the user logs in with that config dir). Duplicate
+`configDir` for the same provider returns HTTP 409.
+
+`PATCH /accounts/{id}` (requires `X-Auth-Token`) — body `{"label":"New label"}`,
+rename only; `credentialLocation` is immutable after creation (delete and
+recreate to change it). Returns the updated `Account`.
+
+`DELETE /accounts/{id}` (requires `X-Auth-Token`) — removes the account, its
+samples/history, and any daemon-owned oauth cache file for it. Returns
+`{"ok":true}`. Never deletes OS Keychain items or CLI credential files. 404 if
+the id doesn't exist.
+
+`GET /status` and `POST /refresh` — now return `{"accounts": [Account, ...]}`,
+ordered by provider (claude, codex, antigravity) then by account creation
+order within each provider. `POST /refresh` accepts an optional body
+`{"accountId":"acct_..."}` to refresh just one account; omitted body refreshes
+all.
+
+`POST /test-route` — body adds a required `"accountId"` field alongside the
+existing `provider`/`route` (provider is still included for clarity/validation
+but `accountId` is authoritative; a mismatch returns HTTP 400).
+
+`POST /accounts/{id}/reset-credentials` (requires `X-Auth-Token`) — replaces
+`POST /providers/{name}/reset-credentials`; same semantics (clears daemon
+credential/discovery cache and daemon-owned oauth file for that account only),
+scoped to one account instead of a whole provider.
+
+`GET /history?accountId=acct_...&route=keychain` — replaces the
+`provider=`+`route=` query form; same response shape
+(`{"points":[{"at":...,"usedPercent":...}]}`).
+
+### Ingest (unchanged transport, added routing)
+
+`POST /ingest/claude` and `POST /ingest/antigravity` payloads are unchanged.
+Routing an inbound push to the right account: since the statusLine hook has no
+concept of "which account," the daemon routes an inbound push to whichever
+`config_dir`-kind account's configDir matches the `CLAUDE_CONFIG_DIR` (or
+`CODEX_HOME`, n/a for ingest today) the hook process itself was invoked under —
+the hook script must forward its own `CLAUDE_CONFIG_DIR` env value (or empty
+string for the default) as a new `"configDir"` top-level field alongside the
+existing raw payload. A push whose `configDir` doesn't match any known account
+is recorded as an `ErrorEntry` (route "injection") and dropped, rather than
+guessed onto the Default account.

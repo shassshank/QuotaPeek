@@ -59,9 +59,13 @@ func codexHomeDir() (string, error) {
 // re-run `codex login` after switching to keyring storage).
 func (c *Collector) FetchCodexKeychain(ctx context.Context) (UsageData, error) {
 	home, err := codexHomeDir()
+	if c.configDir != "" {
+		home, err = c.configDir, nil
+	}
 	if err != nil {
 		return UsageData{}, err
 	}
+	ctx = withConfigDir(ctx, "CODEX_HOME", home)
 	if raw, err := c.readKeychain(ctx, codexAuthKeyringService, codexKeyringAccount(home)); err == nil {
 		return c.fetchCodexUsage(ctx, raw, "keychain")
 	}
@@ -163,12 +167,12 @@ func fetchCodexUsageWithToken(ctx context.Context, client *http.Client, accessTo
 	var payload struct {
 		RateLimit *struct {
 			PrimaryWindow *struct {
-				UsedPercent float64 `json:"used_percent"`
-				ResetAt     int64   `json:"reset_at"`
+				UsedPercent *float64 `json:"used_percent"`
+				ResetAt     *int64   `json:"reset_at"`
 			} `json:"primary_window"`
 			SecondaryWindow *struct {
-				UsedPercent float64 `json:"used_percent"`
-				ResetAt     int64   `json:"reset_at"`
+				UsedPercent *float64 `json:"used_percent"`
+				ResetAt     *int64   `json:"reset_at"`
 			} `json:"secondary_window"`
 		} `json:"rate_limit"`
 	}
@@ -181,16 +185,18 @@ func fetchCodexUsageWithToken(ctx context.Context, client *http.Client, accessTo
 
 	data := UsageData{}
 	if w := payload.RateLimit.PrimaryWindow; w != nil {
-		used := round1(w.UsedPercent)
-		data.UsedPercent5H = &used
-		reset := w.ResetAt
-		data.ResetsAt5H = &reset
+		if w.UsedPercent != nil {
+			used := round1(*w.UsedPercent)
+			data.UsedPercent5H = &used
+		}
+		data.ResetsAt5H = w.ResetAt
 	}
 	if w := payload.RateLimit.SecondaryWindow; w != nil {
-		used := round1(w.UsedPercent)
-		data.UsedPercentWeekly = &used
-		reset := w.ResetAt
-		data.ResetsAtWeekly = &reset
+		if w.UsedPercent != nil {
+			used := round1(*w.UsedPercent)
+			data.UsedPercentWeekly = &used
+		}
+		data.ResetsAtWeekly = w.ResetAt
 	}
 	if data.empty() {
 		return UsageData{}, errors.New("codex usage endpoint returned no rate-limit windows")

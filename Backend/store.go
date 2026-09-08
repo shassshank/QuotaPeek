@@ -59,17 +59,21 @@ func (s *Store) SetSample(provider ProviderID, route Route, data UsageData, asOf
 	s.SetSampleAt(provider, route, data, time.Unix(asOf, 0))
 }
 
-func (s *Store) SetSampleAt(provider ProviderID, route Route, data UsageData, started time.Time) {
-	if !validSampleKey(provider, route) || data.quotaEmpty() || !validUsage(data) {
-		return
+func (s *Store) SetSampleAt(provider ProviderID, route Route, data UsageData, started time.Time) bool {
+	if (route != RouteKeychain && route != RouteInjection) || data.quotaEmpty() || !validUsage(data) {
+		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	provider = s.keyLocked(provider)
+	if !validSampleKey(s.providerLocked(provider), route) {
+		return false
+	}
 	if s.samples[provider] == nil {
 		s.samples[provider] = map[Route]routeSample{}
 	}
 	if old, ok := s.samples[provider][route]; ok && started.Before(old.started) {
-		return
+		return false
 	}
 	s.samples[provider][route] = routeSample{data: data, asOf: started.Unix(), started: started}
 	if s.history[provider] == nil {
@@ -86,12 +90,15 @@ func (s *Store) SetSampleAt(provider ProviderID, route Route, data UsageData, st
 	if err := s.persistLocked(); err != nil {
 		log.Printf("sample persistence failed: %v", err)
 	}
+	return true
 }
 
 func (s *Store) AddError(provider ProviderID, route Route, message string) {
 	entry := ErrorEntry{Provider: provider, Route: route, Message: redactMessage(message), At: time.Now().Unix()}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	entry.AccountID = string(s.keyLocked(provider))
+	entry.Provider = s.providerLocked(s.keyLocked(provider))
 	s.errors = append(s.errors, entry)
 	if len(s.errors) > 200 {
 		s.errors = append([]ErrorEntry(nil), s.errors[len(s.errors)-200:]...)
@@ -121,14 +128,20 @@ func (s *Store) Errors(limit int) []ErrorEntry {
 func (s *Store) Status(now int64) StatusResponse {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return StatusResponse{Providers: []ProviderStatus{
-		s.providerStatusLocked(ProviderClaude, s.cfg.Claude, now),
-		s.providerStatusLocked(ProviderCodex, s.cfg.Codex, now),
-		s.providerStatusLocked(ProviderAntigravity, s.cfg.Antigravity, now),
-	}}
+	out := StatusResponse{Accounts: []Account{}, Providers: []ProviderStatus{}}
+	for _, p := range []ProviderID{ProviderClaude, ProviderCodex, ProviderAntigravity} {
+		out.Providers = append(out.Providers, s.providerStatusLocked(s.keyLocked(p), providerConfig(s.cfg, p), now))
+		for _, a := range s.cfg.Accounts {
+			if a.Provider == p {
+				out.Accounts = append(out.Accounts, accountStatus(a, s.providerStatusLocked(ProviderID(a.ID), providerConfig(s.cfg, p), now), s.cfg, now))
+			}
+		}
+	}
+	return out
 }
 
 func (s *Store) providerStatusLocked(id ProviderID, cfg ProviderConfig, now int64) ProviderStatus {
+	id = s.keyLocked(id)
 	sample, active := chooseSample(cfg, s.samples[id], now, s.cfg.StaleAfterSeconds)
 	var data *UsageData
 	var asOf *int64
@@ -171,45 +184,18 @@ func chooseSample(cfg ProviderConfig, samples map[Route]routeSample, now int64, 
 	if len(samples) == 0 {
 		return routeSample{}, RouteNone
 	}
-	maxAge := sampleMaxAge(cfg, staleAfter...)
-
-	// Injection always wins over keychain when both are enabled and its sample is
-	// fresh - preference is by freshness, not by routes_enabled array order (a user
-	// enabling both routes via Settings should always get live data when it's
-	// actually live, regardless of which order the toggles were flipped in).
-	orderedRoutes := make([]Route, 0, len(cfg.RoutesEnabled))
-	if hasRoute(cfg.RoutesEnabled, RouteInjection) {
-		orderedRoutes = append(orderedRoutes, RouteInjection)
-	}
-	if hasRoute(cfg.RoutesEnabled, RouteKeychain) {
-		orderedRoutes = append(orderedRoutes, RouteKeychain)
-	}
-
-	for _, route := range orderedRoutes {
-		sample, ok := samples[route]
-		if !ok || sample.data.quotaEmpty() {
-			continue
-		}
-		if sample.restored || now-sample.asOf > maxAge {
-			continue
-		}
-		return sample, route
-	}
-
-	// Nothing passed the freshness bar (e.g. Injection is the only route enabled
-	// and its last push is older than maxAge, with no Keychain fallback to try
-	// instead) - showing the most recent real sample we have beats showing
-	// nothing; the UI already surfaces its age via "Updated X ago".
 	var best routeSample
 	bestRoute := RouteNone
-	for _, route := range orderedRoutes {
+	for _, route := range []Route{RouteInjection, RouteKeychain} {
+		if !hasRoute(cfg.RoutesEnabled, route) {
+			continue
+		}
 		sample, ok := samples[route]
 		if !ok || sample.data.quotaEmpty() {
 			continue
 		}
-		if bestRoute == RouteNone || sample.asOf > best.asOf {
-			best = sample
-			bestRoute = route
+		if bestRoute == RouteNone || sample.started.After(best.started) || (sample.started.Equal(best.started) && sample.asOf > best.asOf) {
+			best, bestRoute = sample, route
 		}
 	}
 	return best, bestRoute
@@ -217,7 +203,7 @@ func chooseSample(cfg ProviderConfig, samples map[Route]routeSample, now int64, 
 
 func (s *Store) lastErrorLocked(provider ProviderID, route Route) *ErrorEntry {
 	for i := len(s.errors) - 1; i >= 0; i-- {
-		if s.errors[i].Provider == provider && s.errors[i].Route == route && route != RouteNone {
+		if (s.errors[i].AccountID == string(provider) || s.errors[i].Provider == provider) && s.errors[i].Route == route && route != RouteNone {
 			entry := s.errors[i]
 			return &entry
 		}
@@ -230,13 +216,8 @@ func (s *Store) lastErrorLocked(provider ProviderID, route Route) *ErrorEntry {
 func (s *Store) RouteFresh(provider ProviderID, route Route, now int64) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	cfg := s.cfg.Claude
-	switch provider {
-	case ProviderCodex:
-		cfg = s.cfg.Codex
-	case ProviderAntigravity:
-		cfg = s.cfg.Antigravity
-	}
+	provider = s.keyLocked(provider)
+	cfg := providerConfig(s.cfg, s.providerLocked(provider))
 	sample, ok := s.samples[provider][route]
 	return ok && !sample.restored && !sample.data.quotaEmpty() && now-sample.asOf <= sampleMaxAge(cfg, s.cfg.StaleAfterSeconds)
 }
@@ -259,6 +240,7 @@ func (s *Store) beginPoll(provider ProviderID, route Route) (time.Time, bool) {
 	s.collectionMu.RLock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	provider = s.keyLocked(provider)
 	key := string(provider) + ":" + string(route)
 	if s.cfg.CollectionPaused || s.resetting[provider] || s.inFlight[key] {
 		s.collectionMu.RUnlock()
@@ -270,6 +252,7 @@ func (s *Store) beginPoll(provider ProviderID, route Route) (time.Time, bool) {
 func (s *Store) endPoll(provider ProviderID, route Route) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	provider = s.keyLocked(provider)
 	delete(s.inFlight, string(provider)+":"+string(route))
 	s.collectionMu.RUnlock()
 }
@@ -278,6 +261,7 @@ func (s *Store) endPoll(provider ProviderID, route Route) {
 func (s *Store) beginCredentialReset(provider ProviderID) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	provider = s.keyLocked(provider)
 	if s.resetting[provider] || s.inFlight[string(provider)+":"+string(RouteKeychain)] || s.inFlight[string(provider)+":"+string(RouteInjection)] {
 		return false
 	}
@@ -287,6 +271,7 @@ func (s *Store) beginCredentialReset(provider ProviderID) bool {
 func (s *Store) endCredentialReset(provider ProviderID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	provider = s.keyLocked(provider)
 	delete(s.resetting, provider)
 }
 
@@ -295,6 +280,7 @@ func (s *Store) endCredentialReset(provider ProviderID) {
 func (s *Store) recordPoll(provider ProviderID, data UsageData, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	provider = s.keyLocked(provider)
 	at := time.Now().Unix()
 	h := s.health[provider]
 	if err != nil || data.quotaEmpty() {

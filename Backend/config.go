@@ -10,9 +10,9 @@ import (
 func defaultConfig() Config {
 	return Config{
 		StaleAfterSeconds: 600,
-		ClaudePollingMode: "inference",
+		ClaudePollingMode: "disabled",
 		Claude:            ProviderConfig{RoutesEnabled: []Route{RouteKeychain}, KeychainPollIntervalSec: 60},
-		Codex:             ProviderConfig{RoutesEnabled: []Route{RouteInjection}, KeychainPollIntervalSec: 60},
+		Codex:             ProviderConfig{RoutesEnabled: []Route{RouteKeychain}, KeychainPollIntervalSec: 60},
 		Antigravity:       ProviderConfig{RoutesEnabled: []Route{RouteKeychain}, KeychainPollIntervalSec: 120},
 	}
 }

@@ -44,12 +44,21 @@ echo "==> Building Swift menu bar app"
 cd "$REPO_DIR"
 swift build -c release
 
+echo "==> Assembling .app bundle and ad-hoc signing"
+bash "$REPO_DIR/Scripts/build-app-bundle.sh"
+
 echo "==> Installing to $BIN_DIR"
 mkdir -p "$BIN_DIR"
 cp "$REPO_DIR/.build-go/aiusaged" "$BIN_DIR/aiusaged"
-cp "$REPO_DIR/.build/release/AIUsageWidget" "$BIN_DIR/AIUsageWidget"
+# Install the full .app bundle (LaunchAgent plist now points to its MacOS binary)
+rm -rf "$BIN_DIR/AIUsageWidget.app"
+cp -R "$REPO_DIR/.build/release/AIUsageWidget.app" "$BIN_DIR/AIUsageWidget.app"
 cp "$REPO_DIR/Scripts/claude-statusline-hook.py" "$BIN_DIR/"
 cp "$REPO_DIR/Scripts/antigravity-statusline-hook.py" "$BIN_DIR/"
+# Install utility scripts
+cp "$REPO_DIR/Scripts/uninstall.sh" "$BIN_DIR/uninstall.sh"
+cp "$REPO_DIR/Scripts/run-with-log-rotation.sh" "$BIN_DIR/run-with-log-rotation.sh"
+chmod +x "$BIN_DIR/uninstall.sh" "$BIN_DIR/run-with-log-rotation.sh"
 # Add auth to installed hook copies; repository hook sources remain untouched.
 "$PYTHON3" - "$BIN_DIR" <<'PYAUTH'
 from pathlib import Path
@@ -63,7 +72,7 @@ for name in ("claude-statusline-hook.py", "antigravity-statusline-hook.py"):
         raise SystemExit("Cannot add hook authentication: " + name)
     path.write_text(source.replace(old, new))
 PYAUTH
-chmod +x "$BIN_DIR"/*.py "$BIN_DIR/aiusaged" "$BIN_DIR/AIUsageWidget"
+chmod +x "$BIN_DIR"/*.py "$BIN_DIR/aiusaged"
 
 echo "==> Installing LaunchAgents"
 mkdir -p "$HOME/Library/LaunchAgents"

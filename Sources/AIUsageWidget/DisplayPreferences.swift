@@ -112,65 +112,90 @@ final class DisplayPreferences: ObservableObject {
         }
     }
 
-    /// Generates a crisp multi-dot NSImage representing per-provider status in the menu bar.
-    func generateDotsImage(providers: [(provider: Provider, status: ProviderStatus?)], isStaleOrFailing: Bool) -> NSImage {
+    /// Generates a crisp multi-dot NSImage representing per-account status in the menu bar.
+    /// Strictly branches on account `state` per Task B6: stale/disconnected/error accounts never render as healthy green dots.
+    func generateDotsImage(accounts: [Account], isDaemonReachable: Bool) -> NSImage {
         let dotDiameter: CGFloat = 8.0
         let dotSpacing: CGFloat = 4.0
-        let totalCount = max(providers.count, 1)
+        let totalCount = max(accounts.count, 1)
         let totalWidth = CGFloat(totalCount) * dotDiameter + CGFloat(totalCount - 1) * dotSpacing
         let totalHeight: CGFloat = 16.0
 
         let image = NSImage(size: NSSize(width: totalWidth, height: totalHeight))
         image.lockFocus()
 
-        for (index, item) in providers.enumerated() {
-            let x = CGFloat(index) * (dotDiameter + dotSpacing)
+        if accounts.isEmpty {
+            let x: CGFloat = 0
             let y = (totalHeight - dotDiameter) / 2.0
             let rect = NSRect(x: x, y: y, width: dotDiameter, height: dotDiameter)
             let path = NSBezierPath(ovalIn: rect)
-
-            let dotColor: NSColor
-            if let status = item.status {
-                if status.displayLastError != nil || status.lastError != nil {
-                    dotColor = .systemOrange
-                } else if let data = status.data {
-                    let usageValues = [data.usedPercent5h, data.usedPercentWeekly, data.contextWindowUsedPercent].compactMap { $0 }
-                    if let maxVal = usageValues.max() {
-                        let displayed = displayPercent(forUsedPercent: maxVal)
-                        switch percentageMetric {
-                        case .used:
-                            if displayed < 60 {
-                                dotColor = .systemGreen
-                            } else if displayed < 85 {
-                                dotColor = .systemYellow
-                            } else {
-                                dotColor = .systemRed
-                            }
-                        case .remaining:
-                            if displayed > 40 {
-                                dotColor = .systemGreen
-                            } else if displayed > 15 {
-                                dotColor = .systemYellow
-                            } else {
-                                dotColor = .systemRed
-                            }
-                        }
-                    } else {
-                        dotColor = .systemGray
-                    }
-                } else {
-                    dotColor = .systemGray
-                }
-            } else {
-                dotColor = .systemGray
-            }
-
-            dotColor.setFill()
+            NSColor.systemGray.setFill()
             path.fill()
+        } else {
+            for (index, account) in accounts.enumerated() {
+                let x = CGFloat(index) * (dotDiameter + dotSpacing)
+                let y = (totalHeight - dotDiameter) / 2.0
+                let rect = NSRect(x: x, y: y, width: dotDiameter, height: dotDiameter)
+                let path = NSBezierPath(ovalIn: rect)
+
+                let dotColor: NSColor
+                if !isDaemonReachable {
+                    dotColor = .systemGray
+                } else {
+                    switch account.state {
+                    case .error:
+                        dotColor = .systemOrange
+                    case .unknown:
+                        dotColor = .systemGray
+                    case .stale:
+                        dotColor = .systemOrange
+                    case .restored:
+                        dotColor = .systemPurple
+                    case .fresh:
+                        if let data = account.data {
+                            let usageValues = [data.usedPercent5h, data.usedPercentWeekly, data.contextWindowUsedPercent].compactMap { $0 }
+                            if let maxVal = usageValues.max() {
+                                let displayed = displayPercent(forUsedPercent: maxVal)
+                                switch percentageMetric {
+                                case .used:
+                                    if displayed < 60 {
+                                        dotColor = .systemGreen
+                                    } else if displayed < 85 {
+                                        dotColor = .systemYellow
+                                    } else {
+                                        dotColor = .systemRed
+                                    }
+                                case .remaining:
+                                    if displayed > 40 {
+                                        dotColor = .systemGreen
+                                    } else if displayed > 15 {
+                                        dotColor = .systemYellow
+                                    } else {
+                                        dotColor = .systemRed
+                                    }
+                                }
+                            } else {
+                                dotColor = .systemGray
+                            }
+                        } else {
+                            dotColor = .systemGray
+                        }
+                    }
+                }
+
+                dotColor.setFill()
+                path.fill()
+            }
         }
 
         image.unlockFocus()
         image.isTemplate = false
         return image
+    }
+
+    /// Backward compatibility overload for provider-keyed calls
+    func generateDotsImage(providers: [(provider: Provider, status: ProviderStatus?)], isStaleOrFailing: Bool) -> NSImage {
+        let accounts = providers.compactMap { $0.status }
+        return generateDotsImage(accounts: accounts, isDaemonReachable: !isStaleOrFailing)
     }
 }

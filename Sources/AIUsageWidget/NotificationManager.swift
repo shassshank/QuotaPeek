@@ -6,9 +6,9 @@ import UserNotifications
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
 
-    // Tracks the last threshold percentage for which a notification was delivered per provider.
+    // Tracks the last threshold percentage for which a notification was delivered per account.
     // This prevents repeated spam for the same crossing while usage remains above the threshold.
-    private var lastNotifiedThreshold: [Provider: Int] = [:]
+    private var lastNotifiedThreshold: [String: Int] = [:]
 
     override private init() {
         super.init()
@@ -44,20 +44,21 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// Evaluates current provider usage against configured notification thresholds.
+    /// Evaluates current account usage against configured notification thresholds.
     /// Fires local notifications when a threshold is crossed and prevents duplicate spam.
-    func evaluate(providers: [Provider: ProviderStatus], config: DaemonConfig?) {
-        for provider in Provider.allCases {
-            guard let providerConfig = config?.config(for: provider),
+    func evaluate(accounts: [Account], config: DaemonConfig?) {
+        for account in accounts {
+            guard let providerConfig = config?.config(for: account.provider),
                   let threshold = providerConfig.notifyThresholdPercent,
-                  !providerConfig.routesEnabled.isEmpty else {
+                  !account.routesEnabled.isEmpty else {
                 // Notifications or provider disabled; clear any previous threshold memory
-                lastNotifiedThreshold.removeValue(forKey: provider)
+                lastNotifiedThreshold.removeValue(forKey: account.id)
                 continue
             }
 
-            guard let status = providers[provider],
-                  let data = status.data else {
+            // Only evaluate if account state is not unknown/error and has data
+            guard account.state != .unknown && account.state != .error,
+                  let data = account.data else {
                 continue
             }
 
@@ -66,26 +67,31 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             guard let currentMaxUsage = quotaValues.max() else { continue }
 
             if currentMaxUsage >= Double(threshold) {
-                if lastNotifiedThreshold[provider] != threshold {
-                    lastNotifiedThreshold[provider] = threshold
-                    dispatchThresholdNotification(for: provider, usage: currentMaxUsage, threshold: threshold)
+                if lastNotifiedThreshold[account.id] != threshold {
+                    lastNotifiedThreshold[account.id] = threshold
+                    dispatchThresholdNotification(for: account, usage: currentMaxUsage, threshold: threshold)
                 }
             } else {
                 // Usage dropped back below the threshold; allow notifying again on future crossing
-                lastNotifiedThreshold.removeValue(forKey: provider)
+                lastNotifiedThreshold.removeValue(forKey: account.id)
             }
         }
     }
 
-    private func dispatchThresholdNotification(for provider: Provider, usage: Double, threshold: Int) {
+    /// Backward compatibility overload
+    func evaluate(providers: [Provider: Account], config: DaemonConfig?) {
+        evaluate(accounts: Array(providers.values), config: config)
+    }
+
+    private func dispatchThresholdNotification(for account: Account, usage: Double, threshold: Int) {
         Task {
             let content = UNMutableNotificationContent()
-            content.title = "\(provider.displayName) Limit Alert"
-            content.body = "\(provider.displayName) usage has reached \(Int(usage))% (threshold: \(threshold)%)."
+            content.title = "\(account.provider.displayName) (\(account.label)) Limit Alert"
+            content.body = "\(account.provider.displayName) (\(account.label)) usage has reached \(Int(usage))% (threshold: \(threshold)%)."
             content.sound = .default
 
             let request = UNNotificationRequest(
-                identifier: "limit-\(provider.rawValue)-\(threshold)-\(UUID().uuidString)",
+                identifier: "limit-\(account.id)-\(threshold)-\(UUID().uuidString)",
                 content: content,
                 trigger: nil
             )

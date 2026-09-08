@@ -19,9 +19,13 @@ type codexRPCResponse struct {
 }
 
 func FetchCodex(ctx context.Context) (UsageData, error) {
+	return FetchCodexAt(ctx, defaultDir(ProviderCodex))
+}
+func FetchCodexAt(ctx context.Context, configDir string) (UsageData, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, codexBin(), "app-server")
+	cmd.Env = collectorEnv(withConfigDir(ctx, "CODEX_HOME", configDir))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return UsageData{}, err

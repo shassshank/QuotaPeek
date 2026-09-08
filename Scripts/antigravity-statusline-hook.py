@@ -138,10 +138,16 @@ def build_status_line(payload):
 
 def post_ingest(raw):
     try:
+        payload = json.loads(raw)
+        payload["configDir"] = os.environ.get("CLAUDE_CONFIG_DIR", "")
+        raw = json.dumps(payload)
+        token_path = os.path.expanduser("~/Library/Application Support/AIUsageWidget/auth-token")
+        with open(token_path) as token_file:
+            token = token_file.read().strip()
         req = urllib.request.Request(
             INGEST_URL,
             data=raw.encode("utf-8", errors="replace"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "X-Auth-Token": token},
             method="POST",
         )
         urllib.request.urlopen(req, timeout=1).close()

@@ -35,12 +35,12 @@ func TestPollSingleFlightAndStartTimestamp(t *testing.T) {
 	store.SetSampleAt(ProviderCodex, RouteInjection, UsageData{UsedPercent5H: f(90)}, newer)
 	close(release)
 	<-done
-	got := store.samples[ProviderCodex][RouteInjection]
+	got := store.samples[ProviderID(defaultAccountID(ProviderCodex))][RouteInjection]
 	if *got.data.UsedPercent5H != 90 {
 		t.Fatal("stale response overwrote newer sample")
 	}
 	server.pollCodexRoute(context.Background(), RouteKeychain, func(context.Context) (UsageData, error) { return UsageData{UsedPercent5H: f(20)}, nil })
-	if store.samples[ProviderCodex][RouteKeychain].started.Before(start) {
+	if store.samples[ProviderID(defaultAccountID(ProviderCodex))][RouteKeychain].started.Before(start) {
 		t.Fatal("missing request timestamp")
 	}
 	if _, ok := store.beginPoll(ProviderCodex, RouteInjection); !ok {

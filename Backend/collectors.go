@@ -20,6 +20,7 @@ import (
 const antigravityUserAgent = "antigravity/cli/1.1.26 (aidev_client; os_type=darwin; arch=arm64; cl=976013059; auth_method=consumer)"
 
 type Collector struct {
+	configDir         string
 	readKeychain      func(context.Context, string, string) ([]byte, error)
 	client            *http.Client
 	codexTokens       oauthTokenCache
@@ -67,6 +68,7 @@ func readKeychain(ctx context.Context, service string, account string) ([]byte, 
 	}
 	args = append(args, "-w")
 	cmd := exec.CommandContext(ctx, "/usr/bin/security", args...)
+	cmd.Env = collectorEnv(ctx)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, errors.New("keychain read failed for service " + service)
@@ -82,7 +84,12 @@ func (c *Collector) FetchClaudeWithMode(ctx context.Context, mode string) (Usage
 	if mode == "disabled" {
 		return UsageData{}, errors.New("Claude inference polling is disabled; enable injection for passive updates")
 	}
-	raw, err := c.readKeychain(ctx, "Claude Code-credentials", "")
+	service, err := claudeService(c.configDir)
+	if err != nil {
+		return UsageData{}, err
+	}
+	ctx = withConfigDir(ctx, "CLAUDE_CONFIG_DIR", c.configDir)
+	raw, err := c.readKeychain(ctx, service, os.Getenv("USER"))
 	if err != nil {
 		return UsageData{}, err
 	}
@@ -174,11 +181,21 @@ type antigravityCreds struct {
 }
 
 func (c *Collector) FetchAntigravity(ctx context.Context) (UsageData, error) {
-	creds, err := loadAntigravityCreds(ctx)
+	var creds antigravityCreds
+	var err error
+	if c.antigravityTokens.daemonOwned {
+		creds, err = c.antigravityTokens.daemonCredentials()
+	} else {
+		creds, err = loadAntigravityCreds(ctx)
+	}
 	if err != nil {
 		return UsageData{}, err
 	}
-	c.setCredentialInfo(ProviderAntigravity, "keychain", creds.Email)
+	source := "keychain"
+	if c.antigravityTokens.daemonOwned {
+		source = "oauth"
+	}
+	c.setCredentialInfo(ProviderAntigravity, source, creds.Email)
 	token := creds.Token.AccessToken
 	if token == "" {
 		token = creds.AccessToken

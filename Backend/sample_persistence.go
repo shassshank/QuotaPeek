@@ -17,11 +17,12 @@ type HistoryPoint struct {
 }
 
 type persistedSample struct {
-	Provider ProviderID     `json:"provider"`
-	Route    Route          `json:"route"`
-	Data     UsageData      `json:"data"`
-	Started  time.Time      `json:"started"`
-	Points   []HistoryPoint `json:"points"`
+	AccountID string         `json:"accountId,omitempty"`
+	Provider  ProviderID     `json:"provider"`
+	Route     Route          `json:"route"`
+	Data      UsageData      `json:"data"`
+	Started   time.Time      `json:"started"`
+	Points    []HistoryPoint `json:"points"`
 }
 type sampleSnapshot struct {
 	Version int               `json:"version"`
@@ -57,12 +58,12 @@ func (s *Store) enablePersistence(path string) error {
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		return err
 	}
-	if snapshot.Version != 1 {
+	if snapshot.Version != 1 && snapshot.Version != 2 {
 		return fmt.Errorf("unsupported sample snapshot version %d", snapshot.Version)
 	}
 	seen := make(map[string]bool)
 	for _, item := range snapshot.Samples {
-		key := string(item.Provider) + ":" + string(item.Route)
+		key := item.AccountID + ":" + string(item.Provider) + ":" + string(item.Route)
 		if !validSampleKey(item.Provider, item.Route) || !validUsage(item.Data) || item.Data.quotaEmpty() || item.Started.IsZero() || seen[key] {
 			return fmt.Errorf("invalid persisted sample")
 		}
@@ -76,11 +77,23 @@ func (s *Store) enablePersistence(path string) error {
 		}
 	}
 	for _, item := range snapshot.Samples {
-		s.samples[item.Provider][item.Route] = routeSample{data: item.Data, asOf: item.Started.Unix(), started: item.Started, restored: true}
-		if s.history[item.Provider] == nil {
-			s.history[item.Provider] = make(map[Route][]HistoryPoint)
+		key := item.Provider
+		if item.AccountID != "" {
+			key = ProviderID(item.AccountID)
+			if s.providerLocked(key) == key {
+				continue
+			}
+		} else {
+			key = s.keyLocked(key)
 		}
-		s.history[item.Provider][item.Route] = item.Points
+		if s.samples[key] == nil {
+			s.samples[key] = map[Route]routeSample{}
+		}
+		s.samples[key][item.Route] = routeSample{data: item.Data, asOf: item.Started.Unix(), started: item.Started, restored: true}
+		if s.history[key] == nil {
+			s.history[key] = make(map[Route][]HistoryPoint)
+		}
+		s.history[key][item.Route] = item.Points
 	}
 	s.pruneHistoryLocked(time.Now().Unix())
 	return nil
@@ -106,7 +119,7 @@ func (s *Store) pruneHistoryLocked(now int64) {
 func (s *Store) History(provider ProviderID, route Route, now int64) []HistoryPoint {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return boundedHistory(s.history[provider][route], now)
+	return boundedHistory(s.history[s.keyLocked(provider)][route], now)
 }
 
 // Serialize writes under the store lock so an older snapshot cannot win a race.
@@ -115,10 +128,14 @@ func (s *Store) persistLocked() error {
 	if s.persistencePath == "" {
 		return nil
 	}
-	snapshot := sampleSnapshot{Version: 1}
+	snapshot := sampleSnapshot{Version: 2}
 	for provider, routes := range s.samples {
 		for route, sample := range routes {
-			snapshot.Samples = append(snapshot.Samples, persistedSample{Provider: provider, Route: route, Data: sample.data, Started: sample.started, Points: s.history[provider][route]})
+			accountID := ""
+			if s.providerLocked(provider) != provider {
+				accountID = string(provider)
+			}
+			snapshot.Samples = append(snapshot.Samples, persistedSample{AccountID: accountID, Provider: s.providerLocked(provider), Route: route, Data: sample.data, Started: sample.started, Points: s.history[provider][route]})
 		}
 	}
 	raw, err := json.Marshal(snapshot)

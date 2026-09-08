@@ -4,7 +4,7 @@ import SwiftUI
 
 struct PopoverView: View {
     private enum Layout {
-        static let width: CGFloat = 300
+        static let width: CGFloat = 320
     }
 
     @ObservedObject var store: UsageStore
@@ -12,8 +12,15 @@ struct PopoverView: View {
     var openSettings: () -> Void
     var closePopover: () -> Void
 
-    private var enabledProviders: [Provider] {
-        displayPrefs.providerOrder.filter { store.isProviderEnabled($0) }
+    @State private var pauseErrorMessage: String?
+
+    private var displayedAccounts: [Account] {
+        var result: [Account] = []
+        for provider in displayPrefs.providerOrder {
+            let accts = store.accounts.filter { $0.provider == provider && store.isAccountEnabled($0) }
+            result.append(contentsOf: accts)
+        }
+        return result
     }
 
     var body: some View {
@@ -28,16 +35,15 @@ struct PopoverView: View {
                 pausedBanner
             }
 
-            if enabledProviders.isEmpty {
+            if displayedAccounts.isEmpty {
                 emptyStateView
             } else {
                 VStack(spacing: 10) {
-                    ForEach(enabledProviders) { provider in
-                        ProviderCard(
-                            status: store.providers[provider],
-                            history: store.history[provider],
-                            metric: displayPrefs.percentageMetric,
-                            isStale: store.isProviderStale(provider)
+                    ForEach(displayedAccounts) { account in
+                        AccountCard(
+                            account: account,
+                            history: store.history[account.id],
+                            metric: displayPrefs.percentageMetric
                         )
                     }
                 }
@@ -52,6 +58,14 @@ struct PopoverView: View {
         .fixedSize(horizontal: false, vertical: true)
         .onExitCommand {
             closePopover()
+        }
+        .alert("Service Notice", isPresented: Binding(
+            get: { pauseErrorMessage != nil },
+            set: { if !$0 { pauseErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(pauseErrorMessage ?? "")
         }
     }
 
@@ -94,7 +108,12 @@ struct PopoverView: View {
                 .foregroundStyle(.secondary)
             Spacer()
             Button("Resume") {
-                Task { _ = await store.setCollectionPaused(false) }
+                Task {
+                    let res = await store.setCollectionPaused(false)
+                    if case .failure = res {
+                        pauseErrorMessage = "Failed to resume data collection. Background service may be unreachable."
+                    }
+                }
             }
             .buttonStyle(.bordered)
             .controlSize(.mini)
@@ -110,17 +129,17 @@ struct PopoverView: View {
             Image(systemName: "tray")
                 .font(.system(size: 28))
                 .foregroundStyle(.tertiary)
-            Text("No providers configured yet")
+            Text("No accounts configured yet")
                 .font(.subheadline).bold()
-            Text("Enable at least one provider route in Settings to see your AI usage.")
+            Text("Enable or add at least one account in Settings to see your AI usage.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Configure Providers", action: openSettings)
+            Button("Configure Accounts", action: openSettings)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .padding(.top, 4)
-                .accessibilityLabel("Configure Providers in Settings")
+                .accessibilityLabel("Configure Accounts in Settings")
         }
         .padding(.vertical, 16)
         .padding(.horizontal, 12)
@@ -147,7 +166,13 @@ struct PopoverView: View {
             .accessibilityLabel("Refresh usage data")
 
             Button {
-                Task { _ = await store.setCollectionPaused(!store.isCollectionPaused) }
+                let target = !store.isCollectionPaused
+                Task {
+                    let res = await store.setCollectionPaused(target)
+                    if case .failure = res {
+                        pauseErrorMessage = "Failed to update pause state. Background service may be unreachable."
+                    }
+                }
             } label: {
                 Image(systemName: store.isCollectionPaused ? "play.circle" : "pause.circle")
             }
@@ -157,95 +182,222 @@ struct PopoverView: View {
 
             Spacer()
 
-            Button("Quit", action: quitApplication)
-                .accessibilityLabel("Quit application")
+            Menu {
+                Button("Quit") {
+                    NSApp.terminate(nil)
+                }
+                Button("Quit and stop background service") {
+                    AppDelegate.quitAndStopDaemon()
+                }
+            } label: {
+                Text("Quit")
+            }
+            .accessibilityLabel("Quit application menu")
         }
-    }
-
-    private func quitApplication() {
-        NSApp.terminate(nil)
     }
 }
 
-private struct ProviderCard: View {
-    let status: ProviderStatus?
+private struct AccountCard: View {
+    let account: Account
     let history: [HistoryPoint]?
     let metric: PercentageMetric
-    let isStale: Bool
 
-    private var provider: Provider { status?.provider ?? .claude }
+    private var provider: Provider { account.provider }
 
     private var sparklineTintColor: Color {
-        let latestUsage = history?.last?.usedPercent ?? status?.data?.usedPercent5h ?? status?.data?.usedPercentWeekly ?? 0
+        let latestUsage = history?.last?.usedPercent ?? account.data?.usedPercent5h ?? account.data?.usedPercentWeekly ?? 0
         return colorForPercent(latestUsage, metric: metric)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Label(provider.displayName, systemImage: provider.symbolName)
-                    .font(.subheadline).bold()
-                if status?.displayLastError != nil || status?.lastError != nil {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .font(.caption)
-                        .help(status?.displayLastError ?? "Error")
-                }
-                Spacer()
-                if let asOf = status?.asOf {
-                    Text(syncAge(asOf))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-                if status?.isRestoredFromDisk == true {
-                    badge(text: "Restored", color: .purple)
-                        .help("Usage data restored from disk after daemon restart")
-                } else if isStale {
-                    badge(text: "Stale", color: .orange)
-                        .help("Data is older than freshness threshold")
-                }
-                routeBadge
+            headerRow
+
+            // Switch on single source of truth: account.state (per Task A4)
+            switch account.state {
+            case .unknown:
+                unknownStateBody
+
+            case .error:
+                errorStateBody
+
+            case .restored:
+                restoredStateBody
+
+            case .stale:
+                staleStateBody
+
+            case .fresh:
+                freshStateBody
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(account.state == .stale ? 0.25 : 0.4), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var headerRow: some View {
+        HStack(spacing: 6) {
+            Label(provider.displayName, systemImage: provider.symbolName)
+                .font(.subheadline).bold()
+
+            if !account.label.isEmpty && account.label != "Default" {
+                Text(account.label)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
             }
 
-            if let data = status?.data {
+            if account.state == .error || account.displayLastError != nil {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .font(.caption)
+                    .help(account.displayLastError ?? "Account reported an issue")
+            }
+
+            Spacer()
+
+            if let asOf = account.asOf {
+                Text(syncAge(asOf))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            stateBadge
+            routeBadge
+        }
+    }
+
+    @ViewBuilder
+    private var stateBadge: some View {
+        switch account.state {
+        case .restored:
+            badge(text: "Last known — stale since restart", color: .purple)
+                .help("Usage data restored from disk after daemon restart; not yet re-polled")
+        case .stale:
+            badge(text: "Stale", color: .orange)
+                .help("Data is older than the configured freshness threshold")
+        case .error:
+            badge(text: "Error", color: .red)
+                .help("Polling or credential failure")
+        case .unknown:
+            badge(text: "No recent data", color: .gray)
+                .help("Data is missing or past hard expiry")
+        case .fresh:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var routeBadge: some View {
+        // Never show "Live" unless state is fresh (removes contradictory "Live" + "Stale" bug!)
+        switch account.activeRoute {
+        case .injection:
+            if provider == .codex {
+                badge(text: "Polled (RPC)", color: .blue)
+            } else if account.state == .fresh {
+                badge(text: "Live", color: .green)
+            } else {
+                badge(text: "Injection", color: .secondary)
+            }
+        case .keychain:
+            badge(text: "Polled", color: .blue)
+        default:
+            badge(text: "Inactive", color: .gray)
+        }
+    }
+
+    // MARK: - State-specific bodies
+
+    private var unknownStateBody: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("No recent data")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let error = account.displayLastError {
+                errorLine(error)
+            }
+        }
+    }
+
+    private var errorStateBody: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            let message = account.displayLastError ?? "Unable to poll account usage."
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(.red)
+                    .font(.caption)
+                    .padding(.top, 1)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+            }
+            .padding(6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+        }
+    }
+
+    private var restoredStateBody: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let data = account.data {
                 windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
                 windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
                 windowRow(label: "Context", percent: data.contextWindowUsedPercent, resetsAt: nil)
-                if let error = status?.displayLastError {
-                    errorLine(error)
-                }
-                if let history, history.count >= 2 {
-                    SparklineView(points: history, tintColor: sparklineTintColor)
-                }
-            } else if let error = status?.displayLastError {
+            } else {
+                Text("No data restored")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let error = account.displayLastError {
                 errorLine(error)
-                if let history, history.count >= 2 {
-                    SparklineView(points: history, tintColor: sparklineTintColor)
-                }
+            }
+            if let history, history.count >= 2 {
+                SparklineView(points: history, tintColor: sparklineTintColor)
+            }
+        }
+    }
+
+    private var staleStateBody: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let data = account.data {
+                windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h, isMuted: true)
+                windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly, isMuted: true)
+                windowRow(label: "Context", percent: data.contextWindowUsedPercent, resetsAt: nil, isMuted: true)
+            } else {
+                Text("Data is stale")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let error = account.displayLastError {
+                errorLine(error)
+            }
+            if let history, history.count >= 2 {
+                SparklineView(points: history, tintColor: sparklineTintColor.opacity(0.6))
+            }
+        }
+        .opacity(0.85)
+    }
+
+    private var freshStateBody: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let data = account.data {
+                windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
+                windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
+                windowRow(label: "Context", percent: data.contextWindowUsedPercent, resetsAt: nil)
             } else {
                 Text("No data yet")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    @ViewBuilder
-    private var routeBadge: some View {
-        switch status?.activeRoute {
-        case .injection:
-            if provider == .codex {
-                badge(text: "Polled (RPC)", color: .blue)
-            } else {
-                badge(text: "Live", color: .green)
+            if let error = account.displayLastError {
+                errorLine(error)
             }
-        case .keychain:
-            badge(text: "Polled", color: .blue)
-        default:
-            badge(text: "No data", color: .gray)
+            if let history, history.count >= 2 {
+                SparklineView(points: history, tintColor: sparklineTintColor)
+            }
         }
     }
 
@@ -269,7 +421,7 @@ private struct ProviderCard: View {
         }
     }
 
-    private func windowRow(label: String, percent: Double?, resetsAt: Int?) -> some View {
+    private func windowRow(label: String, percent: Double?, resetsAt: Int?, isMuted: Bool = false) -> some View {
         guard let percent else { return AnyView(EmptyView()) }
 
         let displayPercent: Double
@@ -283,22 +435,25 @@ private struct ProviderCard: View {
         let metricLabel = metric == .remaining ? "rem" : ""
         let percentDisplayString = metricLabel.isEmpty ? "\(Int(displayPercent))%" : "\(Int(displayPercent))% \(metricLabel)"
 
-        var accessibilityText = "\(provider.displayName) \(label): \(Int(displayPercent)) percent \(metric.displayName.lowercased())"
+        var accessibilityText = "\(provider.displayName) (\(account.label)) \(label): \(Int(displayPercent)) percent \(metric.displayName.lowercased())"
         if let resetsAt {
             accessibilityText += ", resets \(resetCountdown(resetsAt))"
         }
+
+        let barColor = isMuted ? colorForPercent(displayPercent, metric: metric).opacity(0.5) : colorForPercent(displayPercent, metric: metric)
 
         return AnyView(
             HStack(spacing: 8) {
                 Text(label)
                     .font(.caption)
                     .frame(width: 46, alignment: .leading)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isMuted ? Color.secondary.opacity(0.7) : Color.secondary)
                 ProgressView(value: displayPercent, total: 100)
-                    .tint(colorForPercent(displayPercent, metric: metric))
+                    .tint(barColor)
                 Text(percentDisplayString)
                     .font(.caption.monospacedDigit())
                     .frame(width: metric == .remaining ? 48 : 34, alignment: .trailing)
+                    .foregroundStyle(isMuted ? Color.secondary : Color.primary)
                 if let resetsAt {
                     Text(resetCountdown(resetsAt))
                         .font(.caption2)
@@ -327,8 +482,8 @@ private struct ProviderCard: View {
         }
     }
 
-    private func syncAge(_ unixSeconds: Int) -> String {
-        let seconds = max(0, Int(Date().timeIntervalSince1970) - unixSeconds)
+    private func syncAge(_ unixSeconds: Int64) -> String {
+        let seconds = max(0, Int(Date().timeIntervalSince1970) - Int(unixSeconds))
         if seconds < 60 {
             return "\(seconds)s ago"
         }

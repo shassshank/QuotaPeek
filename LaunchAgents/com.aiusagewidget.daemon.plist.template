@@ -6,6 +6,10 @@
     <string>com.aiusagewidget.daemon</string>
     <key>ProgramArguments</key>
     <array>
+        <!-- Log rotation wrapper: checks log size before exec'ing the real
+             binary. Rotates/truncates if over 5 MB, keeping one prior copy. -->
+        <string>__BIN_DIR__/run-with-log-rotation.sh</string>
+        <string>__APP_SUPPORT__/daemon.log</string>
         <string>__BIN_DIR__/aiusaged</string>
     </array>
     <!-- Independent of app login/quit. Explicit stop: install.sh --daemon-stop (unload -w). -->

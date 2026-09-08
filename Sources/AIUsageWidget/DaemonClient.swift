@@ -25,9 +25,58 @@ final class DaemonClient {
         await request(path: "/status", method: "GET")
     }
 
-    func refresh() async -> Result<StatusResponse, DaemonError> {
-        await request(path: "/refresh", method: "POST")
+    /// Triggers an immediate live re-fetch for all accounts or a single account if `accountId` is specified.
+    func refresh(accountId: String? = nil) async -> Result<StatusResponse, DaemonError> {
+        var body: Data?
+        if let accountId {
+            body = try? JSONSerialization.data(withJSONObject: ["accountId": accountId])
+        }
+        return await request(path: "/refresh", method: "POST", body: body)
     }
+
+    // MARK: - Account Management (P5)
+
+    func accounts() async -> Result<AccountsResponse, DaemonError> {
+        await request(path: "/accounts", method: "GET")
+    }
+
+    func createAccount(_ accountRequest: CreateAccountRequest) async -> Result<Account, DaemonError> {
+        guard let body = try? JSONEncoder().encode(accountRequest) else { return .failure(.decodeFailed) }
+        return await request(path: "/accounts", method: "POST", body: body)
+    }
+
+    func updateAccount(id: String, label: String) async -> Result<Account, DaemonError> {
+        let payload = UpdateAccountRequest(label: label)
+        guard let body = try? JSONEncoder().encode(payload) else { return .failure(.decodeFailed) }
+        return await request(path: "/accounts/\(id)", method: "PATCH", body: body)
+    }
+
+    func deleteAccount(id: String) async -> Result<SimpleSuccessResponse, DaemonError> {
+        await request(path: "/accounts/\(id)", method: "DELETE")
+    }
+
+    /// Tests exactly the requested route for an account, per P5 contract.
+    func testRoute(accountId: String, provider: Provider, route: Route) async -> Result<TestRouteResponse, DaemonError> {
+        let requestBody = TestRouteRequest(accountId: accountId, provider: provider, route: route)
+        guard let body = try? JSONEncoder().encode(requestBody) else { return .failure(.decodeFailed) }
+        return await request(path: "/test-route", method: "POST", body: body)
+    }
+
+    /// Clears daemon credential/discovery cache for a specific account.
+    func resetCredentials(accountId: String) async -> Result<ResetCredentialsResponse, DaemonError> {
+        await request(path: "/accounts/\(accountId)/reset-credentials", method: "POST")
+    }
+
+    /// Fetches usage history points for a given account and route, per P5 contract.
+    func history(accountId: String, route: Route? = nil) async -> Result<HistoryResponse, DaemonError> {
+        var path = "/history?accountId=\(accountId)"
+        if let route, route != .none {
+            path += "&route=\(route.rawValue)"
+        }
+        return await request(path: path, method: "GET")
+    }
+
+    // MARK: - Config & Diagnostics
 
     func config() async -> Result<DaemonConfig, DaemonError> {
         await request(path: "/config", method: "GET")
@@ -38,46 +87,28 @@ final class DaemonClient {
         return await request(path: "/config", method: "PUT", body: body)
     }
 
-    func errors(limit: Int = 50) async -> Result<ErrorsResponse, DaemonError> {
-        await request(path: "/errors?limit=\(limit)", method: "GET")
-    }
-
-    /// Fetches usage history points for a given provider and route, per API_CONTRACT.md.
-    func history(provider: Provider, route: Route? = nil) async -> Result<HistoryResponse, DaemonError> {
-        var path = "/history?provider=\(provider.rawValue)"
-        if let route, route != .none {
-            path += "&route=\(route.rawValue)"
-        }
-        return await request(path: path, method: "GET")
-    }
-
-    func testRoute(provider: Provider, route: Route) async -> Result<TestRouteResponse, DaemonError> {
-        let requestBody = TestRouteRequest(provider: provider, route: route)
-        guard let body = try? JSONEncoder().encode(requestBody) else { return .failure(.decodeFailed) }
-        return await request(path: "/test-route", method: "POST", body: body)
-    }
-
-    /// Clears stored OAuth tokens and session data for the provider.
-    func resetCredentials(for provider: Provider) async -> Result<ResetCredentialsResponse, DaemonError> {
-        await request(path: "/providers/\(provider.rawValue)/reset-credentials", method: "POST")
-    }
-
-    /// Pauses background data collection on the daemon.
-    func pauseCollection() async -> Result<DaemonConfig, DaemonError> {
-        await setCollectionPaused(true)
-    }
-
-    /// Resumes background data collection on the daemon.
-    func resumeCollection() async -> Result<DaemonConfig, DaemonError> {
-        await setCollectionPaused(false)
-    }
-
-    private func setCollectionPaused(_ paused: Bool) async -> Result<DaemonConfig, DaemonError> {
-        guard let body = try? JSONSerialization.data(withJSONObject: ["collectionPaused": paused]) else {
+    func updateConfigFields(_ fields: [String: Any]) async -> Result<DaemonConfig, DaemonError> {
+        guard let body = try? JSONSerialization.data(withJSONObject: fields) else {
             return .failure(.decodeFailed)
         }
         return await request(path: "/config", method: "PUT", body: body)
     }
+
+    func errors(limit: Int = 50) async -> Result<ErrorsResponse, DaemonError> {
+        await request(path: "/errors?limit=\(limit)", method: "GET")
+    }
+
+    /// Pauses background data collection on the daemon.
+    func pauseCollection() async -> Result<DaemonConfig, DaemonError> {
+        await updateConfigFields(["collectionPaused": true])
+    }
+
+    /// Resumes background data collection on the daemon.
+    func resumeCollection() async -> Result<DaemonConfig, DaemonError> {
+        await updateConfigFields(["collectionPaused": false])
+    }
+
+    // MARK: - Internal HTTP Request
 
     private func request<T: Decodable>(path: String, method: String, body: Data? = nil) async -> Result<T, DaemonError> {
         var request = URLRequest(url: Self.baseURL.appendingPathComponent(path.hasPrefix("/") ? String(path.dropFirst()) : path))

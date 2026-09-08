@@ -147,12 +147,12 @@ func TestHistoryEndpoint(t *testing.T) {
 		code         int
 		count        int
 	}{
-		{"?provider=claude&route=keychain", "", 401, 0},
+		{"?accountId=acct_claude_default&route=keychain", "", 401, 0},
 		{"", "test", 400, 0},
 		{"?provider=nope&route=keychain", "test", 400, 0},
-		{"?provider=claude&route=none", "test", 400, 0},
-		{"?provider=claude&route=keychain", "test", 200, 1},
-		{"?provider=codex&route=keychain", "test", 200, 0},
+		{"?accountId=acct_claude_default&route=none", "test", 400, 0},
+		{"?accountId=acct_claude_default&route=keychain", "test", 200, 1},
+		{"?accountId=acct_codex_default&route=keychain", "test", 200, 0},
 	} {
 		req := httptest.NewRequest("GET", "/history"+tc.query, nil)
 		req.Header.Set("X-Auth-Token", tc.token)

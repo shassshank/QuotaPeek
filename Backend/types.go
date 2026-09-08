@@ -35,10 +35,11 @@ func (u UsageData) empty() bool {
 }
 
 type ErrorEntry struct {
-	Provider ProviderID `json:"provider"`
-	Route    Route      `json:"route"`
-	Message  string     `json:"message"`
-	At       int64      `json:"at"`
+	AccountID string     `json:"accountId,omitempty"`
+	Provider  ProviderID `json:"provider"`
+	Route     Route      `json:"route"`
+	Message   string     `json:"message"`
+	At        int64      `json:"at"`
 }
 
 type ProviderStatus struct {
@@ -57,7 +58,8 @@ type ProviderStatus struct {
 }
 
 type StatusResponse struct {
-	Providers []ProviderStatus `json:"providers"`
+	Accounts  []Account        `json:"accounts"`
+	Providers []ProviderStatus `json:"-"`
 }
 
 type ProviderConfig struct {
@@ -67,12 +69,13 @@ type ProviderConfig struct {
 }
 
 type Config struct {
-	StaleAfterSeconds int64          `json:"staleAfterSeconds"`
-	CollectionPaused  bool           `json:"collectionPaused"`
-	ClaudePollingMode string         `json:"claude_polling_mode"`
-	Claude            ProviderConfig `json:"claude"`
-	Codex             ProviderConfig `json:"codex"`
-	Antigravity       ProviderConfig `json:"antigravity"`
+	Accounts          []AccountConfig `json:"accounts"`
+	StaleAfterSeconds int64           `json:"staleAfterSeconds"`
+	CollectionPaused  bool            `json:"collectionPaused"`
+	ClaudePollingMode string          `json:"claude_polling_mode"`
+	Claude            ProviderConfig  `json:"claude"`
+	Codex             ProviderConfig  `json:"codex"`
+	Antigravity       ProviderConfig  `json:"antigravity"`
 }
 
 type routeSample struct {

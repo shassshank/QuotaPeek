@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -40,7 +41,13 @@ func parseAntigravityIngest(raw []byte) (UsageData, bool, error) {
 	}
 	data := UsageData{}
 	if quota, ok := payload["quota"].(map[string]any); ok {
-		for key, value := range quota {
+		keys := make([]string, 0, len(quota))
+		for key := range quota {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			value := quota[key]
 			entry, ok := value.(map[string]any)
 			if !ok {
 				continue
@@ -58,13 +65,13 @@ func parseAntigravityIngest(raw []byte) (UsageData, bool, error) {
 			label := key
 			switch classifyQuotaLabel(label) {
 			case "weekly":
-				data.UsedPercentWeekly = &used
-				if reset != nil {
+				if data.UsedPercentWeekly == nil || used > *data.UsedPercentWeekly {
+					data.UsedPercentWeekly = &used
 					data.ResetsAtWeekly = reset
 				}
 			case "5h":
-				data.UsedPercent5H = &used
-				if reset != nil {
+				if data.UsedPercent5H == nil || used > *data.UsedPercent5H {
+					data.UsedPercent5H = &used
 					data.ResetsAt5H = reset
 				}
 			}

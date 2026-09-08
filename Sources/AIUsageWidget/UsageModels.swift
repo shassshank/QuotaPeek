@@ -29,7 +29,134 @@ enum Route: String, Codable, Equatable {
     case none
 }
 
-struct ProviderData: Codable {
+enum AccountTrustState: String, Codable, Equatable, CaseIterable {
+    case unknown
+    case fresh
+    case stale
+    case restored
+    case error
+
+    var displayName: String {
+        switch self {
+        case .unknown: return "Unknown"
+        case .fresh: return "Fresh"
+        case .stale: return "Stale"
+        case .restored: return "Restored"
+        case .error: return "Error"
+        }
+    }
+}
+
+struct CredentialLocation: Codable, Equatable {
+    var kind: String // "config_dir" | "daemon_token"
+    var configDir: String? // required when kind == "config_dir"
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case configDir = "configDir"
+        case configDirSnake = "config_dir"
+    }
+
+    init(kind: String, configDir: String? = nil) {
+        self.kind = kind
+        self.configDir = configDir
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.kind = try container.decode(String.self, forKey: .kind)
+        self.configDir = (try? container.decodeIfPresent(String.self, forKey: .configDir))
+            ?? (try? container.decodeIfPresent(String.self, forKey: .configDirSnake))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(kind, forKey: .kind)
+        try container.encodeIfPresent(configDir, forKey: .configDir)
+    }
+}
+
+struct OAuthBootstrap: Codable, Equatable {
+    var refreshToken: String
+    var email: String
+
+    enum CodingKeys: String, CodingKey {
+        case refreshToken = "refreshToken"
+        case refreshTokenSnake = "refresh_token"
+        case email
+    }
+
+    init(refreshToken: String, email: String) {
+        self.refreshToken = refreshToken
+        self.email = email
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.refreshToken = (try? container.decode(String.self, forKey: .refreshToken))
+            ?? (try? container.decode(String.self, forKey: .refreshTokenSnake))
+            ?? ""
+        self.email = (try? container.decode(String.self, forKey: .email)) ?? ""
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(refreshToken, forKey: .refreshToken)
+        try container.encode(email, forKey: .email)
+    }
+}
+
+struct CreateAccountRequest: Codable {
+    var provider: Provider
+    var label: String
+    var credentialLocation: CredentialLocation
+    var oauthBootstrap: OAuthBootstrap?
+
+    enum CodingKeys: String, CodingKey {
+        case provider
+        case label
+        case credentialLocation = "credentialLocation"
+        case credentialLocationSnake = "credential_location"
+        case oauthBootstrap = "oauthBootstrap"
+        case oauthBootstrapSnake = "oauth_bootstrap"
+    }
+
+    init(
+        provider: Provider,
+        label: String,
+        credentialLocation: CredentialLocation,
+        oauthBootstrap: OAuthBootstrap? = nil
+    ) {
+        self.provider = provider
+        self.label = label
+        self.credentialLocation = credentialLocation
+        self.oauthBootstrap = oauthBootstrap
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.provider = try container.decode(Provider.self, forKey: .provider)
+        self.label = try container.decode(String.self, forKey: .label)
+        self.credentialLocation = try (container.decodeIfPresent(CredentialLocation.self, forKey: .credentialLocation)
+            ?? container.decode(CredentialLocation.self, forKey: .credentialLocationSnake))
+        self.oauthBootstrap = (try? container.decodeIfPresent(OAuthBootstrap.self, forKey: .oauthBootstrap))
+            ?? (try? container.decodeIfPresent(OAuthBootstrap.self, forKey: .oauthBootstrapSnake))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(provider, forKey: .provider)
+        try container.encode(label, forKey: .label)
+        try container.encode(credentialLocation, forKey: .credentialLocation)
+        try container.encodeIfPresent(oauthBootstrap, forKey: .oauthBootstrap)
+    }
+}
+
+struct UpdateAccountRequest: Codable {
+    var label: String
+}
+
+struct ProviderData: Codable, Equatable {
     var usedPercent5h: Double?
     var resetsAt5h: Int?
     var usedPercentWeekly: Double?
@@ -45,49 +172,58 @@ struct ProviderData: Codable {
     }
 }
 
-struct ProviderError: Codable {
+struct ProviderError: Codable, Equatable {
     var route: Route
     var message: String
     var at: Int
 }
 
-struct ProviderStatus: Codable, Identifiable {
-    var id: Provider { provider }
+struct Account: Codable, Identifiable, Equatable {
+    var id: String
     var provider: Provider
-    var routesEnabled: [Route]
-    var activeRoute: Route
-    var data: ProviderData?
-    var asOf: Int?
-    var lastError: ProviderError?
-
-    // Round 2 Status API additions
+    var label: String
+    var credentialLocation: CredentialLocation?
     var credentialSource: String?
     var effectiveAccount: String?
     var lastSuccessAt: Int64?
     var lastFailureAt: Int64?
-    var lastErrorString: String?
+    var lastError: String?
+    var routesEnabled: [Route]
+    var activeRoute: Route
+    var data: ProviderData?
+    var asOf: Int64?
+    var lastErrorObject: ProviderError?
+    var restoredFromDisk: Bool
+    var state: AccountTrustState
 
-    // Round 3 Status API additions: restart-staleness indicator
-    var restoredFromDisk: Bool?
-    var staleSinceRestart: Bool?
-
-    /// True if this provider's data was restored from disk and has not had a fresh poll yet.
+    /// Convenience accessors
     var isRestoredFromDisk: Bool {
-        if let r = restoredFromDisk, r { return true }
-        if let s = staleSinceRestart, s { return true }
-        return false
+        restoredFromDisk || state == .restored
     }
 
-    /// Human-readable error message from either `lastErrorString` or `lastError.message`.
     var displayLastError: String? {
-        if let errStr = lastErrorString, !errStr.isEmpty {
+        if let errStr = lastError, !errStr.isEmpty {
             return errStr
         }
-        return lastError?.message
+        return lastErrorObject?.message
     }
 
     enum CodingKeys: String, CodingKey {
-        case provider = "id"
+        case id
+        case provider
+        case label
+        case credentialLocation = "credentialLocation"
+        case credentialLocationSnake = "credential_location"
+        case credentialSource = "credentialSource"
+        case credentialSourceSnake = "credential_source"
+        case effectiveAccount = "effectiveAccount"
+        case effectiveAccountSnake = "effective_account"
+        case lastSuccessAt = "lastSuccessAt"
+        case lastSuccessAtSnake = "last_success_at"
+        case lastFailureAt = "lastFailureAt"
+        case lastFailureAtSnake = "last_failure_at"
+        case lastError = "lastError"
+        case lastErrorSnake = "last_error"
         case routesEnabled = "routes_enabled"
         case routesEnabledCamel = "routesEnabled"
         case activeRoute = "active_route"
@@ -95,132 +231,203 @@ struct ProviderStatus: Codable, Identifiable {
         case data
         case asOf = "as_of"
         case asOfCamel = "asOf"
-        case lastError = "last_error"
-        case lastErrorCamel = "lastError"
-        case credentialSourceSnake = "credential_source"
-        case credentialSourceCamel = "credentialSource"
-        case effectiveAccountSnake = "effective_account"
-        case effectiveAccountCamel = "effectiveAccount"
-        case lastSuccessAtSnake = "last_success_at"
-        case lastSuccessAtCamel = "lastSuccessAt"
-        case lastFailureAtSnake = "last_failure_at"
-        case lastFailureAtCamel = "lastFailureAt"
-        case restoredFromDiskCamel = "restoredFromDisk"
+        case restoredFromDisk = "restoredFromDisk"
         case restoredFromDiskSnake = "restored_from_disk"
-        case staleSinceRestartCamel = "staleSinceRestart"
-        case staleSinceRestartSnake = "stale_since_restart"
-        case restored
+        case state
     }
 
     init(
+        id: String,
         provider: Provider,
-        routesEnabled: [Route],
-        activeRoute: Route,
-        data: ProviderData? = nil,
-        asOf: Int? = nil,
-        lastError: ProviderError? = nil,
+        label: String = "Default",
+        credentialLocation: CredentialLocation? = nil,
         credentialSource: String? = nil,
         effectiveAccount: String? = nil,
         lastSuccessAt: Int64? = nil,
         lastFailureAt: Int64? = nil,
-        lastErrorString: String? = nil,
-        restoredFromDisk: Bool? = nil,
-        staleSinceRestart: Bool? = nil
+        lastError: String? = nil,
+        routesEnabled: [Route] = [],
+        activeRoute: Route = .none,
+        data: ProviderData? = nil,
+        asOf: Int64? = nil,
+        lastErrorObject: ProviderError? = nil,
+        restoredFromDisk: Bool = false,
+        state: AccountTrustState = .unknown
     ) {
+        self.id = id
         self.provider = provider
-        self.routesEnabled = routesEnabled
-        self.activeRoute = activeRoute
-        self.data = data
-        self.asOf = asOf
-        self.lastError = lastError
+        self.label = label
+        self.credentialLocation = credentialLocation
         self.credentialSource = credentialSource
         self.effectiveAccount = effectiveAccount
         self.lastSuccessAt = lastSuccessAt
         self.lastFailureAt = lastFailureAt
-        self.lastErrorString = lastErrorString
+        self.lastError = lastError
+        self.routesEnabled = routesEnabled
+        self.activeRoute = activeRoute
+        self.data = data
+        self.asOf = asOf
+        self.lastErrorObject = lastErrorObject
         self.restoredFromDisk = restoredFromDisk
-        self.staleSinceRestart = staleSinceRestart
+        self.state = state
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.provider = try container.decode(Provider.self, forKey: .provider)
+
+        // Decode id (or fallback to provider rawValue if legacy)
+        let rawId = (try? container.decode(String.self, forKey: .id)) ?? "unknown"
+        self.id = rawId
+
+        // Decode provider (or derive from id if legacy)
+        if let prov = try? container.decode(Provider.self, forKey: .provider) {
+            self.provider = prov
+        } else if let prov = Provider(rawValue: rawId) {
+            self.provider = prov
+        } else {
+            self.provider = .claude
+        }
+
+        self.label = (try? container.decode(String.self, forKey: .label)) ?? "Default"
+
+        self.credentialLocation = (try? container.decodeIfPresent(CredentialLocation.self, forKey: .credentialLocation))
+            ?? (try? container.decodeIfPresent(CredentialLocation.self, forKey: .credentialLocationSnake))
+
+        self.credentialSource = (try? container.decodeIfPresent(String.self, forKey: .credentialSource))
+            ?? (try? container.decodeIfPresent(String.self, forKey: .credentialSourceSnake))
+
+        self.effectiveAccount = (try? container.decodeIfPresent(String.self, forKey: .effectiveAccount))
+            ?? (try? container.decodeIfPresent(String.self, forKey: .effectiveAccountSnake))
+
+        self.lastSuccessAt = (try? container.decodeIfPresent(Int64.self, forKey: .lastSuccessAt))
+            ?? (try? container.decodeIfPresent(Int64.self, forKey: .lastSuccessAtSnake))
+
+        self.lastFailureAt = (try? container.decodeIfPresent(Int64.self, forKey: .lastFailureAt))
+            ?? (try? container.decodeIfPresent(Int64.self, forKey: .lastFailureAtSnake))
+
+        // Decode last_error: can be a String or a ProviderError object
+        if let errObj = try? container.decodeIfPresent(ProviderError.self, forKey: .lastErrorSnake) {
+            self.lastErrorObject = errObj
+            self.lastError = errObj.message
+        } else if let errObj = try? container.decodeIfPresent(ProviderError.self, forKey: .lastError) {
+            self.lastErrorObject = errObj
+            self.lastError = errObj.message
+        } else if let errStr = try? container.decodeIfPresent(String.self, forKey: .lastError) {
+            self.lastError = errStr
+            self.lastErrorObject = nil
+        } else if let errStr = try? container.decodeIfPresent(String.self, forKey: .lastErrorSnake) {
+            self.lastError = errStr
+            self.lastErrorObject = nil
+        } else {
+            self.lastError = nil
+            self.lastErrorObject = nil
+        }
+
         self.routesEnabled = (try? container.decode([Route].self, forKey: .routesEnabled))
             ?? (try? container.decode([Route].self, forKey: .routesEnabledCamel))
             ?? []
+
         self.activeRoute = (try? container.decode(Route.self, forKey: .activeRoute))
             ?? (try? container.decode(Route.self, forKey: .activeRouteCamel))
             ?? .none
+
         self.data = try? container.decodeIfPresent(ProviderData.self, forKey: .data)
-        self.asOf = (try? container.decodeIfPresent(Int.self, forKey: .asOf))
-            ?? (try? container.decodeIfPresent(Int.self, forKey: .asOfCamel))
 
-        // Decode last_error / lastError either as ProviderError object or as a String
-        if let errObj = try? container.decodeIfPresent(ProviderError.self, forKey: .lastError) {
-            self.lastError = errObj
-            self.lastErrorString = errObj.message
-        } else if let errObj = try? container.decodeIfPresent(ProviderError.self, forKey: .lastErrorCamel) {
-            self.lastError = errObj
-            self.lastErrorString = errObj.message
-        } else if let errStr = try? container.decodeIfPresent(String.self, forKey: .lastError) {
-            self.lastErrorString = errStr
-            self.lastError = ProviderError(route: .none, message: errStr, at: Int(Date().timeIntervalSince1970))
-        } else if let errStr = try? container.decodeIfPresent(String.self, forKey: .lastErrorCamel) {
-            self.lastErrorString = errStr
-            self.lastError = ProviderError(route: .none, message: errStr, at: Int(Date().timeIntervalSince1970))
+        if let asOfInt64 = try? container.decodeIfPresent(Int64.self, forKey: .asOf) {
+            self.asOf = asOfInt64
+        } else if let asOfInt = try? container.decodeIfPresent(Int.self, forKey: .asOf) {
+            self.asOf = Int64(asOfInt)
+        } else if let asOfInt64 = try? container.decodeIfPresent(Int64.self, forKey: .asOfCamel) {
+            self.asOf = asOfInt64
+        } else if let asOfInt = try? container.decodeIfPresent(Int.self, forKey: .asOfCamel) {
+            self.asOf = Int64(asOfInt)
         } else {
-            self.lastError = nil
-            self.lastErrorString = nil
+            self.asOf = nil
         }
 
-        self.credentialSource = (try? container.decodeIfPresent(String.self, forKey: .credentialSourceSnake))
-            ?? (try? container.decodeIfPresent(String.self, forKey: .credentialSourceCamel))
-
-        self.effectiveAccount = (try? container.decodeIfPresent(String.self, forKey: .effectiveAccountSnake))
-            ?? (try? container.decodeIfPresent(String.self, forKey: .effectiveAccountCamel))
-
-        self.lastSuccessAt = (try? container.decodeIfPresent(Int64.self, forKey: .lastSuccessAtSnake))
-            ?? (try? container.decodeIfPresent(Int64.self, forKey: .lastSuccessAtCamel))
-
-        self.lastFailureAt = (try? container.decodeIfPresent(Int64.self, forKey: .lastFailureAtSnake))
-            ?? (try? container.decodeIfPresent(Int64.self, forKey: .lastFailureAtCamel))
-
-        // Decode restart staleness indicators (accepting bool or non-zero timestamp)
-        var restoredVal = (try? container.decodeIfPresent(Bool.self, forKey: .restoredFromDiskCamel))
+        self.restoredFromDisk = (try? container.decodeIfPresent(Bool.self, forKey: .restoredFromDisk))
             ?? (try? container.decodeIfPresent(Bool.self, forKey: .restoredFromDiskSnake))
-            ?? (try? container.decodeIfPresent(Bool.self, forKey: .restored))
-        if restoredVal == nil, let val = try? container.decodeIfPresent(Int64.self, forKey: .restoredFromDiskCamel) {
-            restoredVal = (val != 0)
-        }
-        self.restoredFromDisk = restoredVal
+            ?? false
 
-        var staleRestartVal = (try? container.decodeIfPresent(Bool.self, forKey: .staleSinceRestartCamel))
-            ?? (try? container.decodeIfPresent(Bool.self, forKey: .staleSinceRestartSnake))
-        if staleRestartVal == nil, let val = try? container.decodeIfPresent(Int64.self, forKey: .staleSinceRestartCamel) {
-            staleRestartVal = (val != 0)
+        if let st = try? container.decodeIfPresent(AccountTrustState.self, forKey: .state) {
+            self.state = st
+        } else {
+            self.state = .unknown
         }
-        self.staleSinceRestart = staleRestartVal
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
         try container.encode(provider, forKey: .provider)
+        try container.encode(label, forKey: .label)
+        try container.encodeIfPresent(credentialLocation, forKey: .credentialLocation)
+        try container.encodeIfPresent(credentialSource, forKey: .credentialSource)
+        try container.encodeIfPresent(effectiveAccount, forKey: .effectiveAccount)
+        try container.encodeIfPresent(lastSuccessAt, forKey: .lastSuccessAt)
+        try container.encodeIfPresent(lastFailureAt, forKey: .lastFailureAt)
+        try container.encodeIfPresent(lastError, forKey: .lastError)
         try container.encode(routesEnabled, forKey: .routesEnabled)
         try container.encode(activeRoute, forKey: .activeRoute)
         try container.encodeIfPresent(data, forKey: .data)
         try container.encodeIfPresent(asOf, forKey: .asOf)
-        try container.encodeIfPresent(lastError, forKey: .lastError)
-        try container.encodeIfPresent(credentialSource, forKey: .credentialSourceSnake)
-        try container.encodeIfPresent(effectiveAccount, forKey: .effectiveAccountSnake)
-        try container.encodeIfPresent(lastSuccessAt, forKey: .lastSuccessAtSnake)
-        try container.encodeIfPresent(lastFailureAt, forKey: .lastFailureAtSnake)
-        try container.encodeIfPresent(restoredFromDisk, forKey: .restoredFromDiskCamel)
-        try container.encodeIfPresent(staleSinceRestart, forKey: .staleSinceRestartCamel)
+        try container.encode(restoredFromDisk, forKey: .restoredFromDisk)
+        try container.encode(state, forKey: .state)
     }
 }
 
+/// Backward compatibility alias during transition
+typealias ProviderStatus = Account
+
 struct StatusResponse: Codable {
-    var providers: [ProviderStatus]
+    var accounts: [Account]
+
+    enum CodingKeys: String, CodingKey {
+        case accounts
+        case providers
+    }
+
+    init(accounts: [Account] = []) {
+        self.accounts = accounts
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let accs = try? container.decode([Account].self, forKey: .accounts) {
+            self.accounts = accs
+        } else if let provs = try? container.decode([Account].self, forKey: .providers) {
+            self.accounts = provs
+        } else {
+            self.accounts = []
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(accounts, forKey: .accounts)
+    }
+}
+
+struct AccountsResponse: Codable {
+    var accounts: [Account]
+
+    enum CodingKeys: String, CodingKey {
+        case accounts
+    }
+
+    init(accounts: [Account] = []) {
+        self.accounts = accounts
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.accounts = (try? container.decode([Account].self, forKey: .accounts)) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(accounts, forKey: .accounts)
+    }
 }
 
 struct ProviderConfig: Codable, Equatable {
@@ -268,8 +475,6 @@ struct DaemonConfig: Codable, Equatable {
     var claude: ProviderConfig?
     var codex: ProviderConfig?
     var antigravity: ProviderConfig?
-
-    // Round 2 additions
     var staleAfterSeconds: Int?
     var collectionPaused: Bool?
 
@@ -334,19 +539,26 @@ struct DaemonConfig: Codable, Equatable {
 }
 
 struct TestRouteRequest: Codable {
+    var accountId: String
     var provider: Provider
     var route: Route
 }
 
 struct TestRouteResponse: Codable {
     var ok: Bool
-    var provider: Provider
-    var route: Route
+    var provider: Provider?
+    var route: Route?
     var message: String?
 }
 
 struct ResetCredentialsResponse: Codable {
     var ok: Bool?
+    var provider: String?
+    var message: String?
+}
+
+struct SimpleSuccessResponse: Codable {
+    var ok: Bool
     var message: String?
 }
 
@@ -362,7 +574,7 @@ struct ErrorsResponse: Codable {
     var errors: [ErrorLogEntry]
 }
 
-// MARK: - Round 3 History Models
+// MARK: - History Models
 
 struct HistoryPoint: Codable, Identifiable {
     var id: String { "\(at)-\(usedPercent)" }
