@@ -1692,10 +1692,12 @@ private enum WidgetMetrics {
             default: return .red
             }
         case .remaining:
-            switch percent {
-            case ..<15: return .red
-            case ..<40: return .yellow
-            default: return .green
+            if percent > 40 {
+                return .green
+            } else if percent > 15 {
+                return .yellow
+            } else {
+                return .red
             }
         }
     }
