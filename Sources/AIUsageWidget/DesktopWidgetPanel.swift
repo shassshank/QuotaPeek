@@ -6,10 +6,11 @@ import SwiftUI
 /// widget. Independent from the menu bar status item / popover — both can be shown at
 /// the same time.
 ///
-/// Sits at the desktop-icon window level (like a real macOS desktop widget), not
-/// `.floating`: it stays behind normal app windows instead of covering them, and
-/// `.stationary` keeps it pinned to wherever it was placed instead of chasing the user
-/// across Space switches/Exposé the way a floating panel would.
+/// Sits just above the desktop wallpaper but below the desktop-icons layer (like a real
+/// macOS desktop widget), not `.floating`: it stays behind normal app windows AND behind
+/// Finder's desktop icons, so files/folders on the desktop always render on top of it
+/// instead of being covered. `.stationary` keeps it pinned to wherever it was placed
+/// instead of chasing the user across Space switches/Exposé the way a floating panel would.
 @MainActor
 final class DesktopWidgetPanel: NSPanel {
     private static let autosaveName = "DesktopWidgetPanel"
@@ -24,7 +25,7 @@ final class DesktopWidgetPanel: NSPanel {
         )
 
         isFloatingPanel = false
-        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) + 1)
         becomesKeyOnlyIfNeeded = true
         hidesOnDeactivate = false
         isMovableByWindowBackground = true
