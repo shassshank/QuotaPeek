@@ -848,6 +848,20 @@ private struct GeneralSettingsTab: View {
                 .padding(.top, 4)
             }
 
+            Section("Desktop Widget") {
+                Toggle("Show desktop widget", isOn: $displayPrefs.isDesktopWidgetEnabled)
+
+                if displayPrefs.isDesktopWidgetEnabled {
+                    Picker("Widget style", selection: $displayPrefs.desktopWidgetStyle) {
+                        ForEach(DesktopWidgetStyle.allCases) { style in
+                            Text(style.displayName).tag(style)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .accessibilityLabel("Desktop widget style")
+                }
+            }
+
             // Task D11: Uninstall button with confirmation dialog
             Section("Maintenance & Uninstall") {
                 HStack {

@@ -19,6 +19,25 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// Layout style for the floating desktop widget.
+enum DesktopWidgetStyle: String, CaseIterable, Identifiable {
+    case combinedLinear = "combined_linear"
+    case combinedCircular = "combined_circular"
+    case perAgentLinear = "per_agent_linear"
+    case perAgentCircular = "per_agent_circular"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .combinedLinear: return "Combined (linear bars)"
+        case .combinedCircular: return "Combined (circular rings)"
+        case .perAgentLinear: return "Per-agent (linear bars)"
+        case .perAgentCircular: return "Per-agent (circular rings)"
+        }
+    }
+}
+
 /// Whether percentages represent used quota or remaining quota.
 enum PercentageMetric: String, CaseIterable, Identifiable {
     case used = "used"
@@ -43,6 +62,8 @@ final class DisplayPreferences: ObservableObject {
         static let menuBarMode = "display_menu_bar_mode"
         static let percentageMetric = "display_percentage_metric"
         static let providerOrder = "display_provider_order"
+        static let isDesktopWidgetEnabled = "display_desktop_widget_enabled"
+        static let desktopWidgetStyle = "display_desktop_widget_style"
     }
 
     @Published var menuBarMode: MenuBarDisplayMode {
@@ -64,7 +85,28 @@ final class DisplayPreferences: ObservableObject {
         }
     }
 
+    @Published var isDesktopWidgetEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(isDesktopWidgetEnabled, forKey: Keys.isDesktopWidgetEnabled)
+        }
+    }
+
+    @Published var desktopWidgetStyle: DesktopWidgetStyle {
+        didSet {
+            UserDefaults.standard.set(desktopWidgetStyle.rawValue, forKey: Keys.desktopWidgetStyle)
+        }
+    }
+
     private init() {
+        self.isDesktopWidgetEnabled = UserDefaults.standard.bool(forKey: Keys.isDesktopWidgetEnabled)
+
+        if let styleRaw = UserDefaults.standard.string(forKey: Keys.desktopWidgetStyle),
+           let style = DesktopWidgetStyle(rawValue: styleRaw) {
+            self.desktopWidgetStyle = style
+        } else {
+            self.desktopWidgetStyle = .combinedLinear
+        }
+
         if let modeRaw = UserDefaults.standard.string(forKey: Keys.menuBarMode),
            let mode = MenuBarDisplayMode(rawValue: modeRaw) {
             self.menuBarMode = mode

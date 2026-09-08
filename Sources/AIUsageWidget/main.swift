@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = UsageStore()
     private let displayPrefs = DisplayPreferences.shared
     private var settingsWindow: NSWindow?
+    private var desktopWidgetPanel: DesktopWidgetPanel?
     private var cancellables = Set<AnyCancellable>()
     private var eventMonitor: Any?
 
@@ -52,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in
                 DispatchQueue.main.async {
                     self?.updateStatusItem()
+                    self?.updateDesktopWidgetVisibility()
                 }
             }
             .store(in: &cancellables)
@@ -97,6 +99,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         store.start()
+        updateDesktopWidgetVisibility()
+    }
+
+    /// Shows/hides the floating desktop widget panel to match the user's preference, without
+    /// touching the menu bar status item or popover.
+    private func updateDesktopWidgetVisibility() {
+        if displayPrefs.isDesktopWidgetEnabled {
+            if desktopWidgetPanel == nil {
+                desktopWidgetPanel = DesktopWidgetPanel(store: store, displayPrefs: displayPrefs)
+            }
+            desktopWidgetPanel?.orderFrontRegardless()
+            store.setWidgetVisible(true)
+        } else {
+            desktopWidgetPanel?.orderOut(nil)
+            store.setWidgetVisible(false)
+        }
     }
 
     private func updateStatusItem() {
@@ -223,6 +241,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             refreshItem.target = self
             menu.addItem(refreshItem)
 
+            let widgetItem = NSMenuItem(title: "Show Desktop Widget", action: #selector(toggleDesktopWidgetMenuAction), keyEquivalent: "")
+            widgetItem.target = self
+            widgetItem.state = displayPrefs.isDesktopWidgetEnabled ? .on : .off
+            menu.addItem(widgetItem)
+
             menu.addItem(.separator())
 
             let quitItem = NSMenuItem(title: "Quit", action: #selector(quitMenuAction), keyEquivalent: "q")
@@ -249,6 +272,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func refreshMenuAction() {
         Task { await store.refresh() }
+    }
+
+    @objc private func toggleDesktopWidgetMenuAction() {
+        displayPrefs.isDesktopWidgetEnabled.toggle()
     }
 
     @objc private func quitMenuAction() {

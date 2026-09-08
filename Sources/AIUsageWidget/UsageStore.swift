@@ -31,6 +31,7 @@ final class UsageStore: ObservableObject {
     private let fastPollInterval: TimeInterval = 5
     private let slowPollInterval: TimeInterval = 60
     private var isPopoverVisible = false
+    private var isWidgetVisible = false
 
     // In-flight guard per Task C7
     private var isReloading = false
@@ -51,8 +52,21 @@ final class UsageStore: ObservableObject {
     func setPopoverVisible(_ visible: Bool) {
         guard isPopoverVisible != visible else { return }
         isPopoverVisible = visible
-        scheduleTimer(interval: visible ? fastPollInterval : slowPollInterval)
-        if visible {
+        applyPollingCadence(triggerImmediateReload: visible)
+    }
+
+    /// Same idea as `setPopoverVisible`, for the floating desktop widget panel. Either surface
+    /// being visible is enough to keep polling fast.
+    func setWidgetVisible(_ visible: Bool) {
+        guard isWidgetVisible != visible else { return }
+        isWidgetVisible = visible
+        applyPollingCadence(triggerImmediateReload: visible)
+    }
+
+    private func applyPollingCadence(triggerImmediateReload: Bool) {
+        let shouldPollFast = isPopoverVisible || isWidgetVisible
+        scheduleTimer(interval: shouldPollFast ? fastPollInterval : slowPollInterval)
+        if triggerImmediateReload {
             Task { await reload() }
         }
     }
