@@ -10,7 +10,7 @@
              binary. Rotates/truncates if over 5 MB, keeping one prior copy. -->
         <string>__BIN_DIR__/run-with-log-rotation.sh</string>
         <string>__APP_SUPPORT__/app.log</string>
-        <string>__BIN_DIR__/AIUsageWidget.app/Contents/MacOS/AIUsageWidget</string>
+        <string>__APP_BUNDLE__/Contents/MacOS/AIUsageWidget</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

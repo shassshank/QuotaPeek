@@ -1,8 +1,10 @@
 #!/bin/bash
 # Installs AIUsageWidget:
-#   - copies the daemon (Backend/) and the menu bar app (a thin UI shell that
-#     only talks to the daemon's local HTTP API - it never touches Keychain
-#     or any provider API directly), plus the statusLine hook scripts, into
+#   - installs the menu bar app (a thin UI shell that only talks to the
+#     daemon's local HTTP API - it never touches Keychain or any provider
+#     API directly) as a normal .app bundle in /Applications (or
+#     ~/Applications if /Applications isn't writable)
+#   - copies the daemon (Backend/) and the statusLine hook scripts into
 #     ~/Library/Application Support/AIUsageWidget/bin
 #   - installs LaunchAgents so the daemon and the app start at login
 #   - optionally auto-detects installed AI CLIs (Claude, Codex, Antigravity)
@@ -39,6 +41,16 @@ APP_SUPPORT="$HOME/Library/Application Support/AIUsageWidget"
 BIN_DIR="$APP_SUPPORT/bin"
 LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
 PYTHON3="$(command -v python3 || echo python3)"
+
+# The .app bundle itself lives in /Applications like any other Mac app, so
+# Spotlight/Launchpad/Finder can find it. Falls back to ~/Applications (no
+# admin group membership required) if /Applications isn't writable.
+APP_INSTALL_DIR="/Applications"
+if [[ ! -w "$APP_INSTALL_DIR" ]]; then
+    APP_INSTALL_DIR="$HOME/Applications"
+    mkdir -p "$APP_INSTALL_DIR"
+fi
+APP_BUNDLE_DEST="$APP_INSTALL_DIR/AIUsageWidget.app"
 
 MODE=""
 VERSION=""
@@ -107,8 +119,10 @@ if [[ "$MODE" == "local" ]]; then
     echo "==> Installing to $BIN_DIR"
     mkdir -p "$BIN_DIR"
     cp "$REPO_DIR/.build-go/aiusaged" "$BIN_DIR/aiusaged"
-    rm -rf "$BIN_DIR/AIUsageWidget.app"
-    cp -R "$REPO_DIR/.build/release/AIUsageWidget.app" "$BIN_DIR/AIUsageWidget.app"
+    rm -rf "$BIN_DIR/AIUsageWidget.app" # migrate away from the old (pre-/Applications) install location
+    echo "==> Installing app bundle to $APP_BUNDLE_DEST"
+    rm -rf "$APP_BUNDLE_DEST"
+    cp -R "$REPO_DIR/.build/release/AIUsageWidget.app" "$APP_BUNDLE_DEST"
     cp "$REPO_DIR/Scripts/claude-statusline-hook.py" "$BIN_DIR/"
     cp "$REPO_DIR/Scripts/antigravity-statusline-hook.py" "$BIN_DIR/"
     cp "$REPO_DIR/Scripts/uninstall.sh" "$BIN_DIR/uninstall.sh"
@@ -142,9 +156,11 @@ else
 
     echo "==> Installing to $BIN_DIR"
     mkdir -p "$BIN_DIR"
+    rm -rf "$BIN_DIR/AIUsageWidget.app" # migrate away from the old (pre-/Applications) install location
     if [[ -d "$TMPDIR_INSTALL/AIUsageWidget.app" ]]; then
-        rm -rf "$BIN_DIR/AIUsageWidget.app"
-        cp -R "$TMPDIR_INSTALL/AIUsageWidget.app" "$BIN_DIR/AIUsageWidget.app"
+        echo "==> Installing app bundle to $APP_BUNDLE_DEST"
+        rm -rf "$APP_BUNDLE_DEST"
+        cp -R "$TMPDIR_INSTALL/AIUsageWidget.app" "$APP_BUNDLE_DEST"
     fi
     cp "$TMPDIR_INSTALL/aiusaged" "$BIN_DIR/aiusaged"
     cp "$TMPDIR_INSTALL/claude-statusline-hook.py" "$BIN_DIR/"
@@ -169,6 +185,7 @@ for name in com.aiusagewidget.daemon com.aiusagewidget.app; do
         -e "s#__BIN_DIR__#$BIN_DIR#g" \
         -e "s#__HOME__#$HOME#g" \
         -e "s#__APP_SUPPORT__#$APP_SUPPORT#g" \
+        -e "s#__APP_BUNDLE__#$APP_BUNDLE_DEST#g" \
         "$template" > "$dest"
     launchctl unload "$dest" >/dev/null 2>&1 || true
     launchctl load "$dest"

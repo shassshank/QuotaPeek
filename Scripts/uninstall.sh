@@ -9,7 +9,8 @@
 #   1. Unload both LaunchAgents (launchctl unload -w)
 #   2. Remove both plist files from ~/Library/LaunchAgents
 #   3. Remove ~/Library/Application Support/AIUsageWidget entirely
-#   4. Reverse the statusLine hook injection in settings files:
+#   4. Remove AIUsageWidget.app from /Applications or ~/Applications
+#   5. Reverse the statusLine hook injection in settings files:
 #      - ~/.claude/settings.json
 #      - ~/.gemini/antigravity-cli/settings.json
 #      Restores from .bak.<timestamp> backup ONLY if the current statusLine
@@ -121,6 +122,15 @@ if [[ -d "$APP_SUPPORT" ]]; then
     rm -rf "$APP_SUPPORT"
     echo "  removed $APP_SUPPORT"
 fi
+
+echo "==> Removing app bundle"
+for dir in "/Applications" "$HOME/Applications"; do
+    bundle="$dir/AIUsageWidget.app"
+    if [[ -d "$bundle" ]]; then
+        rm -rf "$bundle"
+        echo "  removed $bundle"
+    fi
+done
 
 echo ""
 echo "AIUsageWidget has been fully uninstalled."
