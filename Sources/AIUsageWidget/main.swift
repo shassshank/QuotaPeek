@@ -272,10 +272,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             quitItem.target = self
             menu.addItem(quitItem)
 
-            let stopItem = NSMenuItem(title: "Quit and stop background service", action: #selector(quitAndStopMenuAction), keyEquivalent: "")
-            stopItem.target = self
-            menu.addItem(stopItem)
-
             statusItem.menu = menu
             statusItem.button?.performClick(nil)
             DispatchQueue.main.async { [weak self] in
@@ -299,12 +295,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { _ = await store.setCollectionPaused(target) }
     }
 
-
     @objc private func quitMenuAction() {
-        NSApp.terminate(nil)
-    }
-
-    @objc private func quitAndStopMenuAction() {
         AppDelegate.quitAndStopDaemon()
     }
 

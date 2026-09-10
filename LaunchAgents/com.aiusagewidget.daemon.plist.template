@@ -12,7 +12,10 @@
         <string>__APP_SUPPORT__/daemon.log</string>
         <string>__BIN_DIR__/aiusaged</string>
     </array>
-    <!-- Independent of app login/quit. Explicit stop: install.sh --daemon-stop (unload -w). -->
+    <!-- KeepAlive means launchd restarts the daemon if it ever dies unexpectedly.
+         Quitting the app also unloads this agent (main.swift's quitAndStopDaemon),
+         so the only way this stays running past that is install.sh --daemon-stop
+         being used to unload it separately, or --daemon-start to reload it. -->
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

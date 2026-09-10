@@ -349,5 +349,5 @@ echo "Claude inference polling remains off by default. For an added Claude accou
 echo "enable Injection in Settings and run Claude Code for passive updates."
 echo "Enabling inference polling in Settings sends a real"
 echo "one-token inference request every 60s (~1,440/day) to read live rate-limit headers."
-echo "Quitting the app leaves the daemon running. Use $0 --daemon-stop to stop it durably."
+echo "Quitting the app also stops the background daemon; run $0 --daemon-start to bring it back without relaunching the app."
 echo "Use $0 --app-login-off or --app-login-on to persist app login preferences."
