@@ -15,8 +15,11 @@ brew install --cask aiusagewidget
 ### 2. Curl-based installer (no local toolchain needed)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/AIUsageWidget/main/Scripts/remote-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/<owner>/AIUsageWidget/main/install.sh | bash
 ```
+
+Downloads a prebuilt release tarball instead of building anything locally.
+Pin a version with `-s -- --version vX.Y.Z`.
 
 ### 3. DMG drag-to-install
 
@@ -35,13 +38,17 @@ Requires local `go` and `swift` toolchains:
 ./install.sh
 ```
 
+`install.sh` is the single installer for both of these paths — run from a
+source checkout it builds locally; piped via curl (or with `--remote`) it
+downloads the prebuilt release tarball instead. See the header comment in
+`install.sh` for how it decides which mode to use.
+
 ## Script Reference
 
 | Script | Purpose |
 |--------|---------|
 | `build-app-bundle.sh` | Assembles the Swift binary into a `.app` bundle and ad-hoc codesigns |
 | `build-dmg.sh` | Creates a `.dmg` disk image from the `.app` bundle |
-| `remote-install.sh` | Curl-pipe-bash installer for prebuilt GitHub releases |
 | `run-with-log-rotation.sh` | LaunchAgent log rotation wrapper (rotates at 5 MB) |
 | `uninstall.sh` | Complete uninstaller (LaunchAgents + app files + statusLine hooks) |
 | `claude-statusline-hook.py` | StatusLine hook script for Claude Code |

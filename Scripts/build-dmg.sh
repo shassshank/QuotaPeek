@@ -18,7 +18,7 @@
 #   3. Click "Open" in the confirmation dialog
 # This only needs to be done once — macOS remembers the exception.
 #
-# The curl-pipe-bash installer (Scripts/remote-install.sh) and Homebrew cask
+# The curl-pipe-bash installer (install.sh --remote) and Homebrew cask
 # do NOT have this issue because they bypass Gatekeeper's quarantine xattr.
 set -euo pipefail
 
