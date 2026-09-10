@@ -93,6 +93,7 @@ private enum LaunchAgentManager {
 
 private struct AccountsSettingsTab: View {
     @ObservedObject var store: UsageStore
+    @ObservedObject var displayPrefs = DisplayPreferences.shared
     @State private var selectedAccountId: String?
     @State private var isShowingAddSheet = false
     @State private var editingLabel = ""
@@ -420,6 +421,16 @@ private struct AccountsSettingsTab: View {
                 )
                 .font(.caption)
                 .padding(.leading, 16)
+            }
+
+            if account.provider == .antigravity {
+                Divider()
+                Toggle("Show Claude/GPT quota", isOn: $displayPrefs.showAntigravityModelBreakdown)
+                    .font(.caption)
+                Text("Shows Antigravity's separate Claude/GPT quota as its own entry in the popover and widgets.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 18)
             }
         }
     }
@@ -853,8 +864,6 @@ private struct GeneralSettingsTab: View {
                 }
                 .pickerStyle(.segmented)
                 .accessibilityLabel("Percentage metric style")
-
-                Toggle("Show Antigravity Claude/GPT quota", isOn: $displayPrefs.showAntigravityModelBreakdown)
 
                 Toggle("Show Codex/Antigravity data in Claude Code's statusline", isOn: Binding(
                     get: { draftConfig.statuslineShowOtherAgents ?? true },
