@@ -262,10 +262,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pauseItem.target = self
             menu.addItem(pauseItem)
 
-            let widgetItem = NSMenuItem(title: "Manage Desktop Widgets...", action: #selector(openSettingsMenuAction), keyEquivalent: "")
-            widgetItem.target = self
-            menu.addItem(widgetItem)
-
             menu.addItem(.separator())
 
             let quitItem = NSMenuItem(title: "Quit", action: #selector(quitMenuAction), keyEquivalent: "q")
