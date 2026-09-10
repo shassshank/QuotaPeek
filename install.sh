@@ -173,12 +173,24 @@ except Exception:
     trap 'rm -rf "$TMPDIR_INSTALL"' EXIT
 
     echo "==> Downloading $DOWNLOAD_URL"
-    # TODO(checksum-verification): verify the downloaded tarball's SHA256 here
-    # once the release workflow (.github/workflows/release.yml) publishes a
-    # checksums file (e.g. SHA256SUMS or aiusagewidget-macos.tar.gz.sha256)
-    # alongside the release assets. It does not today, so there is nothing to
-    # verify against yet - don't fabricate a check against a nonexistent file.
     curl -fSL "$DOWNLOAD_URL" -o "$TMPDIR_INSTALL/aiusagewidget-macos.tar.gz"
+    CHECKSUMS_URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/SHA256SUMS"
+    if ! curl -fSL "$CHECKSUMS_URL" -o "$TMPDIR_INSTALL/SHA256SUMS"; then
+        echo "ERROR: Could not download required SHA256SUMS for $VERSION; installation aborted." >&2
+        exit 1
+    fi
+
+    # Select only the tarball entry: the manifest also covers the DMG.
+    EXPECTED_SHA256=$(awk '$2 == "aiusagewidget-macos.tar.gz" && NF == 2 {print $1}' "$TMPDIR_INSTALL/SHA256SUMS")
+    if [[ ! "$EXPECTED_SHA256" =~ ^[[:xdigit:]]{64}$ ]]; then
+        echo "ERROR: SHA256SUMS must contain exactly one valid tarball checksum; installation aborted." >&2
+        exit 1
+    fi
+    echo "==> Verifying tarball SHA256"
+    if ! (cd "$TMPDIR_INSTALL" && printf '%s  aiusagewidget-macos.tar.gz\n' "$EXPECTED_SHA256" | shasum -a 256 -c -); then
+        echo "ERROR: Tarball SHA256 verification failed; installation aborted." >&2
+        exit 1
+    fi
 
     echo "==> Extracting"
     tar xzf "$TMPDIR_INSTALL/aiusagewidget-macos.tar.gz" -C "$TMPDIR_INSTALL"

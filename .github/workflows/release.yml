@@ -67,6 +67,11 @@ jobs:
           bash Scripts/build-dmg.sh \
             --version "${{ steps.version.outputs.version }}"
 
+      - name: Compute release checksums
+        run: |
+          shasum -a 256 aiusagewidget-macos.tar.gz > SHA256SUMS
+          (cd .build/release && shasum -a 256 "AIUsageWidget-${{ steps.version.outputs.version }}.dmg") >> SHA256SUMS
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
         with:
@@ -78,3 +83,4 @@ jobs:
           files: |
             aiusagewidget-macos.tar.gz
             .build/release/AIUsageWidget-${{ steps.version.outputs.version }}.dmg
+            SHA256SUMS

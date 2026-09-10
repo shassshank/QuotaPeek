@@ -11,7 +11,11 @@
 #   brew uninstall --cask aiusagewidget
 cask "aiusagewidget" do
   version "1.0.0"
-  sha256 :no_check  # TODO: pin SHA256 once first release is published
+  # Must replace :no_check with the real pinned SHA256 before publishing to any tap.
+  # Once the checksums workflow publishes a release, download its tarball and run:
+  #   shasum -a 256 aiusagewidget-macos.tar.gz
+  # Use that digest (also in SHA256SUMS) for the version and URL below.
+  sha256 :no_check
 
   url "https://github.com/<owner>/AIUsageWidget/releases/download/v#{version}/aiusagewidget-macos.tar.gz"
   name "AI Usage Widget"
