@@ -134,10 +134,34 @@ if [[ "$MODE" == "local" ]]; then
 else
     if [[ -z "$VERSION" ]]; then
         echo "==> Fetching latest release tag from GitHub"
-        VERSION=$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
-            | grep '"tag_name"' | head -1 | sed 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/')
+        if ! RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest"); then
+            echo "ERROR: Could not reach GitHub to determine latest release version (curl failed)." >&2
+            echo "Specify explicitly: $0 --version vX.Y.Z" >&2
+            exit 1
+        fi
+        if [[ -z "$RELEASE_JSON" ]]; then
+            echo "ERROR: GitHub returned an empty response for the latest release." >&2
+            echo "Specify explicitly: $0 --version vX.Y.Z" >&2
+            exit 1
+        fi
+        # Prefer a real JSON parse; python3 is already assumed present elsewhere
+        # in this script (see setup_detected_accounts/merge_statusline). Fall
+        # back to a tightened grep/sed extraction if python3 is unavailable.
+        if command -v python3 >/dev/null 2>&1; then
+            VERSION="$(printf '%s' "$RELEASE_JSON" | "$PYTHON3" -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("tag_name") or "")
+except Exception:
+    pass
+')"
+        else
+            VERSION=$(printf '%s' "$RELEASE_JSON" \
+                | grep -m1 '"tag_name"' \
+                | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+        fi
         if [[ -z "$VERSION" ]]; then
-            echo "ERROR: Could not determine latest release version." >&2
+            echo "ERROR: Could not determine latest release version from GitHub's response." >&2
             echo "Specify explicitly: $0 --version vX.Y.Z" >&2
             exit 1
         fi
@@ -149,6 +173,11 @@ else
     trap 'rm -rf "$TMPDIR_INSTALL"' EXIT
 
     echo "==> Downloading $DOWNLOAD_URL"
+    # TODO(checksum-verification): verify the downloaded tarball's SHA256 here
+    # once the release workflow (.github/workflows/release.yml) publishes a
+    # checksums file (e.g. SHA256SUMS or aiusagewidget-macos.tar.gz.sha256)
+    # alongside the release assets. It does not today, so there is nothing to
+    # verify against yet - don't fabricate a check against a nonexistent file.
     curl -fSL "$DOWNLOAD_URL" -o "$TMPDIR_INSTALL/aiusagewidget-macos.tar.gz"
 
     echo "==> Extracting"

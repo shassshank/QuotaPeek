@@ -428,21 +428,6 @@ func (c *Collector) setCredentialInfo(id ProviderID, source, account string) {
 	}
 	c.credentials[id] = credentialInfo{source, account}
 }
-func (c *Collector) decorateStatus(status StatusResponse) StatusResponse {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for i := range status.Providers {
-		p := &status.Providers[i]
-		if info, ok := c.credentials[p.ID]; ok {
-			p.CredentialSource = info.source
-			if info.account != "" {
-				account := info.account
-				p.EffectiveAccount = &account
-			}
-		}
-	}
-	return status
-}
 
 // Caller reserves both provider routes so an older fetch cannot refill caches.
 func (c *Collector) resetCredentials(id ProviderID) error {
