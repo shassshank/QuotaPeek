@@ -1054,6 +1054,15 @@ private struct GeneralSettingsTab: View {
                 Text("Included accounts")
                     .font(.subheadline)
                 let enabledAccounts = store.accounts.filter { store.isAccountEnabled($0) }
+                // Includes each Antigravity account's synthetic Claude/GPT sub-entry id
+                // (when the breakdown is on) so materializing scope.includedAccountIds
+                // from "all" (nil) to an explicit set - triggered by toggling any single
+                // row below - doesn't silently drop entries it doesn't know about yet.
+                let allScopeIds: Set<String> = Set(enabledAccounts.map(\.id)).union(
+                    displayPrefs.showAntigravityModelBreakdown
+                        ? Set(enabledAccounts.filter { $0.provider == .antigravity }.map { "\($0.id):claude_gpt" })
+                        : []
+                )
                 ForEach(enabledAccounts) { account in
                     DisclosureGroup("\(account.provider.displayName) — \(account.label)") {
                         VStack(alignment: .leading, spacing: 6) {
@@ -1063,7 +1072,7 @@ private struct GeneralSettingsTab: View {
                                     configuration.wrappedValue.scope.setIncluded(
                                         account.id,
                                         isIncluded: isIncluded,
-                                        enabledAccountIds: Set(enabledAccounts.map(\.id))
+                                        enabledAccountIds: allScopeIds
                                     )
                                 }
                             ))
@@ -1085,10 +1094,41 @@ private struct GeneralSettingsTab: View {
                                 .toggleStyle(.checkbox)
                             }
 
-                            if account.provider == .antigravity {
-                                Text("Applies to both Gemini and Claude/GPT quotas.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                            if account.provider == .antigravity && displayPrefs.showAntigravityModelBreakdown {
+                                let cgId = "\(account.id):claude_gpt"
+                                DisclosureGroup("Claude/GPT") {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Toggle("Include account", isOn: Binding(
+                                            get: { configuration.wrappedValue.scope.includes(cgId) },
+                                            set: { isIncluded in
+                                                configuration.wrappedValue.scope.setIncluded(
+                                                    cgId,
+                                                    isIncluded: isIncluded,
+                                                    enabledAccountIds: allScopeIds
+                                                )
+                                            }
+                                        ))
+                                        .toggleStyle(.checkbox)
+
+                                        ForEach(WidgetMetricKind.offerable) { metric in
+                                            Toggle(metric.displayName, isOn: Binding(
+                                                get: { configuration.wrappedValue.visibleMetrics(forAccountId: cgId).contains(metric) },
+                                                set: { isVisible in
+                                                    var metrics = configuration.wrappedValue.visibleMetrics(forAccountId: cgId)
+                                                    if isVisible {
+                                                        metrics.insert(metric)
+                                                    } else {
+                                                        metrics.remove(metric)
+                                                    }
+                                                    configuration.wrappedValue.accountMetrics[cgId] = metrics
+                                                }
+                                            ))
+                                            .toggleStyle(.checkbox)
+                                        }
+                                    }
+                                    .padding(.vertical, 4)
+                                    .padding(.leading, 8)
+                                }
                             }
                         }
                         .padding(.vertical, 4)
