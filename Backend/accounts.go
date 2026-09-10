@@ -27,7 +27,7 @@ type AccountConfig struct {
 }
 type Account struct {
 	AccountConfig
-	ProviderStatus
+	ProviderStatus `json:"-"` // MarshalJSON flattens status with the account ID.
 	State string `json:"state"`
 }
 

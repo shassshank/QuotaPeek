@@ -143,7 +143,11 @@ def build_status_line(payload):
 def extra_status_segments():
     # Keep all daemon-dependent work isolated from Claude's own rendering.
     try:
-        with urllib.request.urlopen(STATUS_URL, timeout=0.2) as response:
+        token_path = os.path.expanduser("~/Library/Application Support/AIUsageWidget/auth-token")
+        with open(token_path) as token_file:
+            token = token_file.read().strip()
+        req = urllib.request.Request(STATUS_URL, headers={"X-Auth-Token": token})
+        with urllib.request.urlopen(req, timeout=0.2) as response:
             status = json.load(response)
         if not isinstance(status, dict):
             return []

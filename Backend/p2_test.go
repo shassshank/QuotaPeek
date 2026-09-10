@@ -275,7 +275,8 @@ func TestProviderHealth(t *testing.T) {
 	if p.CredentialSource != "oauth" || p.EffectiveAccount == nil || *p.EffectiveAccount != "account-123" || p.LastSuccessAt == nil || p.LastFailureAt == nil || p.LastErrorMessage == nil || strings.Contains(*p.LastErrorMessage, "sk-secret") {
 		t.Fatalf("health: %+v", p)
 	}
-	w := p2Request(s, "GET", "/status", "", "")
+	s.authToken = "secret"
+	w := p2Request(s, "GET", "/status", "", "secret")
 	for _, key := range []string{"credentialSource", "effectiveAccount", "lastSuccessAt", "lastFailureAt", "lastError"} {
 		if !strings.Contains(w.Body.String(), `"`+key+`":`) {
 			t.Fatalf("missing %s", key)

@@ -11,7 +11,8 @@ The daemon listens on `127.0.0.1:47831` only (never `0.0.0.0`, never a unix
 socket — TCP loopback keeps the Swift client simple with `URLSession`).
 Plain HTTP is fine; nothing here ever leaves localhost. All bodies are JSON.
 
-Every endpoint except `GET /status` requires `X-Auth-Token`. Missing or incorrect
+Every endpoint, including `GET /status` and `GET /accounts`, requires
+`X-Auth-Token`. Missing or incorrect
 credentials return HTTP 401 without performing the operation. At startup the
 daemon generates a random 256-bit token and atomically writes
 `~/Library/Application Support/AIUsageWidget/auth-token` with mode 0600. The
@@ -86,6 +87,7 @@ ErrorEntry {
 ## Endpoints
 
 ### `GET /status`
+Requires `X-Auth-Token`.
 Returns `{ "statusline_show_other_agents": true, "accounts": [Account, ...], "providers": [Provider, Provider, Provider] }`,
 always all three, always in the order claude, codex, antigravity.
 
@@ -534,7 +536,7 @@ keyed by this new Default account's generated id; the id is deterministic
 ### Endpoints (Account-keyed)
 
 `GET /accounts` — `{"accounts": [{id, provider, label, credentialLocation}]}`,
-config only, no live data, no auth required (same tier as `GET /status`).
+config only, no live data, requires `X-Auth-Token` (as does `GET /status`).
 
 `POST /accounts` (requires `X-Auth-Token`) — body:
 ```json

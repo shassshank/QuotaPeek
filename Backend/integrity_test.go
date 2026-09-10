@@ -103,15 +103,29 @@ func TestLocalAuthentication(t *testing.T) {
 			t.Fatalf("unprotected %s", endpoint.path)
 		}
 	}
-	for _, authenticated := range []bool{false, true} {
-		req := httptest.NewRequest("GET", "/config", nil)
-		if authenticated {
-			req.Header.Set("X-Auth-Token", token)
-		}
-		w := httptest.NewRecorder()
-		s.routes().ServeHTTP(w, req)
-		if authenticated && w.Code != 200 {
-			t.Fatal(w.Code)
+	for _, endpoint := range []string{"/config", "/status", "/accounts"} {
+		for _, tc := range []struct {
+			name, serverToken, requestToken string
+			want                            int
+		}{
+			{"missing", token, "", http.StatusUnauthorized},
+			{"incorrect", token, "wrong-token", http.StatusUnauthorized},
+			{"valid", token, token, http.StatusOK},
+			{"uninitialized", "", "", http.StatusUnauthorized},
+		} {
+			t.Run(endpoint+"/"+tc.name, func(t *testing.T) {
+				s.authToken = tc.serverToken
+				req := httptest.NewRequest("GET", endpoint, nil)
+				req.Header.Set("X-Auth-Token", tc.requestToken)
+				w := httptest.NewRecorder()
+				s.routes().ServeHTTP(w, req)
+				if w.Code != tc.want {
+					t.Fatalf("got HTTP %d, want %d", w.Code, tc.want)
+				}
+				if tc.want == http.StatusUnauthorized && strings.TrimSpace(w.Body.String()) != `{"error":"unauthorized"}` {
+					t.Fatalf("unexpected unauthorized response: %s", w.Body.String())
+				}
+			})
 		}
 	}
 }

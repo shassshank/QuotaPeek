@@ -51,7 +51,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /ingest/claude", s.handleIngestClaude)
 	mux.HandleFunc("POST /ingest/antigravity", s.handleIngestAntigravity)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !(r.Method == http.MethodGet && (r.URL.Path == "/status" || r.URL.Path == "/accounts")) && (s.authToken == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Auth-Token")), []byte(s.authToken)) != 1) {
+		if s.authToken == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Auth-Token")), []byte(s.authToken)) != 1 {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
