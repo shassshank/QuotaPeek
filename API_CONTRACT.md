@@ -590,3 +590,14 @@ string for the default) as a new `"configDir"` top-level field alongside the
 existing raw payload. A push whose `configDir` doesn't match any known account
 is recorded as an `ErrorEntry` (route "injection") and dropped, rather than
 guessed onto the Default account.
+
+Antigravity accounts are `daemon_token`, not `config_dir`, so this doesn't
+apply to them: the `agy` CLI has no profile concept the hook process could
+report, so `POST /ingest/antigravity` payloads instead carry a top-level
+`"accountId"` field. The hook script has no way to know a non-default
+account's id, so it always forwards an empty string; the daemon treats an
+empty (or missing) `accountId` as the default Antigravity account
+(`"acct_antigravity_default"`) and otherwise matches it directly against a
+known account's `id`. A push whose `accountId` doesn't match any known
+Antigravity account is recorded as an `ErrorEntry` (route "injection") and
+dropped, same as the `config_dir` case above.

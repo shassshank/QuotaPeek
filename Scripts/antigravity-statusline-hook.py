@@ -130,7 +130,10 @@ def build_status_line(payload):
 def post_ingest(raw):
     try:
         payload = json.loads(raw)
-        payload["configDir"] = os.environ.get("CLAUDE_CONFIG_DIR", "")
+        # Antigravity (the agy CLI) has no profile/config-dir concept to report,
+        # unlike Claude/Codex. Leave accountId empty so the daemon matches this
+        # push to its default Antigravity account.
+        payload["accountId"] = ""
         raw = json.dumps(payload)
         token_path = os.path.expanduser("~/Library/Application Support/AIUsageWidget/auth-token")
         with open(token_path) as token_file:

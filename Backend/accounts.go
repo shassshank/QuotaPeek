@@ -391,9 +391,26 @@ func isASCII(s string) bool {
 func (s *Server) ingestAccount(provider ProviderID, raw []byte) (ProviderID, bool) {
 	var envelope struct {
 		ConfigDir string `json:"configDir"`
+		AccountID string `json:"accountId"`
 	}
 	if json.Unmarshal(raw, &envelope) != nil {
 		s.store.AddError(provider, RouteInjection, "invalid ingest JSON")
+		return "", false
+	}
+	// Antigravity accounts are daemon_token, not config_dir: the CLI has no
+	// profile concept the hook process could report, so it stamps the account
+	// id directly (falling back to the default account when it has none).
+	if provider == ProviderAntigravity {
+		id := envelope.AccountID
+		if id == "" {
+			id = defaultAccountID(provider)
+		}
+		for _, a := range s.store.Config().Accounts {
+			if a.Provider == provider && a.ID == id {
+				return ProviderID(a.ID), true
+			}
+		}
+		s.store.AddError(provider, RouteInjection, "ingest dropped: no matching account")
 		return "", false
 	}
 	d := envelope.ConfigDir
