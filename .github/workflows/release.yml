@@ -55,7 +55,7 @@ jobs:
           # Utility scripts
           cp Scripts/run-with-log-rotation.sh "$STAGING/"
           cp Scripts/uninstall.sh "$STAGING/"
-          # LaunchAgent templates (remote-install.sh needs these)
+          # LaunchAgent templates (install.sh --remote needs these)
           cp LaunchAgents/com.aiusagewidget.daemon.plist.template "$STAGING/"
           cp LaunchAgents/com.aiusagewidget.app.plist.template "$STAGING/"
           # Create tarball
