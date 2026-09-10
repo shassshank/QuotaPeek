@@ -43,11 +43,25 @@ Settings → Diagnostics tab.
 
 ## Install
 
+From a source checkout (requires local `go` and `swift` toolchains):
+
 ```
 ./install.sh
 ```
 
-This builds the Go daemon and the Swift app, installs both plus the two
+Or without cloning the repo, via curl (downloads a prebuilt release tarball
+instead of building anything locally):
+
+```
+curl -fsSL https://raw.githubusercontent.com/<owner>/AIUsageWidget/main/install.sh | bash
+```
+
+`install.sh` auto-detects which of these it's doing — building from source
+when run next to `Backend/` and `Package.swift`, downloading the release
+otherwise. Pin a version with `-s -- --version vX.Y.Z`, or force either mode
+explicitly with `--local` / `--remote`.
+
+Either way, it installs the daemon and the Swift app plus the two
 statusLine hook scripts to `~/Library/Application Support/AIUsageWidget/bin`,
 installs LaunchAgents so the daemon and the app start at login, and merges a
 `statusLine` entry into `~/.claude/settings.json` and
