@@ -10,7 +10,6 @@ import SwiftUI
 /// 6. Single-agent focus: Minimal, unpaginated single-account glance card with a bold dominant metric.
 struct WidgetAccount: Identifiable, Equatable {
     let id: String
-    let baseAccountId: String
     let displayName: String
     let symbolName: String
     let label: String
@@ -44,7 +43,6 @@ struct WidgetPanelView: View {
         for account in scoped {
             result.append(WidgetAccount(
                 id: account.id,
-                baseAccountId: account.id,
                 displayName: account.provider.displayName,
                 symbolName: account.provider.symbolName,
                 label: account.label,
@@ -56,7 +54,10 @@ struct WidgetPanelView: View {
                 data: account.data
             ))
 
+            let cgAccountId = "\(account.id):claude_gpt"
             if account.provider == .antigravity,
+               displayPrefs.showAntigravityModelBreakdown,
+               configuration.scope.includes(cgAccountId),
                let data = account.data,
                data.usedPercent5hThirdParty != nil || data.usedPercentWeeklyThirdParty != nil {
                 let cgData = ProviderData(
@@ -71,8 +72,7 @@ struct WidgetPanelView: View {
                     contextWindowUsedPercent: nil
                 )
                 result.append(WidgetAccount(
-                    id: "\(account.id):claude_gpt",
-                    baseAccountId: account.id,
+                    id: cgAccountId,
                     displayName: "Claude/GPT",
                     symbolName: "sparkles",
                     label: account.label,
@@ -302,7 +302,7 @@ private struct CombinedLinearWidgetView: View {
     var body: some View {
         VStack(spacing: 8) {
             ForEach(accounts) { account in
-                CombinedLinearAccountCard(account: account, metric: metric, visibleMetrics: configuration.visibleMetrics(forAccountId: account.baseAccountId))
+                CombinedLinearAccountCard(account: account, metric: metric, visibleMetrics: configuration.visibleMetrics(forAccountId: account.id))
             }
         }
     }
@@ -466,7 +466,7 @@ private struct CombinedCircularWidgetView: View {
     var body: some View {
         VStack(spacing: 10) {
             ForEach(accounts) { account in
-                CombinedCircularAccountCard(account: account, metric: metric, visibleMetrics: configuration.visibleMetrics(forAccountId: account.baseAccountId))
+                CombinedCircularAccountCard(account: account, metric: metric, visibleMetrics: configuration.visibleMetrics(forAccountId: account.id))
             }
         }
     }
@@ -618,7 +618,7 @@ private struct PerAgentLinearWidgetView: View {
 
     private var visibleMetrics: Set<WidgetMetricKind> {
         guard let account = activeAccount else { return [] }
-        return configuration.visibleMetrics(forAccountId: account.baseAccountId)
+        return configuration.visibleMetrics(forAccountId: account.id)
     }
 
     var body: some View {
@@ -858,7 +858,7 @@ private struct PerAgentCircularWidgetView: View {
 
     private var visibleMetrics: Set<WidgetMetricKind> {
         guard let account = activeAccount else { return [] }
-        return configuration.visibleMetrics(forAccountId: account.baseAccountId)
+        return configuration.visibleMetrics(forAccountId: account.id)
     }
 
     var body: some View {
@@ -1053,7 +1053,7 @@ private struct ConcentricRingsWidgetView: View {
             SingleAccountConcentricCard(
                 account: account,
                 metric: metric,
-                visibleMetrics: configuration.visibleMetrics(forAccountId: account.baseAccountId)
+                visibleMetrics: configuration.visibleMetrics(forAccountId: account.id)
             )
         } else {
             MultiAccountConcentricView(
@@ -1295,7 +1295,7 @@ private struct MultiAccountConcentricView: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            if accounts.allSatisfy({ configuration.visibleMetrics(forAccountId: $0.baseAccountId).isDisjoint(with: WidgetMetricKind.offerable) }) {
+            if accounts.allSatisfy({ configuration.visibleMetrics(forAccountId: $0.id).isDisjoint(with: WidgetMetricKind.offerable) }) {
                 Text("No metrics selected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1306,7 +1306,7 @@ private struct MultiAccountConcentricView: View {
                         MultiAccountConcentricCell(
                             account: account,
                             metric: metric,
-                            visibleMetrics: configuration.visibleMetrics(forAccountId: account.baseAccountId)
+                            visibleMetrics: configuration.visibleMetrics(forAccountId: account.id)
                         )
                     }
                 }
@@ -1422,7 +1422,7 @@ private struct SingleAgentFocusWidgetView: View {
 
     private var visibleMetrics: Set<WidgetMetricKind> {
         guard let account = targetAccount else { return [] }
-        return configuration.visibleMetrics(forAccountId: account.baseAccountId)
+        return configuration.visibleMetrics(forAccountId: account.id)
     }
 
     var body: some View {
