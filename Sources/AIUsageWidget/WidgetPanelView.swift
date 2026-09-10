@@ -70,16 +70,12 @@ struct WidgetPanelView: View {
                     resetsAtWeeklyThirdParty: nil,
                     contextWindowUsedPercent: nil
                 )
-                let cgLabel = (account.label.isEmpty || account.label == "Default")
-                    ? "via Antigravity"
-                    : "\(account.label) (via Antigravity)"
-
                 result.append(WidgetAccount(
                     id: "\(account.id):claude_gpt",
                     baseAccountId: account.id,
                     displayName: "Claude/GPT",
                     symbolName: "sparkles",
-                    label: cgLabel,
+                    label: account.label,
                     state: account.state,
                     displayLastError: account.displayLastError,
                     asOf: account.asOf,
