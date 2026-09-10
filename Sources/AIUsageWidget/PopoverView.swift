@@ -47,10 +47,6 @@ struct PopoverView: View {
                     }
                 }
             }
-
-            Divider()
-
-            footer
         }
         .padding(16)
         .frame(width: Layout.width, alignment: .topLeading)
@@ -73,6 +69,35 @@ struct PopoverView: View {
             Label("AI Usage", systemImage: "gauge.with.dots.needle.67percent")
                 .font(.headline)
             Spacer()
+            Button {
+                Task { await store.refresh() }
+            } label: {
+                if store.isRefreshing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                }
+            }
+            .buttonStyle(.borderless)
+            .disabled(store.isRefreshing)
+            .help("Refresh usage data")
+            .accessibilityLabel("Refresh usage data")
+
+            Button {
+                let target = !store.isCollectionPaused
+                Task {
+                    let res = await store.setCollectionPaused(target)
+                    if case .failure = res {
+                        pauseErrorMessage = "Failed to update pause state. Background service may be unreachable."
+                    }
+                }
+            } label: {
+                Image(systemName: store.isCollectionPaused ? "play.circle" : "pause.circle")
+            }
+            .buttonStyle(.borderless)
+            .help(store.isCollectionPaused ? "Resume collection" : "Pause collection")
+            .accessibilityLabel(store.isCollectionPaused ? "Resume collection" : "Pause collection")
+
             Button(action: openSettings) {
                 Image(systemName: "gearshape")
             }
@@ -147,53 +172,6 @@ struct PopoverView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var footer: some View {
-        HStack(spacing: 8) {
-            Button {
-                Task { await store.refresh() }
-            } label: {
-                HStack(spacing: 4) {
-                    if store.isRefreshing {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    Text("Refresh")
-                }
-            }
-            .disabled(store.isRefreshing)
-            .accessibilityLabel("Refresh usage data")
-
-            Button {
-                let target = !store.isCollectionPaused
-                Task {
-                    let res = await store.setCollectionPaused(target)
-                    if case .failure = res {
-                        pauseErrorMessage = "Failed to update pause state. Background service may be unreachable."
-                    }
-                }
-            } label: {
-                Image(systemName: store.isCollectionPaused ? "play.circle" : "pause.circle")
-            }
-            .buttonStyle(.borderless)
-            .help(store.isCollectionPaused ? "Resume collection" : "Pause collection")
-            .accessibilityLabel(store.isCollectionPaused ? "Resume collection" : "Pause collection")
-
-            Spacer()
-
-            Menu {
-                Button("Quit") {
-                    NSApp.terminate(nil)
-                }
-                Button("Quit and stop background service") {
-                    AppDelegate.quitAndStopDaemon()
-                }
-            } label: {
-                Text("Quit")
-            }
-            .accessibilityLabel("Quit application menu")
-        }
-    }
 }
 
 private struct AccountCard: View {

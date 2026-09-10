@@ -258,6 +258,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             refreshItem.target = self
             menu.addItem(refreshItem)
 
+            let pauseItem = NSMenuItem(title: store.isCollectionPaused ? "Resume Collection" : "Pause Collection", action: #selector(togglePauseMenuAction), keyEquivalent: "")
+            pauseItem.target = self
+            menu.addItem(pauseItem)
+
             let widgetItem = NSMenuItem(title: "Manage Desktop Widgets...", action: #selector(openSettingsMenuAction), keyEquivalent: "")
             widgetItem.target = self
             menu.addItem(widgetItem)
@@ -288,6 +292,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func refreshMenuAction() {
         Task { await store.refresh() }
+    }
+
+    @objc private func togglePauseMenuAction() {
+        let target = !store.isCollectionPaused
+        Task { _ = await store.setCollectionPaused(target) }
     }
 
 
