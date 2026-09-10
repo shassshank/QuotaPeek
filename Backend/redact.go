@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"regexp"
 	"strings"
 )
@@ -30,4 +31,20 @@ func redactMessage(s string) string {
 		s = s[:200]
 	}
 	return s
+}
+
+// apiErrorMessage pulls just the human-readable message out of a JSON error
+// body (Google's {"error":{"message":...}} and OpenAI's {"error":{"message":...}}
+// both match this shape) so callers don't have to surface the raw JSON blob to
+// users. Falls back to the redacted raw body when the shape doesn't match.
+func apiErrorMessage(body []byte) string {
+	var parsed struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &parsed); err == nil && parsed.Error.Message != "" {
+		return redactMessage(parsed.Error.Message)
+	}
+	return redactMessage(string(body))
 }

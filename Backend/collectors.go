@@ -152,7 +152,7 @@ func (c *Collector) FetchClaudeWithMode(ctx context.Context, mode string) (Usage
 			return data, nil
 		}
 		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return data, errors.New("anthropic API returned status " + resp.Status + ": " + redactMessage(string(preview)))
+		return data, errors.New("anthropic API returned status " + resp.Status + ": " + apiErrorMessage(preview))
 	}
 	if data.empty() {
 		return UsageData{}, errors.New("anthropic response had no rate-limit headers")
@@ -230,7 +230,7 @@ func (c *Collector) FetchAntigravity(ctx context.Context) (UsageData, error) {
 			if status == http.StatusUnauthorized || status == http.StatusForbidden {
 				c.invalidateAntigravityDiscovery()
 			}
-			lastErr = errors.New(filepath.Base(endpoint) + " returned status " + http.StatusText(status) + ": " + redactMessage(string(respBody)))
+			lastErr = errors.New(filepath.Base(endpoint) + " returned status " + http.StatusText(status) + ": " + apiErrorMessage(respBody))
 			continue
 		}
 		data, ok := ParseAntigravityQuota(respBody)
@@ -335,7 +335,7 @@ func (c *Collector) antigravityDiscovery(ctx context.Context, token string, fall
 		return antigravityDiscovery{}, errors.New("Antigravity discovery failed: " + err.Error())
 	}
 	if status < 200 || status > 299 {
-		return antigravityDiscovery{}, errors.New("Antigravity discovery failed: loadCodeAssist returned status " + http.StatusText(status) + ": " + redactMessage(string(respBody)))
+		return antigravityDiscovery{}, errors.New("Antigravity discovery failed: loadCodeAssist returned status " + http.StatusText(status) + ": " + apiErrorMessage(respBody))
 	}
 	var jsonObj map[string]any
 	if err := json.Unmarshal(respBody, &jsonObj); err != nil {

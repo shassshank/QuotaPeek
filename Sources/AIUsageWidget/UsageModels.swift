@@ -209,11 +209,22 @@ struct Account: Codable, Identifiable, Equatable {
         restoredFromDisk || state == .restored
     }
 
+    /// `lastErrorObject` (the daemon's `last_error`) is already gated to the
+    /// active sample - it's nil once a poll has succeeded more recently than
+    /// the failure. `lastError` (`lastError`/health message) is a sticky
+    /// historical record that is never cleared on success, so only fall back
+    /// to it when there hasn't actually been a more recent success.
     var displayLastError: String? {
+        if let errObj = lastErrorObject, !errObj.message.isEmpty {
+            return errObj.message
+        }
         if let errStr = lastError, !errStr.isEmpty {
+            if let successAt = lastSuccessAt, let failureAt = lastFailureAt, successAt >= failureAt {
+                return nil
+            }
             return errStr
         }
-        return lastErrorObject?.message
+        return nil
     }
 
     enum CodingKeys: String, CodingKey {

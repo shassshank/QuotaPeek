@@ -135,7 +135,7 @@ func (c *Collector) refreshCodexToken(ctx context.Context, refreshToken string) 
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return oauthTokenResponse{}, errors.New("codex token refresh returned status " + resp.Status + ": " + redactMessage(string(preview)))
+		return oauthTokenResponse{}, errors.New("codex token refresh returned status " + resp.Status + ": " + apiErrorMessage(preview))
 	}
 	var out oauthTokenResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil || out.AccessToken == "" {
@@ -161,7 +161,7 @@ func fetchCodexUsageWithToken(ctx context.Context, client *http.Client, accessTo
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return UsageData{}, errors.New("codex usage endpoint returned status " + resp.Status + ": " + redactMessage(string(preview)))
+		return UsageData{}, errors.New("codex usage endpoint returned status " + resp.Status + ": " + apiErrorMessage(preview))
 	}
 
 	var payload struct {
