@@ -19,9 +19,10 @@ cask "aiusagewidget" do
   homepage "https://github.com/<owner>/AIUsageWidget"
 
   # The tarball is not a .app directly — it contains the app plus supporting
-  # files.  We use an artifact block to place the .app and a postflight to
-  # set up the daemon, hooks, and LaunchAgents.
-  artifact "AIUsageWidget.app", target: "#{Dir.home}/Library/Application Support/AIUsageWidget/bin/AIUsageWidget.app"
+  # files. The `app` stanza installs AIUsageWidget.app into /Applications
+  # (matching install.sh's behavior), and a postflight sets up the daemon,
+  # hooks, and LaunchAgents.
+  app "AIUsageWidget.app"
 
   postflight do
     bin_dir = "#{Dir.home}/Library/Application Support/AIUsageWidget/bin"

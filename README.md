@@ -41,6 +41,11 @@ with the redacted message (tokens/secrets/full response bodies are always
 stripped or truncated before anything is stored) and surfaced in the app's
 Settings → Diagnostics tab.
 
+Each provider also supports multiple accounts (e.g. two Claude subscriptions),
+managed from the Settings → Accounts tab — add, rename, or remove accounts and
+reset an individual account's stored credentials without touching the others.
+See `API_CONTRACT.md` for the full accounts API.
+
 ## Install
 
 From a source checkout (requires local `go` and `swift` toolchains):
@@ -61,9 +66,11 @@ when run next to `Backend/` and `Package.swift`, downloading the release
 otherwise. Pin a version with `-s -- --version vX.Y.Z`, or force either mode
 explicitly with `--local` / `--remote`.
 
-Either way, it installs the daemon and the Swift app plus the two
-statusLine hook scripts to `~/Library/Application Support/AIUsageWidget/bin`,
-installs LaunchAgents so the daemon and the app start at login, and merges a
+Either way, it installs the Swift app as a normal `.app` bundle in
+`/Applications` (falling back to `~/Applications`), and installs the daemon
+plus the two statusLine hook scripts to
+`~/Library/Application Support/AIUsageWidget/bin`. It also installs
+LaunchAgents so the daemon and the app start at login, and merges a
 `statusLine` entry into `~/.claude/settings.json` and
 `~/.gemini/antigravity-cli/settings.json` (existing settings preserved) so
 the Injection route works out of the box.
@@ -77,15 +84,12 @@ Safe to re-run.
 ## Uninstall
 
 ```
-launchctl unload ~/Library/LaunchAgents/com.aiusagewidget.app.plist
-launchctl unload ~/Library/LaunchAgents/com.aiusagewidget.daemon.plist
-rm ~/Library/LaunchAgents/com.aiusagewidget.*.plist
-rm -rf ~/Library/Application\ Support/AIUsageWidget
+~/Library/Application\ Support/AIUsageWidget/bin/uninstall.sh
 ```
 
-Then remove the `"statusLine"` key from `~/.claude/settings.json` and
-`~/.gemini/antigravity-cli/settings.json` if you don't use it for anything
-else.
+This stops and removes the LaunchAgents, deletes the app bundle and support
+files, and cleans up the `statusLine` entries it added. See
+`Scripts/README.md` for what it does in detail.
 
 ## Development
 
