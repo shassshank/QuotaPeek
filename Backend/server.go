@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -89,7 +90,11 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	for _, a := range s.store.Config().Accounts {
 		if req.AccountID == "" || a.ID == req.AccountID {
 			wg.Add(1)
-			go func(a AccountConfig) { defer wg.Done(); s.pollProvider(r.Context(), ProviderID(a.ID)) }(a)
+			go func(a AccountConfig) {
+				defer wg.Done()
+				defer s.store.recoverPollPanic(ProviderID(a.ID), "")
+				s.pollProvider(r.Context(), ProviderID(a.ID))
+			}(a)
 		}
 	}
 	wg.Wait()
@@ -277,19 +282,30 @@ func (s *Server) pollProvider(ctx context.Context, key ProviderID) {
 		if route == RouteInjection && a.Provider != ProviderCodex {
 			continue
 		}
-		started, ok := s.store.beginPoll(key, route)
-		if !ok {
-			continue
-		}
-		data, err := s.fetchAccount(ctx, a, route)
-		if err == nil && !s.store.SetSampleAt(key, route, data, started) {
-			err = errors.New("Fetch returned invalid, empty, or older quota data.")
-		}
-		s.store.recordPoll(key, data, err)
-		if err != nil {
-			s.store.AddError(key, route, err.Error())
-		}
-		s.store.endPoll(key, route)
+		func() {
+			defer s.store.recoverPollPanic(key, route)
+			started, ok := s.store.beginPoll(key, route)
+			if !ok {
+				return
+			}
+			defer s.store.endPoll(key, route)
+			data, err := s.fetchAccount(ctx, a, route)
+			if err == nil && !s.store.SetSampleAt(key, route, data, started) {
+				err = errors.New("Fetch returned invalid, empty, or older quota data.")
+			}
+			s.store.recordPoll(key, data, err)
+			if err != nil {
+				s.store.AddError(key, route, err.Error())
+			}
+		}()
+	}
+}
+
+// Recover at the route boundary so a bad payload does not stop future ticks.
+// Goroutine boundaries also guard panics outside an individual route.
+func (s *Store) recoverPollPanic(key ProviderID, route Route) {
+	if r := recover(); r != nil {
+		s.AddError(key, route, fmt.Sprintf("collector panic: %v", r))
 	}
 }
 
@@ -339,20 +355,26 @@ type Poller struct {
 	collector *Collector
 	mu        sync.Mutex
 	cancel    context.CancelFunc
+	root      context.Context
+	stopped   bool
+	wg        sync.WaitGroup
 }
 
 func NewPoller(store *Store, collector *Collector) *Poller {
-	return &Poller{store: store, collector: collector}
+	return &Poller{store: store, collector: collector, root: context.Background()}
 }
 
 func (p *Poller) Reschedule(cfg Config) {
 	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stopped {
+		return
+	}
 	if p.cancel != nil {
 		p.cancel()
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(p.root)
 	p.cancel = cancel
-	p.mu.Unlock()
 	if cfg.CollectionPaused {
 		return
 	}
@@ -367,7 +389,10 @@ func (p *Poller) startProvider(ctx context.Context, provider ProviderID, cfg Pro
 		return
 	}
 	interval := time.Duration(cfg.KeychainPollIntervalSec) * time.Second
+	p.wg.Add(1)
 	go func() {
+		defer p.wg.Done()
+		defer p.store.recoverPollPanic(provider, "")
 		if ctx.Err() != nil {
 			return
 		}
@@ -410,6 +435,7 @@ func (p *Poller) pollOnce(_ context.Context, provider ProviderID) {
 func (p *Poller) Stop() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.stopped = true
 	if p.cancel != nil {
 		p.cancel()
 	}
@@ -421,7 +447,7 @@ type providerError struct{ message string }
 
 func (e *providerError) Error() string { return e.message }
 
-func run() error {
+func run(ctx context.Context) error {
 	listener, err := net.Listen("tcp", "127.0.0.1:47831")
 	if err != nil {
 		return err
@@ -459,10 +485,44 @@ func run() error {
 	}
 	server.collector.codexTokens.path = filepath.Join(filepath.Dir(path), "oauth-codex.json")
 	server.collector.antigravityTokens.path = filepath.Join(filepath.Dir(path), "oauth-antigravity.json")
-	server.poller.Reschedule(cfg)
 	log.Println("aiusaged listening on 127.0.0.1:47831")
-	defer server.poller.Stop()
-	return http.Serve(listener, server.routes())
+	return server.serve(ctx, listener)
+}
+
+// Stop scheduling immediately, then drain HTTP handlers and active polls together.
+// Fetch contexts deliberately remain independent of scheduling cancellation so
+// token rotation responses can be persisted before exit.
+func (s *Server) serve(ctx context.Context, listener net.Listener) error {
+	s.poller.root = ctx
+	s.poller.Reschedule(s.store.Config())
+	httpServer := &http.Server{Handler: s.routes()}
+	served := make(chan error, 1)
+	go func() { served <- httpServer.Serve(listener) }()
+	var serveErr error
+	select {
+	case <-ctx.Done():
+	case serveErr = <-served:
+	}
+	s.poller.Stop()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pollsDone := make(chan struct{})
+	go func() { s.poller.wg.Wait(); close(pollsDone) }()
+	shutdownErr := httpServer.Shutdown(shutdownCtx)
+	if shutdownErr != nil {
+		_ = httpServer.Close()
+	}
+	select {
+	case <-pollsDone:
+	case <-shutdownCtx.Done():
+		if shutdownErr == nil {
+			shutdownErr = shutdownCtx.Err()
+		}
+	}
+	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		return serveErr
+	}
+	return shutdownErr
 }
 
 func (s *Server) status() StatusResponse {

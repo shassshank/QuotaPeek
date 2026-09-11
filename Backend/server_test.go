@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -131,3 +135,126 @@ func TestTestRoutePushFreshness(t *testing.T) {
 		}
 	}
 }
+
+func panicPollServer() *Server {
+	cfg := defaultConfig()
+	cfg.ClaudePollingMode = "inference"
+	cfg.Accounts = []AccountConfig{legacyAccount(ProviderClaude)}
+	cfg.Claude.RoutesEnabled = []Route{RouteKeychain}
+	c := NewCollector()
+	c.readKeychain = func(context.Context, string, string) ([]byte, error) {
+		panic("malformed provider payload")
+	}
+	return NewServer(NewStore(cfg), c, "")
+}
+
+func TestPollPanicCleanupAndDiagnostics(t *testing.T) {
+	for _, mode := range []string{"direct", "refresh", "scheduled"} {
+		t.Run(mode, func(t *testing.T) {
+			s := panicPollServer()
+			defer s.poller.Stop()
+			switch mode {
+			case "direct":
+				s.pollProvider(context.Background(), ProviderClaude)
+			case "refresh":
+				s.handleRefresh(httptest.NewRecorder(), httptest.NewRequest("POST", "/refresh", nil))
+			case "scheduled":
+				s.poller.Reschedule(s.store.Config())
+			}
+			deadline := time.After(time.Second)
+			for len(s.store.Errors(50)) == 0 {
+				select {
+				case <-deadline:
+					t.Fatal("panic was not reported")
+				case <-time.After(time.Millisecond):
+				}
+			}
+			entries := s.store.Errors(50)
+			if len(entries) != 1 || entries[0].Provider != ProviderClaude ||
+				entries[0].AccountID != defaultAccountID(ProviderClaude) ||
+				entries[0].Route != RouteKeychain ||
+				!strings.Contains(entries[0].Message, "malformed provider payload") {
+				t.Fatalf("unexpected diagnostics: %+v", entries)
+			}
+			done := make(chan struct{})
+			go func() { s.store.SetConfig(s.store.Config()); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("SetConfig blocked after panic")
+			}
+			key := ProviderID(defaultAccountID(ProviderClaude))
+			if _, ok := s.store.beginPoll(key, RouteKeychain); !ok {
+				t.Fatal("route still in flight")
+			}
+			s.store.endPoll(key, RouteKeychain)
+		})
+	}
+}
+
+func TestServeCancellationDrainsPoll(t *testing.T) {
+	s := panicPollServer()
+	entered, release := make(chan struct{}), make(chan struct{})
+	path := filepath.Join(t.TempDir(), "persisted")
+	s.collector.readKeychain = func(ctx context.Context, _, _ string) ([]byte, error) {
+		close(entered)
+		<-release
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := atomicPrivateWrite(path, []byte("complete")); err != nil {
+			return nil, err
+		}
+		return nil, io.EOF
+	}
+	listener := &shutdownTestListener{closed: make(chan struct{})}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.serve(ctx, listener) }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("poll did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		close(release)
+		t.Fatalf("returned before persistence: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not shut down")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil || string(raw) != "complete" {
+		t.Fatalf("persistence not drained: %q %v", raw, err)
+	}
+	// A late settings request must not restart polling after Stop.
+	s.poller.Reschedule(s.store.Config())
+}
+
+// No socket is needed to exercise Serve/Shutdown and poll draining.
+type shutdownTestListener struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (l *shutdownTestListener) Accept() (net.Conn, error) {
+	<-l.closed
+	return nil, net.ErrClosed
+}
+func (l *shutdownTestListener) Close() error {
+	l.once.Do(func() { close(l.closed) })
+	return nil
+}
+func (l *shutdownTestListener) Addr() net.Addr { return &net.TCPAddr{} }
