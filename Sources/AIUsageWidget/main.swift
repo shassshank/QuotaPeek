@@ -58,31 +58,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        let rootView = PopoverView(
-            store: store,
-            displayPrefs: displayPrefs,
-            openSettings: { [weak self] in self?.openSettings() },
-            closePopover: { [weak self] in self?.popover.performClose(nil) }
-        )
-        let hostingController = NSHostingController(rootView: rootView)
-        hostingController.sizingOptions = [.preferredContentSize]
-        hostingController.preferredContentSize = PopoverLayout.initialContentSize
 
         popover = NSPopover()
         popover.behavior = .transient
         popover.delegate = self
-        popover.contentViewController = hostingController
         popover.contentSize = PopoverLayout.initialContentSize
-
-        // NSHostingController keeps preferredContentSize in sync with SwiftUI's own ideal size
-        // (sizingOptions above); mirror it onto the popover so height tracks real content instead
-        // of staying pinned to the initial seed size.
-        preferredSizeObservation = hostingController.observe(\.preferredContentSize, options: [.new]) { [weak self] _, change in
-            guard let self, let newSize = change.newValue, newSize.width > 0, newSize.height > 0 else { return }
-            Task { @MainActor [weak self] in
-                self?.popover.contentSize = newSize
-            }
-        }
 
         // Global keyboard shortcut monitor for Esc (to close popover) and Cmd+, (to open settings)
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -308,11 +288,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.terminate(nil)
     }
 
+    /// Creates and attaches a fresh popover content view controller, wiring up the
+    /// preferredContentSize KVO observation. Called before every popover show so the
+    /// SwiftUI view tree only exists while the popover is visible.
+    private func attachPopoverContent() {
+        let rootView = PopoverView(
+            store: store,
+            displayPrefs: displayPrefs,
+            openSettings: { [weak self] in self?.openSettings() },
+            closePopover: { [weak self] in self?.popover.performClose(nil) }
+        )
+        let hostingController = NSHostingController(rootView: rootView)
+        hostingController.sizingOptions = [.preferredContentSize]
+        hostingController.preferredContentSize = PopoverLayout.initialContentSize
+
+        popover.contentViewController = hostingController
+
+        // Mirror SwiftUI's ideal size onto the popover so height tracks real content.
+        preferredSizeObservation = hostingController.observe(\.preferredContentSize, options: [.new]) { [weak self] _, change in
+            guard let self, let newSize = change.newValue, newSize.width > 0, newSize.height > 0 else { return }
+            Task { @MainActor [weak self] in
+                self?.popover.contentSize = newSize
+            }
+        }
+    }
+
     @objc private func togglePopover() {
         guard let button = statusItem.button else { return }
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            attachPopoverContent()
             store.setPopoverVisible(true)
             Task { await store.reload() }
             NSApp.activate(ignoringOtherApps: true)
@@ -347,6 +353,10 @@ extension AppDelegate: NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         store.setPopoverVisible(false)
+        // Detach the SwiftUI view tree so it stops observing store and doing layout
+        // work while the popover is hidden. It will be recreated on next show.
+        preferredSizeObservation = nil
+        popover.contentViewController = nil
     }
 }
 

@@ -27,8 +27,12 @@ final class UsageStore: ObservableObject {
     private let client = DaemonClient()
     private var timer: Timer?
 
-    // Polling intervals per Task C7
+    // Polling cadence tiers:
+    // - fast: popover is actively open and user is looking at live numbers (5s)
+    // - desktop widget: passive always-on-screen widget, popover closed (30s)
+    // - slow: nothing visible, background keep-alive only (60s)
     private let fastPollInterval: TimeInterval = 5
+    private let desktopWidgetPollInterval: TimeInterval = 30
     private let slowPollInterval: TimeInterval = 60
     private var isPopoverVisible = false
     private var isWidgetVisible = false
@@ -48,15 +52,15 @@ final class UsageStore: ObservableObject {
         scheduleTimer(interval: slowPollInterval)
     }
 
-    /// Dynamically switches between fast polling (popover visible) and slow polling (popover closed)
+    /// Dynamically switches polling cadence when the popover opens/closes.
     func setPopoverVisible(_ visible: Bool) {
         guard isPopoverVisible != visible else { return }
         isPopoverVisible = visible
         applyPollingCadence(triggerImmediateReload: visible)
     }
 
-    /// Same idea as `setPopoverVisible`, for the floating desktop widget panel. Either surface
-    /// being visible is enough to keep polling fast.
+    /// Tracks whether any desktop widget panel is on-screen. Uses the intermediate
+    /// `desktopWidgetPollInterval` cadence when the popover itself is closed.
     func setWidgetVisible(_ visible: Bool) {
         guard isWidgetVisible != visible else { return }
         isWidgetVisible = visible
@@ -64,8 +68,15 @@ final class UsageStore: ObservableObject {
     }
 
     private func applyPollingCadence(triggerImmediateReload: Bool) {
-        let shouldPollFast = isPopoverVisible || isWidgetVisible
-        scheduleTimer(interval: shouldPollFast ? fastPollInterval : slowPollInterval)
+        let interval: TimeInterval
+        if isPopoverVisible {
+            interval = fastPollInterval
+        } else if isWidgetVisible {
+            interval = desktopWidgetPollInterval
+        } else {
+            interval = slowPollInterval
+        }
+        scheduleTimer(interval: interval)
         if triggerImmediateReload {
             Task { await reload() }
         }

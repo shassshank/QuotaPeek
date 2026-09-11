@@ -474,16 +474,20 @@ private struct AccountCard: View {
         return "\(hours)h\(minutes % 60)m ago"
     }
 
+    private static let countdownFormatter: DateComponentsFormatter = {
+        let f = DateComponentsFormatter()
+        f.allowedUnits = [.day, .hour, .minute]
+        f.unitsStyle = .abbreviated
+        f.maximumUnitCount = 2
+        return f
+    }()
+
     private func resetCountdown(_ unixSeconds: Int) -> String {
         let resetDate = Date(timeIntervalSince1970: TimeInterval(unixSeconds))
         let interval = resetDate.timeIntervalSinceNow
         if interval <= 0 { return "now" }
         if interval < 60 { return "in <1m" }
-        let formatter = DateComponentsFormatter()
-        formatter.allowedUnits = [.day, .hour, .minute]
-        formatter.unitsStyle = .abbreviated
-        formatter.maximumUnitCount = 2
-        return "in " + (formatter.string(from: interval) ?? "")
+        return "in " + (Self.countdownFormatter.string(from: interval) ?? "")
     }
 }
 

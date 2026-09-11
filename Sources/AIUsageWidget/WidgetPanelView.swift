@@ -1720,16 +1720,20 @@ private enum WidgetMetrics {
         }
     }
 
+    private static let countdownFormatter: DateComponentsFormatter = {
+        let f = DateComponentsFormatter()
+        f.allowedUnits = [.day, .hour, .minute]
+        f.unitsStyle = .abbreviated
+        f.maximumUnitCount = 2
+        return f
+    }()
+
     static func formatCountdown(_ unixSeconds: Int) -> String {
         let resetDate = Date(timeIntervalSince1970: TimeInterval(unixSeconds))
         let interval = resetDate.timeIntervalSinceNow
         if interval <= 0 { return "now" }
         if interval < 60 { return "<1m" }
-        let formatter = DateComponentsFormatter()
-        formatter.allowedUnits = [.day, .hour, .minute]
-        formatter.unitsStyle = .abbreviated
-        formatter.maximumUnitCount = 2
-        return (formatter.string(from: interval) ?? "")
+        return (countdownFormatter.string(from: interval) ?? "")
     }
 
     static func syncAge(_ unixSeconds: Int64) -> String {

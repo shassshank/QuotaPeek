@@ -1361,11 +1361,15 @@ private struct ProviderHealthTab: View {
         }
     }
 
+    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
+
     private func relativeTimestamp(_ unixSeconds: Int64) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(unixSeconds))
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        return Self.relativeDateFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     private func performReset(for account: Account) {
@@ -1454,11 +1458,15 @@ private struct DiagnosticsSettingsTab: View {
         .padding()
     }
 
+    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
+
     private func relativeAge(_ unixSeconds: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(unixSeconds))
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        return Self.relativeDateFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     private func revealInFinder(path: String) {
