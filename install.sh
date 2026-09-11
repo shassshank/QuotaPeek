@@ -379,7 +379,7 @@ merge_statusline "$HOME/.claude/settings.json" "\"$PYTHON3\" \"$BIN_DIR/claude-s
 merge_statusline "$HOME/.gemini/antigravity-cli/settings.json" "\"$PYTHON3\" \"$BIN_DIR/antigravity-statusline-hook.py\""
 
 echo ""
-echo "Installed. The menu bar icon should appear now (a gauge icon in the top menu bar)."
+echo "Installed. The menu bar icon should appear now (top menu bar)."
 echo "Accounts are no longer auto-configured by default. Add detected accounts using"
 echo "the fresh-install prompt, or later via Settings > Add Account."
 echo ""
