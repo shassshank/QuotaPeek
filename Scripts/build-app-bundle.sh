@@ -41,9 +41,13 @@ APP_BUNDLE="$REPO_DIR/.build/release/AIUsageWidget.app"
 INFO_PLIST="$REPO_DIR/Info.plist"
 ENTITLEMENTS="$REPO_DIR/AIUsageWidget.entitlements"
 APP_ICON="$REPO_DIR/Resources/AppIcon.icns"
+MENU_BAR_ICON_1X="$REPO_DIR/Resources/MenuBarIcon.png"
+MENU_BAR_ICON_2X="$REPO_DIR/Resources/MenuBarIcon@2x.png"
+MENU_BAR_ICON_3X="$REPO_DIR/Resources/MenuBarIcon@3x.png"
 
 # Verify prerequisites
-for f in "$SWIFT_BINARY" "$GO_BINARY" "$INFO_PLIST" "$ENTITLEMENTS" "$APP_ICON"; do
+for f in "$SWIFT_BINARY" "$GO_BINARY" "$INFO_PLIST" "$ENTITLEMENTS" "$APP_ICON" \
+         "$MENU_BAR_ICON_1X" "$MENU_BAR_ICON_2X" "$MENU_BAR_ICON_3X"; do
     if [[ ! -f "$f" ]]; then
         echo "ERROR: Required file not found: $f" >&2
         exit 1
@@ -60,8 +64,9 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 # Copy the Swift binary into the bundle
 cp "$SWIFT_BINARY" "$APP_BUNDLE/Contents/MacOS/AIUsageWidget"
 
-# Copy the app icon into the bundle
+# Copy the app icon and menu bar status item icon into the bundle
 cp "$APP_ICON" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+cp "$MENU_BAR_ICON_1X" "$MENU_BAR_ICON_2X" "$MENU_BAR_ICON_3X" "$APP_BUNDLE/Contents/Resources/"
 
 # Generate Info.plist with stamped version/build numbers
 sed -e "s#<string>1.0.0</string>#<string>${VERSION}</string>#" \

@@ -5,7 +5,6 @@ import SwiftUI
 /// Display mode for the menu bar status item.
 enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
     case iconOnly = "icon_only"
-    case percentageText = "percentage_text"
     case coloredDots = "colored_dots"
 
     var id: String { rawValue }
@@ -13,7 +12,6 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .iconOnly: return "Icon only"
-        case .percentageText: return "Percentage text"
         case .coloredDots: return "Provider dots"
         }
     }

@@ -119,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         enum ImageKind: Equatable {
             case warning
             case noData(accessibilityDesc: String)
-            case gauge(symbolName: String, accessibilityDesc: String)
+            case gauge(accessibilityDesc: String)
             case dots([DisplayPreferences.DotColor])
         }
 
@@ -156,14 +156,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     accessibilityLabel: label,
                     accessibilityValue: value
                 )
-            case .percentageText:
-                targetState = StatusItemRenderState(
-                    imageKind: .warning,
-                    title: " !",
-                    imagePosition: .imageLeading,
-                    accessibilityLabel: label,
-                    accessibilityValue: value
-                )
             case .coloredDots:
                 let dotColors = enabledAccounts.isEmpty
                     ? [.gray]
@@ -181,22 +173,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let accessibilityDesc = "AI Usage: \(Int(displayVal))% \(metric.displayName.lowercased())"
             let label = "AI Usage"
             let value = accessibilityDesc
-            let symbolName = gaugeSymbolName(forPercent: displayVal)
 
             switch mode {
             case .iconOnly:
                 targetState = StatusItemRenderState(
-                    imageKind: .gauge(symbolName: symbolName, accessibilityDesc: accessibilityDesc),
+                    imageKind: .gauge(accessibilityDesc: accessibilityDesc),
                     title: "",
                     imagePosition: .imageLeft,
-                    accessibilityLabel: label,
-                    accessibilityValue: value
-                )
-            case .percentageText:
-                targetState = StatusItemRenderState(
-                    imageKind: .gauge(symbolName: symbolName, accessibilityDesc: accessibilityDesc),
-                    title: " \(Int(displayVal))%",
-                    imagePosition: .imageLeading,
                     accessibilityLabel: label,
                     accessibilityValue: value
                 )
@@ -223,14 +206,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     imageKind: .noData(accessibilityDesc: accessibilityDesc),
                     title: "",
                     imagePosition: .imageLeft,
-                    accessibilityLabel: label,
-                    accessibilityValue: value
-                )
-            case .percentageText:
-                targetState = StatusItemRenderState(
-                    imageKind: .noData(accessibilityDesc: accessibilityDesc),
-                    title: " --%",
-                    imagePosition: .imageLeading,
                     accessibilityLabel: label,
                     accessibilityValue: value
                 )
@@ -267,20 +242,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .warning:
             button.image = warningImage()
         case .noData(let desc):
-            button.image = noDataImage(accessibilityDesc: desc)
-        case .gauge(let symbolName, let desc):
-            let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: desc)
-            image?.isTemplate = true
-            button.image = image
+            button.image = logoImage(accessibilityDesc: desc)
+        case .gauge(let desc):
+            button.image = logoImage(accessibilityDesc: desc)
         case .dots:
             button.image = displayPrefs.generateDotsImage(accounts: enabledAccounts, isDaemonReachable: store.isDaemonReachable)
         }
     }
 
-    private func noDataImage(accessibilityDesc: String) -> NSImage? {
-        let image = NSImage(systemSymbolName: "gauge.with.dots.needle.bottom.50percent", accessibilityDescription: accessibilityDesc)
-            ?? NSImage(systemSymbolName: "gauge", accessibilityDescription: accessibilityDesc)
-        image?.isTemplate = true
+    private static let cachedLogoImage: NSImage? = {
+        // Bundled into Contents/Resources by Scripts/build-app-bundle.sh, next
+        // to AppIcon.icns. Not available when running an unpackaged dev build
+        // (e.g. `swift run`) - logoImage(accessibilityDesc:) handles that nil.
+        guard let image = Bundle.main.image(forResource: "MenuBarIcon") else { return nil }
+        image.isTemplate = true
+        image.size = NSSize(width: 18, height: 18)
+        return image
+    }()
+
+    private func logoImage(accessibilityDesc: String) -> NSImage? {
+        guard let image = Self.cachedLogoImage?.copy() as? NSImage else { return nil }
+        image.accessibilityDescription = accessibilityDesc
         return image
     }
 
@@ -294,21 +276,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let fallback = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: "AI Usage: Service warning")
             fallback?.isTemplate = true
             return fallback
-        }
-    }
-
-    private func gaugeSymbolName(forPercent percent: Double) -> String {
-        switch percent {
-        case ..<16.5:
-            return "gauge.with.dots.needle.0percent"
-        case 16.5..<41.5:
-            return "gauge.with.dots.needle.33percent"
-        case 41.5..<58.5:
-            return "gauge.with.dots.needle.50percent"
-        case 58.5..<83.5:
-            return "gauge.with.dots.needle.67percent"
-        default:
-            return "gauge.with.dots.needle.100percent"
         }
     }
 
