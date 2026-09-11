@@ -555,7 +555,10 @@ Returns HTTP 201 with the created `Account` (data null, state "unknown", until
 the first poll). `configDir` must be an absolute path; a `config_dir` account
 pointing at a path that has no valid credentials yet is allowed (state stays
 "unknown"/"error" until the user logs in with that config dir). Duplicate
-`configDir` for the same provider returns HTTP 409.
+`configDir` for the same provider returns HTTP 409 (`duplicate configDir`).
+Antigravity accounts with the same non-empty bootstrap email (case-insensitive)
+return HTTP 409 (`duplicate email`), including accounts restored from persisted
+OAuth caches. Both checks reject the request before creating a new account.
 
 `PATCH /accounts/{id}` (requires `X-Auth-Token`) — body `{"label":"New label"}`,
 rename only; `credentialLocation` is immutable after creation (delete and

@@ -744,7 +744,7 @@ private struct AddAccountSheet: View {
                 switch error {
                 case .badResponse(let code):
                     if code == 409 {
-                        errorMessage = "An account with this configuration directory already exists."
+                        errorMessage = "An account with this configuration directory or email already exists."
                     } else {
                         errorMessage = "Server error (\(code)). Check daemon logs."
                     }

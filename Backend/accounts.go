@@ -215,6 +215,17 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "duplicate configDir", 409)
 			return
 		}
+		if req.Provider == ProviderAntigravity && a.Provider == ProviderAntigravity {
+			email, err := s.collectorFor(a).antigravityTokens.accountEmail()
+			if err != nil {
+				http.Error(w, "could not read account email", 500)
+				return
+			}
+			if email != "" && strings.EqualFold(email, req.OAuthBootstrap.Email) {
+				http.Error(w, "duplicate email", 409)
+				return
+			}
+		}
 	}
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {

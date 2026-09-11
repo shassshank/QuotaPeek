@@ -181,3 +181,25 @@ func (c *oauthTokenCache) daemonCredentials() (antigravityCreds, error) {
 	creds.Token.Expiry = c.expiry.Format(time.RFC3339Nano)
 	return creds, nil
 }
+
+// Account collectors and OAuth credentials are loaded lazily. Read the saved
+// email when it is not yet available in memory, without changing token state.
+func (c *oauthTokenCache) accountEmail() (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.email != "" {
+		return c.email, nil
+	}
+	raw, err := os.ReadFile(c.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var saved persistedOAuth
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		return "", err
+	}
+	return saved.Email, nil
+}
