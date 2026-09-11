@@ -93,6 +93,51 @@ if [[ "$MODE" == "local" && -z "$REPO_DIR" ]]; then
     exit 1
 fi
 
+# Migrate from previous "AI Usage Widget" install if present.
+OLD_APP_SUPPORT="$HOME/Library/Application Support/AIUsageWidget"
+OLD_PLISTS=(
+    "$LAUNCH_AGENTS/com.aiusagewidget.daemon.plist"
+    "$LAUNCH_AGENTS/com.aiusagewidget.app.plist"
+)
+OLD_APPS=(
+    "/Applications/AIUsageWidget.app"
+    "$HOME/Applications/AIUsageWidget.app"
+)
+
+has_old_install=false
+for old_path in "$OLD_APP_SUPPORT" "${OLD_PLISTS[@]}" "${OLD_APPS[@]}"; do
+    if [[ -e "$old_path" ]]; then
+        has_old_install=true
+        break
+    fi
+done
+
+if [[ "$has_old_install" == true ]]; then
+    echo "==> Migrating from previous \"AI Usage Widget\" install"
+    for plist in "${OLD_PLISTS[@]}"; do
+        if [[ -e "$plist" ]]; then
+            launchctl unload -w "$plist" 2>/dev/null || true
+            rm -f "$plist"
+            echo "  unloaded and removed $plist"
+        fi
+    done
+    if [[ -e "$OLD_APP_SUPPORT" ]]; then
+        if [[ ! -e "$APP_SUPPORT" ]]; then
+            cp -R "$OLD_APP_SUPPORT" "$APP_SUPPORT"
+            rm -rf "$OLD_APP_SUPPORT"
+            echo "  migrated data from $OLD_APP_SUPPORT to $APP_SUPPORT"
+        else
+            echo "  $APP_SUPPORT already exists; left old data at $OLD_APP_SUPPORT for manual review"
+        fi
+    fi
+    for app in "${OLD_APPS[@]}"; do
+        if [[ -e "$app" ]]; then
+            rm -rf "$app"
+            echo "  removed $app"
+        fi
+    done
+fi
+
 # Check before starting the daemon: its first startup creates config.json.
 DETECT_ACCOUNTS=false
 if [ ! -e "$APP_SUPPORT/config.json" ]; then
