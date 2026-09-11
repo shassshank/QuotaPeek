@@ -59,10 +59,10 @@ Config {
   "statusline_show_other_agents": true, // boolean; default true
   "staleAfterSeconds": 600,          // positive int64 seconds; default 600
   "collectionPaused": false,        // boolean; default false
-  "claude_polling_mode": "inference", // "inference" (default) or "disabled"
+  "claude_polling_mode": "disabled",  // "disabled" (default) or "inference"
   "claude":      { "routes_enabled": ["keychain", "injection"], "keychain_poll_interval_sec": 60 },
-  "codex":       { "routes_enabled": ["injection"],              "keychain_poll_interval_sec": 120 },
-  "antigravity": { "routes_enabled": ["keychain"],               "keychain_poll_interval_sec": 60 }
+  "codex":       { "routes_enabled": ["injection"],              "keychain_poll_interval_sec": 60 },
+  "antigravity": { "routes_enabled": ["keychain"],               "keychain_poll_interval_sec": 120 }
 }
 // Fresh injection quota data is preferred, independent of routes_enabled order.
 // Both routes are stale after max(2 * keychain_poll_interval_sec, staleAfterSeconds) seconds.
@@ -93,8 +93,7 @@ ErrorEntry {
 
 ### `GET /status`
 Requires `X-Auth-Token`.
-Returns `{ "statusline_show_other_agents": true, "accounts": [Account, ...], "providers": [Provider, Provider, Provider] }`,
-always all three, always in the order claude, codex, antigravity.
+Returns `{ "statusline_show_other_agents": true, "accounts": [Account, ...] }`.
 
 Polls are single-flight per provider/route across scheduled polls, refreshes,
 and diagnostics. An overlapping refresh skips the busy route and returns current
@@ -146,8 +145,8 @@ resulting full `Config`. Each included provider replaces its full config, so inc
 disable notifications for that provider. Omitted providers remain unchanged.
 Thresholds outside 1-100, or non-integer values, return HTTP 400.
 
-Top-level `claude_polling_mode` accepts `"inference"` (default for existing installs)
-or `"disabled"`; omission on PUT preserves the current setting. Inference mode
+Top-level `claude_polling_mode` accepts `"disabled"` (default)
+or `"inference"`; omission on PUT preserves the current setting. Inference mode
 sends a real Messages API completion (`"hi"`, `max_tokens:1`) to read quota headers.
 At the default 60-second interval this is approximately 1,440 calls/day, consumes
 quota, and may incur charges according to the provider account. Refresh and route
@@ -586,7 +585,9 @@ scoped to one account instead of a whole provider.
 
 `GET /history?accountId=acct_...&route=keychain` — replaces the
 `provider=`+`route=` query form; same response shape
-(`{"points":[{"at":...,"usedPercent":...}]}`).
+(`{"points":[{"at":...,"usedPercent":...}]}`). Missing or invalid
+`accountId` or `route` returns HTTP 400 with plain-text
+`invalid or missing accountId/route`.
 
 ### Ingest (unchanged transport, added routing)
 
