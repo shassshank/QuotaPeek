@@ -375,8 +375,19 @@ echo "==> Registering statusLine hooks (Injection route)"
 # BIN_DIR lives under ~/Library/Application Support, which has a space in it -
 # the command string must quote each path so a naive whitespace-splitting
 # executor (not just a real shell) doesn't tear "Application Support" in two.
-merge_statusline "$HOME/.claude/settings.json" "\"$PYTHON3\" \"$BIN_DIR/claude-statusline-hook.py\"" 3
-merge_statusline "$HOME/.gemini/antigravity-cli/settings.json" "\"$PYTHON3\" \"$BIN_DIR/antigravity-statusline-hook.py\""
+# Only register each hook for a CLI that's actually installed - writing into
+# ~/.claude/settings.json or ~/.gemini/antigravity-cli/settings.json when that
+# CLI isn't even present would create dead config for an app that doesn't exist.
+if command -v claude >/dev/null 2>&1; then
+    merge_statusline "$HOME/.claude/settings.json" "\"$PYTHON3\" \"$BIN_DIR/claude-statusline-hook.py\"" 3
+else
+    echo "  claude not detected; skipping Claude statusLine hook."
+fi
+if security find-generic-password -s gemini -a antigravity >/dev/null 2>&1; then
+    merge_statusline "$HOME/.gemini/antigravity-cli/settings.json" "\"$PYTHON3\" \"$BIN_DIR/antigravity-statusline-hook.py\""
+else
+    echo "  antigravity not detected; skipping Antigravity statusLine hook."
+fi
 
 echo ""
 echo "Installed. The menu bar icon should appear now (top menu bar)."

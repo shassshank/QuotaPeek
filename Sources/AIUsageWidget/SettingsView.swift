@@ -1349,10 +1349,26 @@ private struct AdvancedSettingsTab: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Uninstall AIUsageWidget…", role: .destructive) {
+                    Button("Uninstall", role: .destructive) {
                         showUninstallConfirmation = true
                     }
                     .buttonStyle(.bordered)
+                }
+            }
+
+            Section("Diagnostics & Files") {
+                HStack(spacing: 12) {
+                    Button("Reveal Config in Finder") {
+                        revealInFinder(path: appSupportPath)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button("Reveal Log in Finder") {
+                        revealInFinder(path: logFilePath)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
             }
 
@@ -1387,22 +1403,6 @@ private struct AdvancedSettingsTab: View {
                         }
                     }
                     .frame(minHeight: 180)
-                }
-            }
-
-            Section("Diagnostics & Files") {
-                HStack(spacing: 12) {
-                    Button("Reveal Config in Finder") {
-                        revealInFinder(path: appSupportPath)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-
-                    Button("Reveal Log in Finder") {
-                        revealInFinder(path: logFilePath)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                 }
             }
         }
