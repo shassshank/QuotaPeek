@@ -12,9 +12,9 @@ func defaultConfig() Config {
 		StaleAfterSeconds:         600,
 		StatuslineShowOtherAgents: true,
 		ClaudePollingMode:         "disabled",
-		Claude:                    ProviderConfig{RoutesEnabled: []Route{}, KeychainPollIntervalSec: 60},
-		Codex:                     ProviderConfig{RoutesEnabled: []Route{}, KeychainPollIntervalSec: 60},
-		Antigravity:               ProviderConfig{RoutesEnabled: []Route{}, KeychainPollIntervalSec: 120},
+		Claude:                    ProviderConfig{RoutesEnabled: []Route{}, KeychainPollIntervalSec: 300},
+		Codex:                     ProviderConfig{RoutesEnabled: []Route{}, KeychainPollIntervalSec: 300},
+		Antigravity:               ProviderConfig{RoutesEnabled: []Route{}, KeychainPollIntervalSec: 300},
 	}
 }
 

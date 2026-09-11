@@ -254,7 +254,7 @@ setup_detected_accounts() {
     fi
     for provider in claude codex antigravity; do
         config_dir=""
-        interval=60
+        interval=300
         case "$provider" in
             claude|codex)
                 if ! command -v "$provider" >/dev/null 2>&1; then
@@ -272,7 +272,7 @@ setup_detected_accounts() {
                     echo "  antigravity not detected."
                     continue
                 fi
-                interval=120
+                interval=300
                 ;;
         esac
         # JSON encoding handles spaces/quotes in paths. Antigravity's existing
