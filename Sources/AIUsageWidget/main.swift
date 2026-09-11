@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var desktopWidgetPanels: [UUID: DesktopWidgetPanel] = [:]
     private var cancellables = Set<AnyCancellable>()
     private var eventMonitor: Any?
+    private var lastRenderState: StatusItemRenderState?
 
     fileprivate init(instanceLock: SingleInstanceLock) {
         self.instanceLock = instanceLock
@@ -114,6 +115,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.setWidgetVisible(!enabledConfigs.isEmpty)
     }
 
+    private struct StatusItemRenderState: Equatable {
+        enum ImageKind: Equatable {
+            case warning
+            case noData(accessibilityDesc: String)
+            case gauge(symbolName: String, accessibilityDesc: String)
+            case dots([DisplayPreferences.DotColor])
+        }
+
+        var imageKind: ImageKind
+        var title: String
+        var imagePosition: NSControl.ImagePosition
+        var accessibilityLabel: String
+        var accessibilityValue: String
+    }
+
     private func updateStatusItem() {
         guard let button = statusItem.button else { return }
 
@@ -125,64 +141,139 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             store.accounts.filter { $0.provider == provider && store.isAccountEnabled($0) }
         }
 
+        let targetState: StatusItemRenderState
+
         if isWarning {
-            button.setAccessibilityLabel("AI Usage: Service warning")
-            button.setAccessibilityValue("Service unreachable or provider error")
+            let label = "AI Usage: Service warning"
+            let value = "Service unreachable or provider error"
 
             switch mode {
             case .iconOnly:
-                button.image = warningImage()
-                button.title = ""
+                targetState = StatusItemRenderState(
+                    imageKind: .warning,
+                    title: "",
+                    imagePosition: .imageLeft,
+                    accessibilityLabel: label,
+                    accessibilityValue: value
+                )
             case .percentageText:
-                button.image = warningImage()
-                button.imagePosition = .imageLeading
-                button.title = " !"
+                targetState = StatusItemRenderState(
+                    imageKind: .warning,
+                    title: " !",
+                    imagePosition: .imageLeading,
+                    accessibilityLabel: label,
+                    accessibilityValue: value
+                )
             case .coloredDots:
-                button.image = displayPrefs.generateDotsImage(accounts: enabledAccounts, isDaemonReachable: store.isDaemonReachable)
-                button.title = ""
+                let dotColors = enabledAccounts.isEmpty
+                    ? [.gray]
+                    : enabledAccounts.map { displayPrefs.dotColor(for: $0, isDaemonReachable: store.isDaemonReachable) }
+                targetState = StatusItemRenderState(
+                    imageKind: .dots(dotColors),
+                    title: "",
+                    imagePosition: .imageLeft,
+                    accessibilityLabel: label,
+                    accessibilityValue: value
+                )
             }
-            return
-        }
+        } else if let maxUsage = store.highestUsagePercent {
+            let displayVal = displayPrefs.displayPercent(forUsedPercent: maxUsage)
+            let accessibilityDesc = "AI Usage: \(Int(displayVal))% \(metric.displayName.lowercased())"
+            let label = "AI Usage"
+            let value = accessibilityDesc
+            let symbolName = gaugeSymbolName(forPercent: displayVal)
 
-        // Task B5: Stop substituting 0.0 for missing/no-observation data! Show distinct "no data" indicator
-        guard let maxUsage = store.highestUsagePercent else {
+            switch mode {
+            case .iconOnly:
+                targetState = StatusItemRenderState(
+                    imageKind: .gauge(symbolName: symbolName, accessibilityDesc: accessibilityDesc),
+                    title: "",
+                    imagePosition: .imageLeft,
+                    accessibilityLabel: label,
+                    accessibilityValue: value
+                )
+            case .percentageText:
+                targetState = StatusItemRenderState(
+                    imageKind: .gauge(symbolName: symbolName, accessibilityDesc: accessibilityDesc),
+                    title: " \(Int(displayVal))%",
+                    imagePosition: .imageLeading,
+                    accessibilityLabel: label,
+                    accessibilityValue: value
+                )
+            case .coloredDots:
+                let dotColors = enabledAccounts.isEmpty
+                    ? [.gray]
+                    : enabledAccounts.map { displayPrefs.dotColor(for: $0, isDaemonReachable: store.isDaemonReachable) }
+                targetState = StatusItemRenderState(
+                    imageKind: .dots(dotColors),
+                    title: "",
+                    imagePosition: .imageLeft,
+                    accessibilityLabel: label,
+                    accessibilityValue: value
+                )
+            }
+        } else {
             let accessibilityDesc = "AI Usage: No recent data"
-            button.setAccessibilityLabel("AI Usage")
-            button.setAccessibilityValue(accessibilityDesc)
+            let label = "AI Usage"
+            let value = accessibilityDesc
 
             switch mode {
             case .iconOnly:
-                button.image = noDataImage(accessibilityDesc: accessibilityDesc)
-                button.title = ""
+                targetState = StatusItemRenderState(
+                    imageKind: .noData(accessibilityDesc: accessibilityDesc),
+                    title: "",
+                    imagePosition: .imageLeft,
+                    accessibilityLabel: label,
+                    accessibilityValue: value
+                )
             case .percentageText:
-                button.image = noDataImage(accessibilityDesc: accessibilityDesc)
-                button.imagePosition = .imageLeading
-                button.title = " --%"
+                targetState = StatusItemRenderState(
+                    imageKind: .noData(accessibilityDesc: accessibilityDesc),
+                    title: " --%",
+                    imagePosition: .imageLeading,
+                    accessibilityLabel: label,
+                    accessibilityValue: value
+                )
             case .coloredDots:
-                button.image = displayPrefs.generateDotsImage(accounts: enabledAccounts, isDaemonReachable: store.isDaemonReachable)
-                button.title = ""
+                let dotColors = enabledAccounts.isEmpty
+                    ? [.gray]
+                    : enabledAccounts.map { displayPrefs.dotColor(for: $0, isDaemonReachable: store.isDaemonReachable) }
+                targetState = StatusItemRenderState(
+                    imageKind: .dots(dotColors),
+                    title: "",
+                    imagePosition: .imageLeft,
+                    accessibilityLabel: label,
+                    accessibilityValue: value
+                )
             }
-            return
         }
 
-        let displayVal = displayPrefs.displayPercent(forUsedPercent: maxUsage)
-        let accessibilityDesc = "AI Usage: \(Int(displayVal))% \(metric.displayName.lowercased())"
-        button.setAccessibilityLabel("AI Usage")
-        button.setAccessibilityValue(accessibilityDesc)
+        if targetState == lastRenderState {
+            return
+        }
+        lastRenderState = targetState
 
-        switch mode {
-        case .iconOnly:
-            let image = gaugeImage(forPercent: displayVal, accessibilityDesc: accessibilityDesc)
+        button.setAccessibilityLabel(targetState.accessibilityLabel)
+        button.setAccessibilityValue(targetState.accessibilityValue)
+
+        if button.imagePosition != targetState.imagePosition {
+            button.imagePosition = targetState.imagePosition
+        }
+        if button.title != targetState.title {
+            button.title = targetState.title
+        }
+
+        switch targetState.imageKind {
+        case .warning:
+            button.image = warningImage()
+        case .noData(let desc):
+            button.image = noDataImage(accessibilityDesc: desc)
+        case .gauge(let symbolName, let desc):
+            let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: desc)
+            image?.isTemplate = true
             button.image = image
-            button.title = ""
-        case .percentageText:
-            let image = gaugeImage(forPercent: displayVal, accessibilityDesc: accessibilityDesc)
-            button.image = image
-            button.imagePosition = .imageLeading
-            button.title = " \(Int(displayVal))%"
-        case .coloredDots:
+        case .dots:
             button.image = displayPrefs.generateDotsImage(accounts: enabledAccounts, isDaemonReachable: store.isDaemonReachable)
-            button.title = ""
         }
     }
 
@@ -206,24 +297,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func gaugeImage(forPercent percent: Double, accessibilityDesc: String) -> NSImage? {
-        let symbolName: String
+    private func gaugeSymbolName(forPercent percent: Double) -> String {
         switch percent {
         case ..<16.5:
-            symbolName = "gauge.with.dots.needle.0percent"
+            return "gauge.with.dots.needle.0percent"
         case 16.5..<41.5:
-            symbolName = "gauge.with.dots.needle.33percent"
+            return "gauge.with.dots.needle.33percent"
         case 41.5..<58.5:
-            symbolName = "gauge.with.dots.needle.50percent"
+            return "gauge.with.dots.needle.50percent"
         case 58.5..<83.5:
-            symbolName = "gauge.with.dots.needle.67percent"
+            return "gauge.with.dots.needle.67percent"
         default:
-            symbolName = "gauge.with.dots.needle.100percent"
+            return "gauge.with.dots.needle.100percent"
         }
-
-        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibilityDesc)
-        image?.isTemplate = true
-        return image
     }
 
     @objc private func handleStatusItemClick() {

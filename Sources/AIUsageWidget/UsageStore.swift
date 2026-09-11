@@ -100,12 +100,17 @@ final class UsageStore: ObservableObject {
 
         switch await client.status() {
         case .success(let response):
-            isDaemonReachable = true
-            accounts = response.accounts
+            if !isDaemonReachable {
+                isDaemonReachable = true
+            }
+            if accounts != response.accounts {
+                accounts = response.accounts
+            }
             NotificationManager.shared.evaluate(accounts: accounts, config: config)
-            await loadAllHistory()
         case .failure:
-            isDaemonReachable = false
+            if isDaemonReachable {
+                isDaemonReachable = false
+            }
         }
     }
 
@@ -116,12 +121,18 @@ final class UsageStore: ObservableObject {
 
         switch await client.refresh(accountId: accountId) {
         case .success(let response):
-            isDaemonReachable = true
-            accounts = response.accounts
+            if !isDaemonReachable {
+                isDaemonReachable = true
+            }
+            if accounts != response.accounts {
+                accounts = response.accounts
+            }
             NotificationManager.shared.evaluate(accounts: accounts, config: config)
             await loadAllHistory()
         case .failure:
-            isDaemonReachable = false
+            if isDaemonReachable {
+                isDaemonReachable = false
+            }
         }
     }
 

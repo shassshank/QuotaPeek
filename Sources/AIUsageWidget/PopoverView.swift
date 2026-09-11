@@ -397,28 +397,31 @@ private struct AccountCard: View {
         account.provider == .antigravity ? 98 : 46
     }
 
+    @ViewBuilder
     private func windowRow(label: String, percent: Double?, resetsAt: Int?, isMuted: Bool = false) -> some View {
-        guard let percent else { return AnyView(EmptyView()) }
+        if let percent {
+            let displayPercent: Double = {
+                switch metric {
+                case .used:
+                    return min(max(percent, 0), 100)
+                case .remaining:
+                    return min(max(100.0 - percent, 0), 100)
+                }
+            }()
 
-        let displayPercent: Double
-        switch metric {
-        case .used:
-            displayPercent = min(max(percent, 0), 100)
-        case .remaining:
-            displayPercent = min(max(100.0 - percent, 0), 100)
-        }
+            let metricLabel = metric == .remaining ? "rem" : ""
+            let percentDisplayString = metricLabel.isEmpty ? "\(Int(displayPercent))%" : "\(Int(displayPercent))% \(metricLabel)"
 
-        let metricLabel = metric == .remaining ? "rem" : ""
-        let percentDisplayString = metricLabel.isEmpty ? "\(Int(displayPercent))%" : "\(Int(displayPercent))% \(metricLabel)"
+            let accessibilityText: String = {
+                var text = "\(provider.displayName) (\(account.label)) \(label): \(Int(displayPercent)) percent \(metric.displayName.lowercased())"
+                if let resetsAt {
+                    text += ", resets \(resetCountdown(resetsAt))"
+                }
+                return text
+            }()
 
-        var accessibilityText = "\(provider.displayName) (\(account.label)) \(label): \(Int(displayPercent)) percent \(metric.displayName.lowercased())"
-        if let resetsAt {
-            accessibilityText += ", resets \(resetCountdown(resetsAt))"
-        }
+            let barColor = isMuted ? colorForPercent(displayPercent, metric: metric).opacity(0.5) : colorForPercent(displayPercent, metric: metric)
 
-        let barColor = isMuted ? colorForPercent(displayPercent, metric: metric).opacity(0.5) : colorForPercent(displayPercent, metric: metric)
-
-        return AnyView(
             HStack(spacing: 8) {
                 Text(label)
                     .font(.caption)
@@ -439,7 +442,7 @@ private struct AccountCard: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityText)
-        )
+        }
     }
 
     private func colorForPercent(_ percent: Double, metric: PercentageMetric) -> Color {

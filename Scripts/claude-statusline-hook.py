@@ -34,9 +34,67 @@ def find_cwd(payload):
     return None
 
 
+def find_git_dir(cwd):
+    if not cwd or not os.path.isdir(cwd):
+        return None
+    cur = os.path.abspath(cwd)
+    while True:
+        candidate = os.path.join(cur, ".git")
+        if os.path.isdir(candidate):
+            return candidate
+        if os.path.isfile(candidate):
+            try:
+                with open(candidate, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read().strip()
+                if content.startswith("gitdir:"):
+                    gitdir = content[len("gitdir:"):].strip()
+                    if not os.path.isabs(gitdir):
+                        gitdir = os.path.abspath(os.path.join(cur, gitdir))
+                    if os.path.isdir(gitdir):
+                        return gitdir
+            except Exception:
+                pass
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return None
+        cur = parent
+
+
+def git_head_branch(cwd):
+    if not cwd or not os.path.isdir(cwd):
+        return None
+    try:
+        git_dir = find_git_dir(cwd)
+        if git_dir:
+            head_path = os.path.join(git_dir, "HEAD")
+            if os.path.isfile(head_path):
+                with open(head_path, "r", encoding="utf-8", errors="replace") as f:
+                    line = f.read().strip()
+                if line.startswith("ref: refs/heads/"):
+                    return line[len("ref: refs/heads/"):].strip()
+                return line[:7]
+    except Exception:
+        pass
+    try:
+        result = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode == 0:
+            branch = result.stdout.strip()
+            return branch if branch else None
+    except Exception:
+        pass
+    return None
+
+
 def is_git_repo(cwd):
     if not cwd or not os.path.isdir(cwd):
         return False
+    if find_git_dir(cwd) is not None:
+        return True
     try:
         result = subprocess.run(
             ["git", "-C", cwd, "rev-parse", "--is-inside-work-tree"],
@@ -53,19 +111,46 @@ def git_remote_repo_name(cwd):
     if not cwd or not os.path.isdir(cwd):
         return None
     try:
+        git_dir = find_git_dir(cwd)
+        if git_dir:
+            commondir_file = os.path.join(git_dir, "commondir")
+            common_git_dir = git_dir
+            if os.path.isfile(commondir_file):
+                try:
+                    with open(commondir_file, "r", encoding="utf-8", errors="replace") as f:
+                        rel = f.read().strip()
+                    common_git_dir = os.path.normpath(os.path.join(git_dir, rel))
+                except Exception:
+                    pass
+            config_path = os.path.join(common_git_dir, "config")
+            if os.path.isfile(config_path):
+                in_origin = False
+                with open(config_path, "r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("["):
+                            in_origin = (line.lower() == '[remote "origin"]')
+                        elif in_origin and (line.startswith("url =") or line.startswith("url=")):
+                            url = line.split("=", 1)[1].strip()
+                            if url:
+                                name = url.rstrip("/").rsplit("/", 1)[-1]
+                                return name[: -len(".git")] if name.endswith(".git") else name
+    except Exception:
+        pass
+    try:
         result = subprocess.run(
             ["git", "-C", cwd, "remote", "get-url", "origin"],
             capture_output=True,
             text=True,
             timeout=2,
         )
+        url = result.stdout.strip()
+        if url:
+            name = url.rstrip("/").rsplit("/", 1)[-1]
+            return name[: -len(".git")] if name.endswith(".git") else name
     except Exception:
-        return None
-    url = result.stdout.strip()
-    if not url:
-        return None
-    name = url.rstrip("/").rsplit("/", 1)[-1]
-    return name[: -len(".git")] if name.endswith(".git") else name
+        pass
+    return None
 
 
 def location_segment(payload, cwd):

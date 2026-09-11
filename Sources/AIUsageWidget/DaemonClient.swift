@@ -13,12 +13,39 @@ final class DaemonClient {
     static let baseURL = URL(string: "http://127.0.0.1:47831")!
 
     private let session: URLSession
+    private var cachedToken: String?
+    private let tokenLock = NSLock()
 
     init() {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 20
         config.timeoutIntervalForResource = 20
         self.session = URLSession(configuration: config)
+    }
+
+    private func getAuthToken(forceReload: Bool = false) -> String? {
+        tokenLock.lock()
+        defer { tokenLock.unlock() }
+
+        if !forceReload, let token = cachedToken, !token.isEmpty {
+            return token
+        }
+
+        let tokenURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/AIUsageWidget/auth-token")
+        if let token = try? String(contentsOf: tokenURL, encoding: .utf8) {
+            let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+            cachedToken = trimmed
+            return trimmed
+        }
+        cachedToken = nil
+        return nil
+    }
+
+    private func invalidateToken() {
+        tokenLock.lock()
+        cachedToken = nil
+        tokenLock.unlock()
     }
 
     func status() async -> Result<StatusResponse, DaemonError> {
@@ -110,17 +137,15 @@ final class DaemonClient {
 
     // MARK: - Internal HTTP Request
 
-    private func request<T: Decodable>(path: String, method: String, body: Data? = nil) async -> Result<T, DaemonError> {
+    private func request<T: Decodable>(path: String, method: String, body: Data? = nil, isRetryAfterAuthRefresh: Bool = false) async -> Result<T, DaemonError> {
         var request = URLRequest(url: Self.baseURL.appendingPathComponent(path.hasPrefix("/") ? String(path.dropFirst()) : path))
         // appendingPathComponent escapes "?" - rebuild with URLComponents when there's a query string.
         if path.contains("?"), let url = URL(string: Self.baseURL.absoluteString + path) {
             request = URLRequest(url: url)
         }
         request.httpMethod = method
-        let tokenURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/AIUsageWidget/auth-token")
-        if let token = try? String(contentsOf: tokenURL, encoding: .utf8) {
-            request.setValue(token.trimmingCharacters(in: .whitespacesAndNewlines), forHTTPHeaderField: "X-Auth-Token")
+        if let token = getAuthToken(forceReload: isRetryAfterAuthRefresh) {
+            request.setValue(token, forHTTPHeaderField: "X-Auth-Token")
         }
         if let body {
             request.httpBody = body
@@ -130,6 +155,10 @@ final class DaemonClient {
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { return .failure(.unreachable) }
+            if http.statusCode == 401 && !isRetryAfterAuthRefresh {
+                invalidateToken()
+                return await self.request(path: path, method: method, body: body, isRetryAfterAuthRefresh: true)
+            }
             guard (200...299).contains(http.statusCode) else { return .failure(.badResponse(http.statusCode)) }
             let responseData = data.isEmpty ? "{}".data(using: .utf8)! : data
             guard let decoded = try? JSONDecoder().decode(T.self, from: responseData) else { return .failure(.decodeFailed) }

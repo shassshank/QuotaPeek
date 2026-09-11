@@ -307,6 +307,69 @@ final class DisplayPreferences: ObservableObject {
         }
     }
 
+    enum DotColor: Equatable {
+        case gray
+        case orange
+        case purple
+        case green
+        case yellow
+        case red
+
+        var nsColor: NSColor {
+            switch self {
+            case .gray: return .systemGray
+            case .orange: return .systemOrange
+            case .purple: return .systemPurple
+            case .green: return .systemGreen
+            case .yellow: return .systemYellow
+            case .red: return .systemRed
+            }
+        }
+    }
+
+    func dotColor(for account: Account, isDaemonReachable: Bool) -> DotColor {
+        guard isDaemonReachable else { return .gray }
+        switch account.state {
+        case .error:
+            return .orange
+        case .unknown:
+            return .gray
+        case .stale:
+            return .orange
+        case .restored:
+            return .purple
+        case .fresh:
+            if let data = account.data {
+                let usageValues = [data.usedPercent5h, data.usedPercentWeekly].compactMap { $0 }
+                if let maxVal = usageValues.max() {
+                    let displayed = displayPercent(forUsedPercent: maxVal)
+                    switch percentageMetric {
+                    case .used:
+                        if displayed < 60 {
+                            return .green
+                        } else if displayed < 85 {
+                            return .yellow
+                        } else {
+                            return .red
+                        }
+                    case .remaining:
+                        if displayed > 40 {
+                            return .green
+                        } else if displayed > 15 {
+                            return .yellow
+                        } else {
+                            return .red
+                        }
+                    }
+                } else {
+                    return .gray
+                }
+            } else {
+                return .gray
+            }
+        }
+    }
+
     /// Generates a crisp multi-dot NSImage representing per-account status in the menu bar.
     /// Strictly branches on account `state` per Task B6: stale/disconnected/error accounts never render as healthy green dots.
     func generateDotsImage(accounts: [Account], isDaemonReachable: Bool) -> NSImage {
@@ -333,52 +396,8 @@ final class DisplayPreferences: ObservableObject {
                 let rect = NSRect(x: x, y: y, width: dotDiameter, height: dotDiameter)
                 let path = NSBezierPath(ovalIn: rect)
 
-                let dotColor: NSColor
-                if !isDaemonReachable {
-                    dotColor = .systemGray
-                } else {
-                    switch account.state {
-                    case .error:
-                        dotColor = .systemOrange
-                    case .unknown:
-                        dotColor = .systemGray
-                    case .stale:
-                        dotColor = .systemOrange
-                    case .restored:
-                        dotColor = .systemPurple
-                    case .fresh:
-                        if let data = account.data {
-                            let usageValues = [data.usedPercent5h, data.usedPercentWeekly].compactMap { $0 }
-                            if let maxVal = usageValues.max() {
-                                let displayed = displayPercent(forUsedPercent: maxVal)
-                                switch percentageMetric {
-                                case .used:
-                                    if displayed < 60 {
-                                        dotColor = .systemGreen
-                                    } else if displayed < 85 {
-                                        dotColor = .systemYellow
-                                    } else {
-                                        dotColor = .systemRed
-                                    }
-                                case .remaining:
-                                    if displayed > 40 {
-                                        dotColor = .systemGreen
-                                    } else if displayed > 15 {
-                                        dotColor = .systemYellow
-                                    } else {
-                                        dotColor = .systemRed
-                                    }
-                                }
-                            } else {
-                                dotColor = .systemGray
-                            }
-                        } else {
-                            dotColor = .systemGray
-                        }
-                    }
-                }
-
-                dotColor.setFill()
+                let color = dotColor(for: account, isDaemonReachable: isDaemonReachable)
+                color.nsColor.setFill()
                 path.fill()
             }
         }
