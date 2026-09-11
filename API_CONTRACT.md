@@ -1,7 +1,7 @@
-# AIUsageWidget daemon API contract (v1)
+# QuotaPeek daemon API contract (v1)
 
 This is the single source of truth for the boundary between the Go daemon
-(`Backend/`) and the Swift menu bar shell (`Sources/AIUsageWidget/`). Both
+(`Backend/`) and the Swift menu bar shell (`Sources/QuotaPeek/`). Both
 sides build against this document in parallel — do not invent fields that
 aren't here without updating this file first.
 
@@ -15,7 +15,7 @@ Every endpoint, including `GET /status` and `GET /accounts`, requires
 `X-Auth-Token`. Missing or incorrect
 credentials return HTTP 401 without performing the operation. At startup the
 daemon generates a random 256-bit token and atomically writes
-`~/Library/Application Support/AIUsageWidget/auth-token` with mode 0600. The
+`~/Library/Application Support/QuotaPeek/auth-token` with mode 0600. The
 Swift client and installed injection hooks read this file for each request,
 so restarting the daemon does not require restarting clients. Re-run the installer
 to upgrade existing installed hooks to authenticated requests. This is a per-user
@@ -138,7 +138,7 @@ Returns the current `Config`.
 
 ### `PUT /config`
 Body: full or partial `Config` (only include the providers you're changing).
-Persists to `~/Library/Application Support/AIUsageWidget/config.json` and
+Persists to `~/Library/Application Support/QuotaPeek/config.json` and
 takes effect immediately (reschedules keychain poll timers). Returns the
 resulting full `Config`. Each included provider replaces its full config, so include
 `routes_enabled` and `keychain_poll_interval_sec` along with

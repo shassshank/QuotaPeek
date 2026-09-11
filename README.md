@@ -1,4 +1,4 @@
-# AI Usage Widget
+# QuotaPeek
 
 A lightweight macOS menu bar app showing live 5-hour and weekly usage limits
 (and reset times) for Claude Code, Codex, and Antigravity.
@@ -7,11 +7,11 @@ A lightweight macOS menu bar app showing live 5-hour and weekly usage limits
 
 Two pieces:
 
-- **`Backend/` — `aiusaged`**, a small Go daemon that owns everything:
+- **`Backend/` — `quotapeekd`**, a small Go daemon that owns everything:
   credential access, provider polling, config, and error state. It listens
   on `127.0.0.1:47831` (loopback only — nothing here ever leaves the Mac) and
   serves a small HTTP API described in full in `API_CONTRACT.md`.
-- **`Sources/AIUsageWidget/` — the menu bar app**, a thin Swift/SwiftUI shell
+- **`Sources/QuotaPeek/` — the menu bar app**, a thin Swift/SwiftUI shell
   (status bar icon, popover, Settings window). It never touches Keychain or
   any provider API directly — it only talks to the daemon over that local
   API.
@@ -58,7 +58,7 @@ Or without cloning the repo, via curl (downloads a prebuilt release tarball
 instead of building anything locally):
 
 ```
-curl -fsSL https://raw.githubusercontent.com/<owner>/AIUsageWidget/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/<owner>/QuotaPeek/main/install.sh | bash
 ```
 
 `install.sh` auto-detects which of these it's doing — building from source
@@ -69,7 +69,7 @@ explicitly with `--local` / `--remote`.
 Either way, it installs the Swift app as a normal `.app` bundle in
 `/Applications` (falling back to `~/Applications`), and installs the daemon
 plus the two statusLine hook scripts to
-`~/Library/Application Support/AIUsageWidget/bin`. It also installs
+`~/Library/Application Support/QuotaPeek/bin`. It also installs
 LaunchAgents so the daemon and the app start at login, and merges a
 `statusLine` entry into `~/.claude/settings.json` and
 `~/.gemini/antigravity-cli/settings.json` (existing settings preserved) so
@@ -84,7 +84,7 @@ Safe to re-run.
 ## Uninstall
 
 ```
-~/Library/Application\ Support/AIUsageWidget/bin/uninstall.sh
+~/Library/Application\ Support/QuotaPeek/bin/uninstall.sh
 ```
 
 This stops and removes the LaunchAgents, deletes the app bundle and support

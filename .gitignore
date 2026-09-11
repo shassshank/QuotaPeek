@@ -1,7 +1,7 @@
 .build/
 .build-go/
 Backend/.gocache/
-Backend/aiusaged
+Backend/quotapeekd
 *.pyc
 __pycache__/
 .DS_Store

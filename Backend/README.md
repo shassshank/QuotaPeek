@@ -1,4 +1,4 @@
-# AI Usage Widget Daemon
+# QuotaPeek Daemon
 
 Go backend for the macOS menu bar app. It serves the API in `../API_CONTRACT.md`
 on loopback only:
@@ -11,7 +11,7 @@ go run .
 The daemon listens on `127.0.0.1:47831` and persists config at:
 
 ```text
-~/Library/Application Support/AIUsageWidget/config.json
+~/Library/Application Support/QuotaPeek/config.json
 ```
 
 There are no flags or required environment variables. Claude and Antigravity

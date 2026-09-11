@@ -1,11 +1,11 @@
 #!/bin/bash
-# Installs AIUsageWidget:
+# Installs QuotaPeek:
 #   - installs the menu bar app (a thin UI shell that only talks to the
 #     daemon's local HTTP API - it never touches Keychain or any provider
 #     API directly) as a normal .app bundle in /Applications (or
 #     ~/Applications if /Applications isn't writable)
 #   - copies the daemon (Backend/) and the statusLine hook scripts into
-#     ~/Library/Application Support/AIUsageWidget/bin
+#     ~/Library/Application Support/QuotaPeek/bin
 #   - installs LaunchAgents so the daemon and the app start at login
 #   - optionally auto-detects installed AI CLIs (Claude, Codex, Antigravity)
 #     and registers them as accounts, with consent asked up front
@@ -20,7 +20,7 @@
 #     builds the Go daemon and Swift app from source.
 #   - Piped via curl, or run with --remote: downloads a prebuilt release
 #     tarball from GitHub instead of building anything locally.
-#     curl -fsSL https://raw.githubusercontent.com/<owner>/AIUsageWidget/main/install.sh | bash
+#     curl -fsSL https://raw.githubusercontent.com/<owner>/QuotaPeek/main/install.sh | bash
 #
 #     Files delivered via `curl` (or any programmatic download) do NOT
 #     receive the com.apple.quarantine extended attribute that macOS
@@ -36,8 +36,8 @@
 # the settings.json merge only ever touches the "statusLine" key.
 set -euo pipefail
 
-GITHUB_REPO="${AIW_GITHUB_REPO:-<owner>/AIUsageWidget}"
-APP_SUPPORT="$HOME/Library/Application Support/AIUsageWidget"
+GITHUB_REPO="${QUOTAPEEK_GITHUB_REPO:-<owner>/QuotaPeek}"
+APP_SUPPORT="$HOME/Library/Application Support/QuotaPeek"
 BIN_DIR="$APP_SUPPORT/bin"
 LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
 PYTHON3="$(command -v python3 || echo python3)"
@@ -50,7 +50,7 @@ if [[ ! -w "$APP_INSTALL_DIR" ]]; then
     APP_INSTALL_DIR="$HOME/Applications"
     mkdir -p "$APP_INSTALL_DIR"
 fi
-APP_BUNDLE_DEST="$APP_INSTALL_DIR/AIUsageWidget.app"
+APP_BUNDLE_DEST="$APP_INSTALL_DIR/QuotaPeek.app"
 
 MODE=""
 VERSION=""
@@ -59,10 +59,10 @@ VERSION=""
 case "${1:-}" in
     --app-login-on|--app-login-off|--daemon-start|--daemon-stop)
         case "$1" in
-            --app-login-on) service=com.aiusagewidget.app; action=load ;;
-            --app-login-off) service=com.aiusagewidget.app; action=unload ;;
-            --daemon-start) service=com.aiusagewidget.daemon; action=load ;;
-            --daemon-stop) service=com.aiusagewidget.daemon; action=unload ;;
+            --app-login-on) service=com.quotapeek.app; action=load ;;
+            --app-login-off) service=com.quotapeek.app; action=unload ;;
+            --daemon-start) service=com.quotapeek.daemon; action=load ;;
+            --daemon-stop) service=com.quotapeek.daemon; action=unload ;;
         esac
         exec launchctl "$action" -w "$LAUNCH_AGENTS/$service.plist"
         ;;
@@ -107,7 +107,7 @@ fi
 if [[ "$MODE" == "local" ]]; then
     echo "==> Building Go daemon"
     cd "$REPO_DIR/Backend"
-    go build -o "$REPO_DIR/.build-go/aiusaged" .
+    go build -o "$REPO_DIR/.build-go/quotapeekd" .
 
     echo "==> Building Swift menu bar app"
     cd "$REPO_DIR"
@@ -118,17 +118,17 @@ if [[ "$MODE" == "local" ]]; then
 
     echo "==> Installing to $BIN_DIR"
     mkdir -p "$BIN_DIR"
-    cp "$REPO_DIR/.build-go/aiusaged" "$BIN_DIR/aiusaged"
-    rm -rf "$BIN_DIR/AIUsageWidget.app" # migrate away from the old (pre-/Applications) install location
+    cp "$REPO_DIR/.build-go/quotapeekd" "$BIN_DIR/quotapeekd"
+    rm -rf "$BIN_DIR/QuotaPeek.app" # migrate away from the old (pre-/Applications) install location
     echo "==> Installing app bundle to $APP_BUNDLE_DEST"
     rm -rf "$APP_BUNDLE_DEST"
-    cp -R "$REPO_DIR/.build/release/AIUsageWidget.app" "$APP_BUNDLE_DEST"
+    cp -R "$REPO_DIR/.build/release/QuotaPeek.app" "$APP_BUNDLE_DEST"
     cp "$REPO_DIR/Scripts/claude-statusline-hook.py" "$BIN_DIR/"
     cp "$REPO_DIR/Scripts/antigravity-statusline-hook.py" "$BIN_DIR/"
     cp "$REPO_DIR/Scripts/uninstall.sh" "$BIN_DIR/uninstall.sh"
     cp "$REPO_DIR/Scripts/run-with-log-rotation.sh" "$BIN_DIR/run-with-log-rotation.sh"
     chmod +x "$BIN_DIR/uninstall.sh" "$BIN_DIR/run-with-log-rotation.sh"
-    chmod +x "$BIN_DIR"/*.py "$BIN_DIR/aiusaged"
+    chmod +x "$BIN_DIR"/*.py "$BIN_DIR/quotapeekd"
 
     TEMPLATE_DIR="$REPO_DIR/LaunchAgents"
 else
@@ -166,14 +166,14 @@ except Exception:
             exit 1
         fi
     fi
-    echo "==> Installing AIUsageWidget $VERSION"
+    echo "==> Installing QuotaPeek $VERSION"
 
-    DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/aiusagewidget-macos.tar.gz"
+    DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/quotapeek-macos.tar.gz"
     TMPDIR_INSTALL="$(mktemp -d)"
     trap 'rm -rf "$TMPDIR_INSTALL"' EXIT
 
     echo "==> Downloading $DOWNLOAD_URL"
-    curl -fSL "$DOWNLOAD_URL" -o "$TMPDIR_INSTALL/aiusagewidget-macos.tar.gz"
+    curl -fSL "$DOWNLOAD_URL" -o "$TMPDIR_INSTALL/quotapeek-macos.tar.gz"
     CHECKSUMS_URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/SHA256SUMS"
     if ! curl -fSL "$CHECKSUMS_URL" -o "$TMPDIR_INSTALL/SHA256SUMS"; then
         echo "ERROR: Could not download required SHA256SUMS for $VERSION; installation aborted." >&2
@@ -181,41 +181,41 @@ except Exception:
     fi
 
     # Select only the tarball entry: the manifest also covers the DMG.
-    EXPECTED_SHA256=$(awk '$2 == "aiusagewidget-macos.tar.gz" && NF == 2 {print $1}' "$TMPDIR_INSTALL/SHA256SUMS")
+    EXPECTED_SHA256=$(awk '$2 == "quotapeek-macos.tar.gz" && NF == 2 {print $1}' "$TMPDIR_INSTALL/SHA256SUMS")
     if [[ ! "$EXPECTED_SHA256" =~ ^[[:xdigit:]]{64}$ ]]; then
         echo "ERROR: SHA256SUMS must contain exactly one valid tarball checksum; installation aborted." >&2
         exit 1
     fi
     echo "==> Verifying tarball SHA256"
-    if ! (cd "$TMPDIR_INSTALL" && printf '%s  aiusagewidget-macos.tar.gz\n' "$EXPECTED_SHA256" | shasum -a 256 -c -); then
+    if ! (cd "$TMPDIR_INSTALL" && printf '%s  quotapeek-macos.tar.gz\n' "$EXPECTED_SHA256" | shasum -a 256 -c -); then
         echo "ERROR: Tarball SHA256 verification failed; installation aborted." >&2
         exit 1
     fi
 
     echo "==> Extracting"
-    tar xzf "$TMPDIR_INSTALL/aiusagewidget-macos.tar.gz" -C "$TMPDIR_INSTALL"
+    tar xzf "$TMPDIR_INSTALL/quotapeek-macos.tar.gz" -C "$TMPDIR_INSTALL"
 
     echo "==> Installing to $BIN_DIR"
     mkdir -p "$BIN_DIR"
-    rm -rf "$BIN_DIR/AIUsageWidget.app" # migrate away from the old (pre-/Applications) install location
-    if [[ -d "$TMPDIR_INSTALL/AIUsageWidget.app" ]]; then
+    rm -rf "$BIN_DIR/QuotaPeek.app" # migrate away from the old (pre-/Applications) install location
+    if [[ -d "$TMPDIR_INSTALL/QuotaPeek.app" ]]; then
         echo "==> Installing app bundle to $APP_BUNDLE_DEST"
         rm -rf "$APP_BUNDLE_DEST"
-        cp -R "$TMPDIR_INSTALL/AIUsageWidget.app" "$APP_BUNDLE_DEST"
+        cp -R "$TMPDIR_INSTALL/QuotaPeek.app" "$APP_BUNDLE_DEST"
     fi
-    cp "$TMPDIR_INSTALL/aiusaged" "$BIN_DIR/aiusaged"
+    cp "$TMPDIR_INSTALL/quotapeekd" "$BIN_DIR/quotapeekd"
     cp "$TMPDIR_INSTALL/claude-statusline-hook.py" "$BIN_DIR/"
     cp "$TMPDIR_INSTALL/antigravity-statusline-hook.py" "$BIN_DIR/"
     cp "$TMPDIR_INSTALL/run-with-log-rotation.sh" "$BIN_DIR/"
     cp "$TMPDIR_INSTALL/uninstall.sh" "$BIN_DIR/"
-    chmod +x "$BIN_DIR"/*.py "$BIN_DIR/aiusaged" "$BIN_DIR/run-with-log-rotation.sh" "$BIN_DIR/uninstall.sh"
+    chmod +x "$BIN_DIR"/*.py "$BIN_DIR/quotapeekd" "$BIN_DIR/run-with-log-rotation.sh" "$BIN_DIR/uninstall.sh"
 
     TEMPLATE_DIR="$TMPDIR_INSTALL"
 fi
 
 echo "==> Installing LaunchAgents"
 mkdir -p "$LAUNCH_AGENTS"
-for name in com.aiusagewidget.daemon com.aiusagewidget.app; do
+for name in com.quotapeek.daemon com.quotapeek.app; do
     template="$TEMPLATE_DIR/$name.plist.template"
     dest="$LAUNCH_AGENTS/$name.plist"
     if [[ ! -f "$template" ]]; then

@@ -39,7 +39,7 @@ private struct RouteTestState {
 }
 
 private enum LaunchAgentManager {
-    static let serviceName = "com.aiusagewidget.app"
+    static let serviceName = "com.quotapeek.app"
 
     static var plistPath: String {
         FileManager.default.homeDirectoryForCurrentUser
@@ -791,7 +791,7 @@ private struct GeneralSettingsTab: View {
                     }
                 ))
                 .disabled(!isLaunchAgentInstalled)
-                .help(isLaunchAgentInstalled ? "Start AI Usage Widget automatically when logging in" : "App was not installed via install.sh")
+                .help(isLaunchAgentInstalled ? "Start QuotaPeek automatically when logging in" : "App was not installed via install.sh")
                 .accessibilityLabel("Launch at login")
 
                 if let err = launchAtLoginError {
@@ -1328,7 +1328,7 @@ private struct AdvancedSettingsTab: View {
 
     private var appSupportPath: String {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/AIUsageWidget", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/QuotaPeek", isDirectory: true)
             .path
     }
 
@@ -1342,7 +1342,7 @@ private struct AdvancedSettingsTab: View {
             Section("Maintenance & Uninstall") {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Uninstall AI Usage Widget")
+                        Text("Uninstall QuotaPeek")
                             .font(.body)
                         Text("Stops the background service, removes launch agents, and clears installed hooks.")
                             .font(.caption)
@@ -1407,7 +1407,7 @@ private struct AdvancedSettingsTab: View {
             }
         }
         .formStyle(.grouped)
-        .alert("Uninstall AIUsageWidget?", isPresented: $showUninstallConfirmation) {
+        .alert("Uninstall QuotaPeek?", isPresented: $showUninstallConfirmation) {
             Button("Uninstall", role: .destructive) {
                 runUninstallScript()
             }
@@ -1434,10 +1434,10 @@ private struct AdvancedSettingsTab: View {
         }
     }
 
-    /// Task D11: Executes fixed contract uninstaller at ~/Library/Application Support/AIUsageWidget/bin/uninstall.sh
+    /// Task D11: Executes fixed contract uninstaller at ~/Library/Application Support/QuotaPeek/bin/uninstall.sh
     private func runUninstallScript() {
         let scriptPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/AIUsageWidget/bin/uninstall.sh")
+            .appendingPathComponent("Library/Application Support/QuotaPeek/bin/uninstall.sh")
             .path
 
         guard FileManager.default.fileExists(atPath: scriptPath) else {
@@ -1459,7 +1459,7 @@ private struct AdvancedSettingsTab: View {
             process.waitUntilExit()
             if process.terminationStatus == 0 {
                 isUninstallSuccessful = true
-                uninstallResultAlert = "AIUsageWidget uninstalled successfully. The application will now close."
+                uninstallResultAlert = "QuotaPeek uninstalled successfully. The application will now close."
             } else {
                 isUninstallSuccessful = false
                 uninstallResultAlert = "Uninstall failed with exit code \(process.terminationStatus)."

@@ -3,14 +3,14 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.aiusagewidget.daemon</string>
+    <string>com.quotapeek.daemon</string>
     <key>ProgramArguments</key>
     <array>
         <!-- Log rotation wrapper: checks log size before exec'ing the real
              binary. Rotates/truncates if over 5 MB, keeping one prior copy. -->
         <string>__BIN_DIR__/run-with-log-rotation.sh</string>
         <string>__APP_SUPPORT__/daemon.log</string>
-        <string>__BIN_DIR__/aiusaged</string>
+        <string>__BIN_DIR__/quotapeekd</string>
     </array>
     <!-- KeepAlive means launchd restarts the daemon if it ever dies unexpectedly.
          Quitting the app also unloads this agent (main.swift's quitAndStopDaemon),

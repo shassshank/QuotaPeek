@@ -331,7 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Shells out to unload the LaunchAgent daemon plist and terminates app (Task C8)
     static func quitAndStopDaemon() {
         let plistPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/com.aiusagewidget.daemon.plist")
+            .appendingPathComponent("Library/LaunchAgents/com.quotapeek.daemon.plist")
             .path
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
@@ -387,7 +387,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if settingsWindow == nil {
             let hostingController = NSHostingController(rootView: SettingsView(store: store))
             let window = NSWindow(contentViewController: hostingController)
-            window.title = "AI Usage Widget Settings"
+            window.title = "QuotaPeek Settings"
             window.styleMask = [.titled, .closable, .resizable, .miniaturizable]
             window.minSize = NSSize(width: 520, height: 560)
             window.setContentSize(NSSize(width: 560, height: 700))
@@ -472,9 +472,9 @@ private final class SingleInstanceLock {
         let appSupport = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Application Support", isDirectory: true)
-            .appendingPathComponent("AIUsageWidget", isDirectory: true)
+            .appendingPathComponent("QuotaPeek", isDirectory: true)
         let temp = URL(fileURLWithPath: "/tmp", isDirectory: true)
-            .appendingPathComponent("AIUsageWidget-\(getuid())", isDirectory: true)
+            .appendingPathComponent("QuotaPeek-\(getuid())", isDirectory: true)
 
         return [appSupport, temp]
     }

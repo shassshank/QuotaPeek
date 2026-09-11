@@ -5,14 +5,14 @@
 # Usage: Scripts/build-app-bundle.sh [--version X.Y.Z] [--build N]
 #
 # Prerequisites:
-#   - .build/release/AIUsageWidget   (swift build -c release output)
-#   - .build-go/aiusaged             (go build output)
+#   - .build/release/QuotaPeek   (swift build -c release output)
+#   - .build-go/quotapeekd             (go build output)
 #   - Info.plist                      (repo root)
-#   - AIUsageWidget.entitlements      (repo root)
+#   - QuotaPeek.entitlements      (repo root)
 #   - Resources/AppIcon.icns          (repo root)
 #
 # Output:
-#   - .build/release/AIUsageWidget.app/  (ready-to-distribute bundle)
+#   - .build/release/QuotaPeek.app/  (ready-to-distribute bundle)
 #
 # Ad-hoc code signing (--sign -):
 #   Apple Silicon (arm64) binaries are *required* to carry at least an ad-hoc
@@ -35,11 +35,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-SWIFT_BINARY="$REPO_DIR/.build/release/AIUsageWidget"
-GO_BINARY="$REPO_DIR/.build-go/aiusaged"
-APP_BUNDLE="$REPO_DIR/.build/release/AIUsageWidget.app"
+SWIFT_BINARY="$REPO_DIR/.build/release/QuotaPeek"
+GO_BINARY="$REPO_DIR/.build-go/quotapeekd"
+APP_BUNDLE="$REPO_DIR/.build/release/QuotaPeek.app"
 INFO_PLIST="$REPO_DIR/Info.plist"
-ENTITLEMENTS="$REPO_DIR/AIUsageWidget.entitlements"
+ENTITLEMENTS="$REPO_DIR/QuotaPeek.entitlements"
 APP_ICON="$REPO_DIR/Resources/AppIcon.icns"
 MENU_BAR_ICON_1X="$REPO_DIR/Resources/MenuBarIcon.png"
 MENU_BAR_ICON_2X="$REPO_DIR/Resources/MenuBarIcon@2x.png"
@@ -54,7 +54,7 @@ for f in "$SWIFT_BINARY" "$GO_BINARY" "$INFO_PLIST" "$ENTITLEMENTS" "$APP_ICON" 
     fi
 done
 
-echo "==> Assembling AIUsageWidget.app bundle"
+echo "==> Assembling QuotaPeek.app bundle"
 
 # Create bundle directory structure
 rm -rf "$APP_BUNDLE"
@@ -62,7 +62,7 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
 # Copy the Swift binary into the bundle
-cp "$SWIFT_BINARY" "$APP_BUNDLE/Contents/MacOS/AIUsageWidget"
+cp "$SWIFT_BINARY" "$APP_BUNDLE/Contents/MacOS/QuotaPeek"
 
 # Copy the app icon and menu bar status item icon into the bundle
 cp "$APP_ICON" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"

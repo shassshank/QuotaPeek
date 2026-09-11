@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.aiusagewidget.app</string>
+    <string>com.quotapeek.app</string>
     <key>CFBundleName</key>
-    <string>AIUsageWidget</string>
+    <string>QuotaPeek</string>
     <key>CFBundleDisplayName</key>
-    <string>AI Usage Widget</string>
+    <string>QuotaPeek</string>
     <key>CFBundleExecutable</key>
-    <string>AIUsageWidget</string>
+    <string>QuotaPeek</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundlePackageType</key>

@@ -11,7 +11,7 @@
 # with the log path and real binary passed as subsequent arguments.
 set -euo pipefail
 
-MAX_LOG_BYTES="${AIW_MAX_LOG_BYTES:-5242880}"   # 5 MB default
+MAX_LOG_BYTES="${QUOTAPEEK_MAX_LOG_BYTES:-5242880}"   # 5 MB default
 
 if [[ $# -lt 2 ]]; then
     echo "Usage: $0 <logfile> <binary> [args...]" >&2

@@ -71,7 +71,7 @@ func FetchCodexAt(ctx context.Context, configDir string) (UsageData, error) {
 	}()
 
 	enc := json.NewEncoder(stdin)
-	if err := enc.Encode(map[string]any{"id": 1, "method": "initialize", "params": map[string]any{"clientInfo": map[string]string{"name": "aiusagewidget", "version": "0.1.0"}}}); err != nil {
+	if err := enc.Encode(map[string]any{"id": 1, "method": "initialize", "params": map[string]any{"clientInfo": map[string]string{"name": "quotapeek", "version": "0.1.0"}}}); err != nil {
 		return UsageData{}, err
 	}
 	if err := enc.Encode(map[string]any{"id": 2, "method": "account/rateLimits/read", "params": nil}); err != nil {

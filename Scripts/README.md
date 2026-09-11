@@ -1,21 +1,21 @@
 # Scripts
 
-Build, install, and distribution scripts for AIUsageWidget.
+Build, install, and distribution scripts for QuotaPeek.
 
 ## Distribution Channels
 
 ### 1. Homebrew Cask (recommended for most users)
 
 ```bash
-brew tap <owner>/aiusagewidget
-brew install --cask aiusagewidget
-# Uninstall: brew uninstall --cask aiusagewidget
+brew tap <owner>/quotapeek
+brew install --cask quotapeek
+# Uninstall: brew uninstall --cask quotapeek
 ```
 
 ### 2. Curl-based installer (no local toolchain needed)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/AIUsageWidget/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/<owner>/QuotaPeek/main/install.sh | bash
 ```
 
 Downloads a prebuilt release tarball instead of building anything locally.
@@ -25,7 +25,7 @@ before extraction; installation aborts if it's missing or doesn't match.
 
 ### 3. DMG drag-to-install
 
-Download `AIUsageWidget-X.Y.Z.dmg` from the GitHub Releases page.
+Download `QuotaPeek-X.Y.Z.dmg` from the GitHub Releases page.
 
 > **Note:** Since the app is ad-hoc signed (not notarized), the first launch of
 > a browser-downloaded `.dmg` requires: right-click the app → **Open** → click

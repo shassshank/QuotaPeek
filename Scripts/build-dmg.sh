@@ -4,14 +4,14 @@
 # Usage: Scripts/build-dmg.sh [--version X.Y.Z]
 #
 # Prerequisites:
-#   - .build/release/AIUsageWidget.app  (from Scripts/build-app-bundle.sh)
+#   - .build/release/QuotaPeek.app  (from Scripts/build-app-bundle.sh)
 #
 # Output:
-#   - .build/release/AIUsageWidget-X.Y.Z.dmg
+#   - .build/release/QuotaPeek-X.Y.Z.dmg
 #
 # NOTE: Since we use ad-hoc signing (no Apple Developer ID / notarization),
 # users who download this .dmg from a browser will see a Gatekeeper warning
-# on first launch ("AIUsageWidget can't be opened because it is from an
+# on first launch ("QuotaPeek can't be opened because it is from an
 # unidentified developer").  The workaround is:
 #   1. Right-click (or Control-click) the app in /Applications
 #   2. Select "Open" from the context menu
@@ -32,8 +32,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-APP_BUNDLE="$REPO_DIR/.build/release/AIUsageWidget.app"
-DMG_NAME="AIUsageWidget-${VERSION}.dmg"
+APP_BUNDLE="$REPO_DIR/.build/release/QuotaPeek.app"
+DMG_NAME="QuotaPeek-${VERSION}.dmg"
 DMG_PATH="$REPO_DIR/.build/release/$DMG_NAME"
 DMG_STAGING="$REPO_DIR/.build/release/dmg-staging"
 
@@ -62,7 +62,7 @@ rm -f "$DMG_PATH"
 # -ov:       overwrite if exists
 # -format UDZO: zlib-compressed (good size, universal compatibility)
 hdiutil create \
-    -volname "AIUsageWidget" \
+    -volname "QuotaPeek" \
     -srcfolder "$DMG_STAGING" \
     -ov \
     -format UDZO \

@@ -1,15 +1,15 @@
 #!/bin/bash
-# uninstall.sh — Fully remove AIUsageWidget from the system.
+# uninstall.sh — Fully remove QuotaPeek from the system.
 #
 # This script is installed at:
-#   ~/Library/Application Support/AIUsageWidget/bin/uninstall.sh
+#   ~/Library/Application Support/QuotaPeek/bin/uninstall.sh
 # The Swift UI's Settings "Uninstall" button shells out to exactly that path.
 #
 # Actions:
 #   1. Unload both LaunchAgents (launchctl unload -w)
 #   2. Remove both plist files from ~/Library/LaunchAgents
-#   3. Remove ~/Library/Application Support/AIUsageWidget entirely
-#   4. Remove AIUsageWidget.app from /Applications or ~/Applications
+#   3. Remove ~/Library/Application Support/QuotaPeek entirely
+#   4. Remove QuotaPeek.app from /Applications or ~/Applications
 #   5. Reverse the statusLine hook injection in settings files:
 #      - ~/.claude/settings.json
 #      - ~/.gemini/antigravity-cli/settings.json
@@ -20,11 +20,11 @@
 set -euo pipefail
 
 PYTHON3="${PYTHON3:-$(command -v python3 || echo python3)}"
-APP_SUPPORT="$HOME/Library/Application Support/AIUsageWidget"
+APP_SUPPORT="$HOME/Library/Application Support/QuotaPeek"
 LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
 
 echo "==> Stopping and removing LaunchAgents"
-for label in com.aiusagewidget.daemon com.aiusagewidget.app; do
+for label in com.quotapeek.daemon com.quotapeek.app; do
     plist="$LAUNCH_AGENTS/$label.plist"
     if [[ -f "$plist" ]]; then
         launchctl unload -w "$plist" 2>/dev/null || true
@@ -60,12 +60,12 @@ if existing is None:
     sys.exit(0)
 
 # Detect whether the current statusLine is one WE installed (our hooks
-# always have "AIUsageWidget" in the command path).
+# always have "QuotaPeek" in the command path).
 is_ours = (
     isinstance(existing, dict)
     and existing.get("type") == "command"
     and isinstance(existing.get("command", ""), str)
-    and "AIUsageWidget" in existing.get("command", "")
+    and "QuotaPeek" in existing.get("command", "")
 )
 
 if not is_ours:
@@ -125,7 +125,7 @@ fi
 
 echo "==> Removing app bundle"
 for dir in "/Applications" "$HOME/Applications"; do
-    bundle="$dir/AIUsageWidget.app"
+    bundle="$dir/QuotaPeek.app"
     if [[ -d "$bundle" ]]; then
         rm -rf "$bundle"
         echo "  removed $bundle"
@@ -133,6 +133,6 @@ for dir in "/Applications" "$HOME/Applications"; do
 done
 
 echo ""
-echo "AIUsageWidget has been fully uninstalled."
+echo "QuotaPeek has been fully uninstalled."
 echo "Backup copies of your settings files (.bak.*) were left in place"
 echo "in case you need to recover any prior configuration."

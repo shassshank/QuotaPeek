@@ -485,7 +485,7 @@ func run(ctx context.Context) error {
 	}
 	server.collector.codexTokens.path = filepath.Join(filepath.Dir(path), "oauth-codex.json")
 	server.collector.antigravityTokens.path = filepath.Join(filepath.Dir(path), "oauth-antigravity.json")
-	log.Println("aiusaged listening on 127.0.0.1:47831")
+	log.Println("quotapeekd listening on 127.0.0.1:47831")
 	return server.serve(ctx, listener)
 }
 
