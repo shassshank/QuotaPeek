@@ -23,14 +23,21 @@ Pin a version with `-s -- --version vX.Y.Z`. The tarball's SHA256 is
 verified against the `SHA256SUMS` file published alongside each release
 before extraction; installation aborts if it's missing or doesn't match.
 
-### 3. DMG drag-to-install
+### 3. DMG install
 
-Download `QuotaPeek-X.Y.Z.dmg` from the GitHub Releases page.
+Download `QuotaPeek-X.Y.Z.dmg` from the GitHub Releases page, open it, then
+double-click **Install QuotaPeek.command** — it installs the app, daemon,
+statusLine hooks, and LaunchAgents in one step (the same file-placement
+logic as the curl installer, just run against the files already bundled in
+the DMG instead of a download). Just dragging `QuotaPeek.app` to
+`/Applications` is not enough on its own: the app only talks to the daemon
+over its local HTTP API and doesn't set the daemon up itself.
 
-> **Note:** Since the app is ad-hoc signed (not notarized), the first launch of
-> a browser-downloaded `.dmg` requires: right-click the app → **Open** → click
-> **Open** in the dialog.  This only needs to be done once.  The curl installer
-> and Homebrew cask do **not** have this issue.
+> **Note:** Since the app and installer are ad-hoc signed (not notarized),
+> the first launch of a browser-downloaded `.dmg`'s contents requires:
+> right-click the item → **Open** → click **Open** in the dialog. This only
+> needs to be done once per item. The curl installer and Homebrew cask do
+> **not** have this issue.
 
 ### 4. Build from source (`install.sh`)
 

@@ -15,12 +15,17 @@
 #   - the hook scripts read their own auth token from the auth-token file
 #     at run time, so they're copied to BIN_DIR as-is
 #
-# Two ways to get the files installed, auto-detected:
+# Three ways to get the files installed, auto-detected:
 #   - Local checkout (this script sitting next to Backend/ and Package.swift):
 #     builds the Go daemon and Swift app from source.
 #   - Piped via curl, or run with --remote: downloads a prebuilt release
 #     tarball from GitHub instead of building anything locally.
 #     curl -fsSL https://raw.githubusercontent.com/shassshank/QuotaPeek/main/install.sh | bash
+#   - Run with --from-dir <dir>: same as --remote's file-placement step, but
+#     sourced from an already-local directory (containing quotapeekd, the
+#     hook scripts, QuotaPeek.app, and the LaunchAgent templates) instead of
+#     downloading a tarball. This is what the "Install QuotaPeek.command"
+#     bundled inside the release DMG runs, pointed at its own directory.
 #
 #     Files delivered via `curl` (or any programmatic download) do NOT
 #     receive the com.apple.quarantine extended attribute that macOS
@@ -30,7 +35,9 @@
 #     block. This means an ad-hoc-signed binary installed via `curl | bash`
 #     runs without any notarization or paid Developer ID certificate. This
 #     is the same mechanism Homebrew, Rustup, nvm, and every other
-#     curl-pipe-bash installer relies on.
+#     curl-pipe-bash installer relies on. A DMG downloaded via a browser DOES
+#     carry the quarantine xattr, so "Install QuotaPeek.command" (like the
+#     .app itself) needs the one-time right-click → Open on first run.
 #
 # Safe to re-run: it overwrites its own previously-installed files only, and
 # the settings.json merge only ever touches the "statusLine" key.
@@ -54,6 +61,7 @@ APP_BUNDLE_DEST="$APP_INSTALL_DIR/QuotaPeek.app"
 
 MODE=""
 VERSION=""
+FROM_DIR=""
 
 # Lifecycle commands run without rebuilding or reinstalling.
 case "${1:-}" in
@@ -69,6 +77,7 @@ case "${1:-}" in
     "") ;;
     --remote) MODE="remote" ;;
     --local) MODE="local" ;;
+    --from-dir) FROM_DIR="${2:?--from-dir requires a directory argument}"; MODE="fromdir" ;;
     --version) VERSION="${2:?--version requires an argument}"; MODE="remote" ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
 esac
@@ -90,6 +99,11 @@ fi
 
 if [[ "$MODE" == "local" && -z "$REPO_DIR" ]]; then
     echo "ERROR: --local requires running this script from a full source checkout" >&2
+    exit 1
+fi
+
+if [[ "$MODE" == "fromdir" && ! -f "$FROM_DIR/quotapeekd" ]]; then
+    echo "ERROR: --from-dir $FROM_DIR does not look like an extracted QuotaPeek release (no quotapeekd found)" >&2
     exit 1
 fi
 
@@ -131,6 +145,9 @@ if [[ "$MODE" == "local" ]]; then
     chmod +x "$BIN_DIR"/*.py "$BIN_DIR/quotapeekd"
 
     TEMPLATE_DIR="$REPO_DIR/LaunchAgents"
+elif [[ "$MODE" == "fromdir" ]]; then
+    SOURCE_DIR="$FROM_DIR"
+    TEMPLATE_DIR="$FROM_DIR"
 else
     if [[ -z "$VERSION" ]]; then
         echo "==> Fetching latest release tag from GitHub"
@@ -195,22 +212,25 @@ except Exception:
     echo "==> Extracting"
     tar xzf "$TMPDIR_INSTALL/quotapeek-macos.tar.gz" -C "$TMPDIR_INSTALL"
 
+    SOURCE_DIR="$TMPDIR_INSTALL"
+    TEMPLATE_DIR="$TMPDIR_INSTALL"
+fi
+
+if [[ "$MODE" == "remote" || "$MODE" == "fromdir" ]]; then
     echo "==> Installing to $BIN_DIR"
     mkdir -p "$BIN_DIR"
     rm -rf "$BIN_DIR/QuotaPeek.app" # migrate away from the old (pre-/Applications) install location
-    if [[ -d "$TMPDIR_INSTALL/QuotaPeek.app" ]]; then
+    if [[ -d "$SOURCE_DIR/QuotaPeek.app" ]]; then
         echo "==> Installing app bundle to $APP_BUNDLE_DEST"
         rm -rf "$APP_BUNDLE_DEST"
-        cp -R "$TMPDIR_INSTALL/QuotaPeek.app" "$APP_BUNDLE_DEST"
+        cp -R "$SOURCE_DIR/QuotaPeek.app" "$APP_BUNDLE_DEST"
     fi
-    cp "$TMPDIR_INSTALL/quotapeekd" "$BIN_DIR/quotapeekd"
-    cp "$TMPDIR_INSTALL/claude-statusline-hook.py" "$BIN_DIR/"
-    cp "$TMPDIR_INSTALL/antigravity-statusline-hook.py" "$BIN_DIR/"
-    cp "$TMPDIR_INSTALL/run-with-log-rotation.sh" "$BIN_DIR/"
-    cp "$TMPDIR_INSTALL/uninstall.sh" "$BIN_DIR/"
+    cp "$SOURCE_DIR/quotapeekd" "$BIN_DIR/quotapeekd"
+    cp "$SOURCE_DIR/claude-statusline-hook.py" "$BIN_DIR/"
+    cp "$SOURCE_DIR/antigravity-statusline-hook.py" "$BIN_DIR/"
+    cp "$SOURCE_DIR/run-with-log-rotation.sh" "$BIN_DIR/"
+    cp "$SOURCE_DIR/uninstall.sh" "$BIN_DIR/"
     chmod +x "$BIN_DIR"/*.py "$BIN_DIR/quotapeekd" "$BIN_DIR/run-with-log-rotation.sh" "$BIN_DIR/uninstall.sh"
-
-    TEMPLATE_DIR="$TMPDIR_INSTALL"
 fi
 
 echo "==> Installing LaunchAgents"
