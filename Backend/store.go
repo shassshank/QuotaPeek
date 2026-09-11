@@ -13,6 +13,8 @@ type providerHealth struct {
 }
 
 type Store struct {
+	lastAppSeen     time.Time
+	appWake         chan struct{}
 	persistencePath string
 	history         map[ProviderID]map[Route][]HistoryPoint
 	collectionMu    sync.RWMutex
@@ -27,11 +29,13 @@ type Store struct {
 
 func NewStore(cfg Config) *Store {
 	return &Store{
-		cfg:       cfg,
-		history:   make(map[ProviderID]map[Route][]HistoryPoint),
-		resetting: make(map[ProviderID]bool),
-		health:    make(map[ProviderID]providerHealth),
-		inFlight:  make(map[string]bool),
+		cfg:         cfg,
+		lastAppSeen: time.Now(),
+		appWake:     make(chan struct{}),
+		history:     make(map[ProviderID]map[Route][]HistoryPoint),
+		resetting:   make(map[ProviderID]bool),
+		health:      make(map[ProviderID]providerHealth),
+		inFlight:    make(map[string]bool),
 		samples: map[ProviderID]map[Route]routeSample{
 			ProviderClaude:      {},
 			ProviderCodex:       {},
@@ -301,4 +305,35 @@ func (s *Store) recordPoll(provider ProviderID, data UsageData, err error) {
 		h.success = &at
 	}
 	s.health[provider] = h
+}
+
+// Presence is transient. Startup gets one idle window at normal cadence.
+const appIdleWindow = 10 * time.Minute
+const idlePollInterval = 15 * time.Minute
+
+func (s *Store) noteAppPresence(now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if now.Sub(s.lastAppSeen) >= appIdleWindow {
+		close(s.appWake)
+		s.appWake = make(chan struct{})
+	}
+	s.lastAppSeen = now
+}
+
+// Return the next scheduling check and a broadcast signal for idle-to-active
+// transitions. Checking at the idle boundary avoids an extra normal-rate poll.
+func (s *Store) pollDelay(now, lastPoll time.Time, interval time.Duration) (time.Duration, <-chan struct{}) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	idleAt := s.lastAppSeen.Add(appIdleWindow)
+	idle := !now.Before(idleAt)
+	if idle && interval < idlePollInterval {
+		interval = idlePollInterval
+	}
+	delay := lastPoll.Add(interval).Sub(now)
+	if !idle && delay > idleAt.Sub(now) {
+		delay = idleAt.Sub(now)
+	}
+	return delay, s.appWake
 }

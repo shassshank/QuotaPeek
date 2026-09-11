@@ -8,7 +8,6 @@ import (
 	"io"
 	"os/exec"
 	"strconv"
-	"sync"
 	"time"
 )
 
@@ -57,19 +56,16 @@ func FetchCodexAt(ctx context.Context, configDir string) (UsageData, error) {
 		_ = cmd.Wait()
 	}()
 
-	responses := map[int]codexRPCResponse{}
-	var mu sync.Mutex
-	done := make(chan struct{})
+	responses := make(chan codexRPCResponse, 1)
 	go func() {
-		defer close(done)
+		defer close(responses)
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
 		for scanner.Scan() {
 			var resp codexRPCResponse
-			if err := json.Unmarshal(scanner.Bytes(), &resp); err == nil && resp.ID != 0 {
-				mu.Lock()
-				responses[resp.ID] = resp
-				mu.Unlock()
+			if err := json.Unmarshal(scanner.Bytes(), &resp); err == nil && resp.ID == 2 {
+				responses <- resp
+				return
 			}
 		}
 	}()
@@ -82,26 +78,17 @@ func FetchCodexAt(ctx context.Context, configDir string) (UsageData, error) {
 		return UsageData{}, err
 	}
 
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return UsageData{}, errors.New("codex app-server timed out")
-		case <-done:
+	select {
+	case <-ctx.Done():
+		return UsageData{}, errors.New("codex app-server timed out")
+	case resp, ok := <-responses:
+		if !ok {
 			return UsageData{}, errors.New("codex app-server closed before rate-limit response")
-		case <-ticker.C:
-			mu.Lock()
-			resp, ok := responses[2]
-			mu.Unlock()
-			if !ok {
-				continue
-			}
-			if len(resp.Error) > 0 && string(resp.Error) != "null" {
-				return UsageData{}, errors.New("codex RPC error: " + redactMessage(string(resp.Error)))
-			}
-			return ParseCodexRateLimits(resp.Result)
 		}
+		if len(resp.Error) > 0 && string(resp.Error) != "null" {
+			return UsageData{}, errors.New("codex RPC error: " + redactMessage(string(resp.Error)))
+		}
+		return ParseCodexRateLimits(resp.Result)
 	}
 }
 

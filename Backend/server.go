@@ -55,6 +55,9 @@ func (s *Server) routes() http.Handler {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
+		if r.Method == http.MethodGet && (r.URL.Path == "/status" || r.URL.Path == "/accounts") {
+			s.store.noteAppPresence(time.Now())
+		}
 		mux.ServeHTTP(w, r)
 	})
 }
@@ -369,17 +372,25 @@ func (p *Poller) startProvider(ctx context.Context, provider ProviderID, cfg Pro
 			return
 		}
 		p.pollOnce(ctx, provider)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
+		lastPoll := time.Now()
 		for {
+			delay, wake := p.store.pollDelay(time.Now(), lastPoll, interval)
+			if ctx.Err() != nil {
+				return
+			}
+			if delay <= 0 {
+				p.pollOnce(ctx, provider)
+				lastPoll = time.Now()
+				continue
+			}
+			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return
-			case <-ticker.C:
-				if ctx.Err() != nil {
-					return
-				}
-				p.pollOnce(ctx, provider)
+			case <-wake:
+				timer.Stop()
+			case <-timer.C:
 			}
 		}
 	}()

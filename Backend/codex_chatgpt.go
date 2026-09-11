@@ -58,7 +58,13 @@ func codexHomeDir() (string, error) {
 // own `cli_auth_credentials_store` config is "keyring", falling back to the
 // plain ~/.codex/auth.json file (the default, and what's used before you've
 // re-run `codex login` after switching to keyring storage).
-func (c *Collector) FetchCodexKeychain(ctx context.Context) (UsageData, error) {
+func (c *Collector) FetchCodexKeychain(ctx context.Context) (data UsageData, err error) {
+	defer func() {
+		var authErr *codexAuthError
+		if errors.As(err, &authErr) {
+			c.credCache.invalidate("codex")
+		}
+	}()
 	home, err := codexHomeDir()
 	if c.configDir != "" {
 		home, err = c.configDir, nil
@@ -73,16 +79,30 @@ func (c *Collector) FetchCodexKeychain(ctx context.Context) (UsageData, error) {
 		return c.fetchCodexUsage(ctx, raw, "keychain")
 	}
 	if raw, err := c.readKeychain(ctx, codexAuthKeyringService, codexKeyringAccount(home)); err == nil {
-		c.credCache.put(cacheKey, raw, time.Time{})
+		c.cacheCodexCredential(cacheKey, raw)
 		return c.fetchCodexUsage(ctx, raw, "keychain")
 	}
 	raw, err := os.ReadFile(filepath.Join(home, "auth.json"))
 	if err != nil {
 		return UsageData{}, errors.New("could not read Codex auth from Keychain or ~/.codex/auth.json")
 	}
-	c.credCache.put(cacheKey, raw, time.Time{})
+	c.cacheCodexCredential(cacheKey, raw)
 	return c.fetchCodexUsage(ctx, raw, "oauth")
 }
+
+// Codex stores expiry in the access-token JWT; opaque tokens use the cache TTL.
+func (c *Collector) cacheCodexCredential(key string, raw []byte) {
+	var auth codexAuthDotJSON
+	var expiry time.Time
+	if json.Unmarshal(raw, &auth) == nil && auth.Tokens != nil {
+		expiry = tokenExpiry(auth.Tokens.AccessToken)
+	}
+	c.credCache.put(key, raw, expiry)
+}
+
+type codexAuthError struct{ message string }
+
+func (e *codexAuthError) Error() string { return e.message }
 
 // Mirrors codex-rs/login/src/auth/storage.rs::compute_store_key: the Keychain
 // account name is "cli|" + the first 16 hex chars of sha256(codex_home path).
@@ -143,7 +163,11 @@ func (c *Collector) refreshCodexToken(ctx context.Context, refreshToken string) 
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return oauthTokenResponse{}, errors.New("codex token refresh returned status " + resp.Status + ": " + apiErrorMessage(preview))
+		message := "codex token refresh returned status " + resp.Status + ": " + apiErrorMessage(preview)
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusBadRequest {
+			return oauthTokenResponse{}, &codexAuthError{message}
+		}
+		return oauthTokenResponse{}, errors.New(message)
 	}
 	var out oauthTokenResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil || out.AccessToken == "" {
@@ -169,7 +193,11 @@ func fetchCodexUsageWithToken(ctx context.Context, client *http.Client, accessTo
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return UsageData{}, errors.New("codex usage endpoint returned status " + resp.Status + ": " + apiErrorMessage(preview))
+		message := "codex usage endpoint returned status " + resp.Status + ": " + apiErrorMessage(preview)
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return UsageData{}, &codexAuthError{message}
+		}
+		return UsageData{}, errors.New(message)
 	}
 
 	var payload struct {
