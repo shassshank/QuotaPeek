@@ -228,7 +228,7 @@ def build_status_line(payload):
 def extra_status_segments():
     # Keep all daemon-dependent work isolated from Claude's own rendering.
     try:
-        token_path = os.path.expanduser("~/Library/Application Support/AIUsageWidget/auth-token")
+        token_path = os.path.expanduser("~/Library/Application Support/QuotaPeek/auth-token")
         with open(token_path) as token_file:
             token = token_file.read().strip()
         req = urllib.request.Request(STATUS_URL, headers={"X-Auth-Token": token})
@@ -294,7 +294,7 @@ def post_ingest(raw):
         payload = json.loads(raw)
         payload["configDir"] = os.environ.get("CLAUDE_CONFIG_DIR", "")
         raw = json.dumps(payload)
-        token_path = os.path.expanduser("~/Library/Application Support/AIUsageWidget/auth-token")
+        token_path = os.path.expanduser("~/Library/Application Support/QuotaPeek/auth-token")
         with open(token_path) as token_file:
             token = token_file.read().strip()
         req = urllib.request.Request(

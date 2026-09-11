@@ -23,7 +23,7 @@ func configPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, "Library", "Application Support", "AIUsageWidget", "config.json"), nil
+	return filepath.Join(home, "Library", "Application Support", "QuotaPeek", "config.json"), nil
 }
 
 func loadConfig(path string) (Config, error) {

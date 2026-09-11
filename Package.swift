@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "AIUsageWidget",
+    name: "QuotaPeek",
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(
-            name: "AIUsageWidget",
-            path: "Sources/AIUsageWidget"
+            name: "QuotaPeek",
+            path: "Sources/QuotaPeek"
         )
     ]
 )

@@ -32,7 +32,7 @@ final class DaemonClient {
         }
 
         let tokenURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/AIUsageWidget/auth-token")
+            .appendingPathComponent("Library/Application Support/QuotaPeek/auth-token")
         if let token = try? String(contentsOf: tokenURL, encoding: .utf8) {
             let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
             cachedToken = trimmed

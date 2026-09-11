@@ -218,7 +218,7 @@ def post_ingest(raw):
         # push to its default Antigravity account.
         payload["accountId"] = ""
         raw = json.dumps(payload)
-        token_path = os.path.expanduser("~/Library/Application Support/AIUsageWidget/auth-token")
+        token_path = os.path.expanduser("~/Library/Application Support/QuotaPeek/auth-token")
         with open(token_path) as token_file:
             token = token_file.read().strip()
         req = urllib.request.Request(
