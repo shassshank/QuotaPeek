@@ -5,33 +5,30 @@
 #   ~/Library/Application Support/QuotaPeek/bin/uninstall.sh
 # The Swift UI's Settings "Uninstall" button shells out to exactly that path.
 #
-# Actions:
-#   1. Unload both LaunchAgents (launchctl unload -w)
-#   2. Remove both plist files from ~/Library/LaunchAgents
-#   3. Remove ~/Library/Application Support/QuotaPeek entirely
-#   4. Remove QuotaPeek.app from /Applications or ~/Applications
-#   5. Reverse the statusLine hook injection in settings files:
+# Actions (in this order — see note below on why):
+#   1. Reverse the statusLine hook injection in settings files:
 #      - ~/.claude/settings.json
 #      - ~/.gemini/antigravity-cli/settings.json
 #      Restores from .bak.<timestamp> backup ONLY if the current statusLine
 #      value still matches what the installer wrote.  If the user has since
 #      changed statusLine to something else, we leave the file alone (don't
 #      clobber user changes) but still remove the key if it equals ours.
+#   2. Remove ~/Library/Application Support/QuotaPeek entirely
+#   3. Remove QuotaPeek.app from /Applications or ~/Applications
+#   4. Stop and remove both LaunchAgents (launchctl unload -w, then delete
+#      the plist) — the daemon's first, the app's own LAST.
+#
+# The Swift UI's Settings "Uninstall" button shells out to this exact path
+# as a child process of the running app. Unloading com.quotapeek.app's own
+# LaunchAgent kills that running app — and with it, this script, if it's
+# still an attached child at that point. So every other step runs first;
+# unloading the app's own LaunchAgent is deliberately the very last thing
+# this script does.
 set -euo pipefail
 
 PYTHON3="${PYTHON3:-$(command -v python3 || echo python3)}"
 APP_SUPPORT="$HOME/Library/Application Support/QuotaPeek"
 LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
-
-echo "==> Stopping and removing LaunchAgents"
-for label in com.quotapeek.daemon com.quotapeek.app; do
-    plist="$LAUNCH_AGENTS/$label.plist"
-    if [[ -f "$plist" ]]; then
-        launchctl unload -w "$plist" 2>/dev/null || true
-        rm -f "$plist"
-        echo "  removed $plist"
-    fi
-done
 
 echo "==> Reversing statusLine hook injection"
 
@@ -136,3 +133,16 @@ echo ""
 echo "QuotaPeek has been fully uninstalled."
 echo "Backup copies of your settings files (.bak.*) were left in place"
 echo "in case you need to recover any prior configuration."
+
+# Deliberately last: unloading com.quotapeek.app's own LaunchAgent kills the
+# running app, and this script along with it if the app is its parent
+# process. Everything above must already be done by this point.
+echo "==> Stopping and removing LaunchAgents"
+for label in com.quotapeek.daemon com.quotapeek.app; do
+    plist="$LAUNCH_AGENTS/$label.plist"
+    if [[ -f "$plist" ]]; then
+        launchctl unload -w "$plist" 2>/dev/null || true
+        rm -f "$plist"
+        echo "  removed $plist"
+    fi
+done

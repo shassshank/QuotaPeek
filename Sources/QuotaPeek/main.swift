@@ -329,13 +329,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Shells out to unload the LaunchAgent daemon plist and terminates app (Task C8)
+    ///
+    /// Deliberately `unload` without `-w`: `-w` persists a "Disabled" override
+    /// for the job, which would stop it from auto-starting again at the next
+    /// login too, not just for the rest of this session. Quitting should only
+    /// stop the daemon for now — `install.sh --daemon-stop` is the explicit,
+    /// persistent version of this if that's what's wanted instead.
     static func quitAndStopDaemon() {
         let plistPath = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/LaunchAgents/com.quotapeek.daemon.plist")
             .path
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["unload", "-w", plistPath]
+        process.arguments = ["unload", plistPath]
         try? process.run()
         process.waitUntilExit()
         NSApp.terminate(nil)

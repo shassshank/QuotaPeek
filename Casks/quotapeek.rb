@@ -55,6 +55,7 @@ cask "quotapeek" do
     FileUtils.mkdir_p(la_dir)
     python3 = `which python3`.strip
     app_support = "#{Dir.home}/Library/Application Support/QuotaPeek"
+    app_bundle = "/Applications/QuotaPeek.app"
 
     %w[com.quotapeek.daemon com.quotapeek.app].each do |label|
       template = File.join(staged, "#{label}.plist.template")
@@ -65,6 +66,7 @@ cask "quotapeek" do
         .gsub("__BIN_DIR__", bin_dir)
         .gsub("__HOME__", Dir.home)
         .gsub("__APP_SUPPORT__", app_support)
+        .gsub("__APP_BUNDLE__", app_bundle)
       dest = File.join(la_dir, "#{label}.plist")
       system_command "/usr/bin/true", args: [] # ensure previous is unloaded
       system_command "launchctl", args: ["unload", dest], must_succeed: false if File.exist?(dest)

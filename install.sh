@@ -112,7 +112,12 @@ DETECT_ACCOUNTS=false
 if [ ! -e "$APP_SUPPORT/config.json" ]; then
     echo "Accounts are optional. Detection uses installed CLIs and existing login credentials."
     REPLY=""
-    read -r -p "No existing configuration found. Auto-detect installed AI CLIs (Claude, Codex, Antigravity) and add them as accounts? [y/N] " REPLY || true
+    # Piped via `curl | bash`, stdin is the script itself, not a terminal, so
+    # a plain `read` gets immediate EOF and silently skips this prompt. Read
+    # from the controlling terminal directly instead, when there is one.
+    if [ -r /dev/tty ]; then
+        read -r -p "No existing configuration found. Auto-detect installed AI CLIs (Claude, Codex, Antigravity) and add them as accounts? [y/N] " REPLY < /dev/tty || true
+    fi
     case "$REPLY" in
         y|Y) DETECT_ACCOUNTS=true ;;
     esac
@@ -249,7 +254,10 @@ for name in com.quotapeek.daemon com.quotapeek.app; do
         -e "s#__APP_BUNDLE__#$APP_BUNDLE_DEST#g" \
         "$template" > "$dest"
     launchctl unload "$dest" >/dev/null 2>&1 || true
-    launchctl load "$dest"
+    # -w also clears any persisted "Disabled" override left by a prior
+    # `install.sh --daemon-stop`/`--app-login-off`, so a reinstall always
+    # actually starts the service instead of silently no-opping.
+    launchctl load -w "$dest"
     echo "  loaded $dest"
 done
 
@@ -335,15 +343,28 @@ PY
             continue
         fi
         body=""
-        patch="$("$PYTHON3" - "$provider" "$interval" <<'PY'
+        # Antigravity's normal default is Keychain OAuth polling. Claude and
+        # Codex need "injection" instead: chooseSample (Backend/store.go)
+        # only surfaces a route's data if it's in routes_enabled, so without
+        # this the statusLine hook merge_statusline already registered above
+        # would push samples the daemon silently drops. Codex has no real
+        # Keychain route at all — its poller (Backend/server.go's
+        # pollProvider) only runs under "injection", where it spawns
+        # `codex app-server` itself; "keychain" alone gets no Codex data.
+        route="keychain"
+        if [[ "$provider" == "claude" || "$provider" == "codex" ]]; then
+            route="injection"
+        fi
+        patch="$("$PYTHON3" - "$provider" "$interval" "$route" <<'PY'
 import json, sys
-print(json.dumps({sys.argv[1]: {"routes_enabled": ["keychain"], "keychain_poll_interval_sec": int(sys.argv[2])}}))
+provider, interval, route = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+print(json.dumps({provider: {"routes_enabled": [route], "keychain_poll_interval_sec": interval}}))
 PY
 )"
         if printf '%s' "$patch" | curl --silent --show-error --fail --max-time 5 \
             -X PUT -H "X-Auth-Token: $token" -H "Content-Type: application/json" \
             --data-binary @- http://127.0.0.1:47831/config >/dev/null; then
-            echo "  Added $provider account with Keychain route enabled."
+            echo "  Added $provider account with the $route route enabled."
         else
             echo "  Added $provider account; enable its route in Settings."
         fi
