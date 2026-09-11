@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Reads Codex CLI's own ChatGPT OAuth credentials directly - either from the
@@ -66,13 +67,20 @@ func (c *Collector) FetchCodexKeychain(ctx context.Context) (UsageData, error) {
 		return UsageData{}, err
 	}
 	ctx = withConfigDir(ctx, "CODEX_HOME", home)
+
+	cacheKey := "codex"
+	if raw, ok := c.credCache.get(cacheKey, 5*time.Minute); ok {
+		return c.fetchCodexUsage(ctx, raw, "keychain")
+	}
 	if raw, err := c.readKeychain(ctx, codexAuthKeyringService, codexKeyringAccount(home)); err == nil {
+		c.credCache.put(cacheKey, raw, time.Time{})
 		return c.fetchCodexUsage(ctx, raw, "keychain")
 	}
 	raw, err := os.ReadFile(filepath.Join(home, "auth.json"))
 	if err != nil {
 		return UsageData{}, errors.New("could not read Codex auth from Keychain or ~/.codex/auth.json")
 	}
+	c.credCache.put(cacheKey, raw, time.Time{})
 	return c.fetchCodexUsage(ctx, raw, "oauth")
 }
 

@@ -210,3 +210,99 @@ func TestConcurrentSamplePersistence(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestPersistSkippedForUnchangedData(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Claude.RoutesEnabled = []Route{RouteKeychain}
+	s := NewStore(cfg)
+	path := filepath.Join(t.TempDir(), "samples.json")
+	if err := s.enablePersistence(path); err != nil {
+		t.Fatal(err)
+	}
+	data := UsageData{UsedPercent5H: f(42)}
+	now := time.Now()
+	s.SetSampleAt(ProviderClaude, RouteKeychain, data, now)
+	info1, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Setting the same data with a later timestamp should skip the disk write.
+	s.SetSampleAt(ProviderClaude, RouteKeychain, data, now.Add(time.Second))
+	info2, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info2.ModTime().After(info1.ModTime()) {
+		t.Fatal("disk write occurred for unchanged data")
+	}
+	// In-memory state should still be updated despite skipped persistence.
+	s.mu.RLock()
+	sample := s.samples[ProviderClaude][RouteKeychain]
+	s.mu.RUnlock()
+	if sample.asOf != now.Add(time.Second).Unix() {
+		t.Fatalf("in-memory timestamp not updated: got %d, want %d", sample.asOf, now.Add(time.Second).Unix())
+	}
+}
+
+func TestPersistWritesOnDataChange(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Claude.RoutesEnabled = []Route{RouteKeychain}
+	s := NewStore(cfg)
+	path := filepath.Join(t.TempDir(), "samples.json")
+	if err := s.enablePersistence(path); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	s.SetSampleAt(ProviderClaude, RouteKeychain, UsageData{UsedPercent5H: f(42)}, now)
+	raw1, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Different data should trigger a disk write.
+	s.SetSampleAt(ProviderClaude, RouteKeychain, UsageData{UsedPercent5H: f(50)}, now.Add(time.Second))
+	raw2, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw1) == string(raw2) {
+		t.Fatal("disk write did not occur for changed data")
+	}
+}
+
+func TestCredentialCacheBasics(t *testing.T) {
+	var kc keychainCache
+	_, ok := kc.get("key1", 5*time.Minute)
+	if ok {
+		t.Fatal("empty cache returned hit")
+	}
+	kc.put("key1", []byte("secret"), time.Time{})
+	raw, ok := kc.get("key1", 5*time.Minute)
+	if !ok || string(raw) != "secret" {
+		t.Fatal("cache miss after put")
+	}
+	kc.invalidate("key1")
+	_, ok = kc.get("key1", 5*time.Minute)
+	if ok {
+		t.Fatal("cache hit after invalidate")
+	}
+	// Test expiry-based eviction.
+	kc.put("key2", []byte("expiring"), time.Now().Add(30*time.Second))
+	_, ok = kc.get("key2", 5*time.Minute)
+	if ok {
+		t.Fatal("near-expiry credential should be evicted")
+	}
+	// Test TTL-based eviction (zero TTL).
+	kc.put("key3", []byte("ttl"), time.Time{})
+	_, ok = kc.get("key3", 0)
+	if ok {
+		t.Fatal("zero-TTL credential should be evicted")
+	}
+	// Test invalidateAll.
+	kc.put("a", []byte("1"), time.Time{})
+	kc.put("b", []byte("2"), time.Time{})
+	kc.invalidateAll()
+	if _, ok := kc.get("a", 5*time.Minute); ok {
+		t.Fatal("invalidateAll didn't clear cache")
+	}
+}
+

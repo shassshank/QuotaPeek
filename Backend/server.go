@@ -250,7 +250,7 @@ func (s *Server) fetchAccount(ctx context.Context, a AccountConfig, route Route)
 		return c.FetchAntigravity(ctx)
 	case ProviderCodex:
 		if route == RouteInjection {
-			return FetchCodexAt(ctx, c.configDir)
+			return c.FetchCodexAtCached(ctx, c.configDir)
 		}
 		return c.FetchCodexKeychain(ctx)
 	}

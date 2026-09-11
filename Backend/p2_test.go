@@ -104,7 +104,9 @@ func TestPauseDrainsPollAndResume(t *testing.T) {
 		}
 		return []byte(`{"claudeAiOauth":{"accessToken":"test"}}`), nil
 	}
+	var httpRequests atomic.Int32
 	s.collector.client = &http.Client{Transport: oauthTestTransport(func(*http.Request) (*http.Response, error) {
+		httpRequests.Add(1)
 		h := make(http.Header)
 		h.Set("anthropic-ratelimit-unified-5h-utilization", "0.42")
 		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(""))}, nil
@@ -142,14 +144,15 @@ func TestPauseDrainsPollAndResume(t *testing.T) {
 	if reads.Load() != 1 {
 		t.Fatal("credential read while paused")
 	}
+	initialHTTPRequests := httpRequests.Load()
 	if w := p2Request(s, "PUT", "/config", `{"collectionPaused":false}`, "secret"); w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
 	deadline := time.Now().Add(time.Second)
-	for reads.Load() < 2 && time.Now().Before(deadline) {
+	for httpRequests.Load() <= initialHTTPRequests && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	if reads.Load() < 2 {
+	if httpRequests.Load() <= initialHTTPRequests {
 		t.Fatal("resume did not schedule immediate poll")
 	}
 	// Drain resumed work before test teardown.

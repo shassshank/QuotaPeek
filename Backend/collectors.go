@@ -31,6 +31,9 @@ type Collector struct {
 	cachedAntigravityPair *oauthPair
 	cachedDiscovery       *antigravityDiscovery
 
+	credCache keychainCache
+	codexCache codexSubprocessCache
+
 	anthropicURL string
 	tokenURL     string
 	discoveryURL string
@@ -89,10 +92,16 @@ func (c *Collector) FetchClaudeWithMode(ctx context.Context, mode string) (Usage
 		return UsageData{}, err
 	}
 	ctx = withConfigDir(ctx, "CLAUDE_CONFIG_DIR", c.configDir)
-	raw, err := c.readKeychain(ctx, service, os.Getenv("USER"))
-	if err != nil {
-		return UsageData{}, err
+
+	cacheKey := "claude:" + service
+	raw, cached := c.credCache.get(cacheKey, 5*time.Minute)
+	if !cached {
+		raw, err = c.readKeychain(ctx, service, os.Getenv("USER"))
+		if err != nil {
+			return UsageData{}, err
+		}
 	}
+
 	var creds struct {
 		ClaudeAIOAuth struct {
 			AccessToken      string `json:"accessToken"`
@@ -106,8 +115,19 @@ func (c *Collector) FetchClaudeWithMode(ctx context.Context, mode string) (Usage
 	}
 	c.setCredentialInfo(ProviderClaude, "keychain", "")
 	if creds.ClaudeAIOAuth.ExpiresAt > 0 && time.Now().UnixMilli() >= creds.ClaudeAIOAuth.ExpiresAt {
+		c.credCache.invalidate(cacheKey)
 		return UsageData{}, errors.New("Claude credentials expired, run claude CLI to refresh")
 	}
+
+	// Cache the raw keychain read on success, with the credential's own expiry.
+	if !cached {
+		var expiresAt time.Time
+		if creds.ClaudeAIOAuth.ExpiresAt > 0 {
+			expiresAt = time.UnixMilli(creds.ClaudeAIOAuth.ExpiresAt)
+		}
+		c.credCache.put(cacheKey, raw, expiresAt)
+	}
+
 	body := map[string]any{
 		"model":      "claude-haiku-4-5-20251001",
 		"max_tokens": 1,
@@ -143,6 +163,7 @@ func (c *Collector) FetchClaudeWithMode(ctx context.Context, mode string) (Usage
 		data.ResetsAtWeekly = &v
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
+		c.credCache.invalidate(cacheKey)
 		return data, errors.New("Claude credentials expired, run claude CLI to refresh")
 	}
 	// Quota headers remain useful on errors (especially 429). Return the
@@ -186,7 +207,7 @@ func (c *Collector) FetchAntigravity(ctx context.Context) (UsageData, error) {
 	if c.antigravityTokens.daemonOwned {
 		creds, err = c.antigravityTokens.daemonCredentials()
 	} else {
-		creds, err = loadAntigravityCreds(ctx)
+		creds, err = c.loadAntigravityCredsCached(ctx)
 	}
 	if err != nil {
 		return UsageData{}, err
@@ -229,6 +250,7 @@ func (c *Collector) FetchAntigravity(ctx context.Context) (UsageData, error) {
 		if status < 200 || status > 299 {
 			if status == http.StatusUnauthorized || status == http.StatusForbidden {
 				c.invalidateAntigravityDiscovery()
+				c.credCache.invalidate("antigravity")
 			}
 			lastErr = errors.New(filepath.Base(endpoint) + " returned status " + http.StatusText(status) + ": " + apiErrorMessage(respBody))
 			continue
@@ -244,6 +266,29 @@ func (c *Collector) FetchAntigravity(ctx context.Context) (UsageData, error) {
 		lastErr = errors.New("no quota endpoint attempted")
 	}
 	return UsageData{}, errors.New("antigravity quota failed: " + lastErr.Error())
+}
+
+func (c *Collector) loadAntigravityCredsCached(ctx context.Context) (antigravityCreds, error) {
+	cacheKey := "antigravity"
+	if raw, ok := c.credCache.get(cacheKey, 5*time.Minute); ok {
+		var creds antigravityCreds
+		if json.Unmarshal(raw, &creds) == nil {
+			return creds, nil
+		}
+	}
+	creds, err := loadAntigravityCreds(ctx)
+	if err != nil {
+		return antigravityCreds{}, err
+	}
+	// Cache the parsed credentials as JSON. Use the token expiry for eviction.
+	var expiresAt time.Time
+	if creds.Token.Expiry != "" {
+		expiresAt, _ = time.Parse(time.RFC3339Nano, creds.Token.Expiry)
+	}
+	if raw, err := json.Marshal(creds); err == nil {
+		c.credCache.put(cacheKey, raw, expiresAt)
+	}
+	return creds, nil
 }
 
 func loadAntigravityCreds(ctx context.Context) (antigravityCreds, error) {
@@ -435,9 +480,13 @@ func (c *Collector) resetCredentials(id ProviderID) error {
 	switch id {
 	case ProviderCodex:
 		err = c.codexTokens.reset()
+		c.codexCache.invalidate()
+		c.credCache.invalidate("codex")
 	case ProviderAntigravity:
 		err = c.antigravityTokens.reset()
+		c.credCache.invalidate("antigravity")
 	case ProviderClaude:
+		c.credCache.invalidateAll()
 	default:
 		return errUnknownProvider
 	}

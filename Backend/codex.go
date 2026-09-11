@@ -21,6 +21,20 @@ type codexRPCResponse struct {
 func FetchCodex(ctx context.Context) (UsageData, error) {
 	return FetchCodexAt(ctx, defaultDir(ProviderCodex))
 }
+
+// FetchCodexAtCached returns a cached result from a previous FetchCodexAt call
+// when available, avoiding a subprocess spawn on every poll tick.
+func (c *Collector) FetchCodexAtCached(ctx context.Context, configDir string) (UsageData, error) {
+	if data, ok := c.codexCache.get(configDir); ok {
+		return data, nil
+	}
+	data, err := FetchCodexAt(ctx, configDir)
+	if err != nil {
+		return data, err
+	}
+	c.codexCache.put(configDir, data)
+	return data, nil
+}
 func FetchCodexAt(ctx context.Context, configDir string) (UsageData, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

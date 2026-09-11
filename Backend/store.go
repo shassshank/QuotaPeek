@@ -72,9 +72,11 @@ func (s *Store) SetSampleAt(provider ProviderID, route Route, data UsageData, st
 	if s.samples[provider] == nil {
 		s.samples[provider] = map[Route]routeSample{}
 	}
-	if old, ok := s.samples[provider][route]; ok && started.Before(old.started) {
+	old, hadOld := s.samples[provider][route]
+	if hadOld && started.Before(old.started) {
 		return false
 	}
+	dataUnchanged := hadOld && usageDataEqual(old.data, data)
 	s.samples[provider][route] = routeSample{data: data, asOf: started.Unix(), started: started}
 	if s.history[provider] == nil {
 		s.history[provider] = make(map[Route][]HistoryPoint)
@@ -87,8 +89,10 @@ func (s *Store) SetSampleAt(provider ProviderID, route Route, data UsageData, st
 		s.history[provider][route] = append(s.history[provider][route], HistoryPoint{At: started.Unix(), UsedPercent: *percent})
 	}
 	s.pruneHistoryLocked(time.Now().Unix())
-	if err := s.persistLocked(); err != nil {
-		log.Printf("sample persistence failed: %v", err)
+	if !dataUnchanged {
+		if err := s.persistLocked(); err != nil {
+			log.Printf("sample persistence failed: %v", err)
+		}
 	}
 	return true
 }

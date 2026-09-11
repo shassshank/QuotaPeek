@@ -1,6 +1,9 @@
 package main
 
-import "time"
+import (
+	"reflect"
+	"time"
+)
 
 type Route string
 
@@ -105,4 +108,12 @@ func (u UsageData) quotaEmpty() bool {
 		u.UsedPercentWeekly == nil && u.ResetsAtWeekly == nil &&
 		u.UsedPercent5HThirdParty == nil && u.ResetsAt5HThirdParty == nil &&
 		u.UsedPercentWeeklyThirdParty == nil && u.ResetsAtWeeklyThirdParty == nil
+}
+
+// usageDataEqual reports whether two UsageData values are semantically equal.
+// It uses reflect.DeepEqual which correctly handles nil vs non-nil pointer
+// comparisons (both nil → equal, one nil → not equal, both non-nil → compares
+// dereferenced values).
+func usageDataEqual(a, b UsageData) bool {
+	return reflect.DeepEqual(a, b)
 }
