@@ -26,22 +26,17 @@ Keychain or respawn `codex app-server` every tick.
 Refreshing an Antigravity Keychain-stored token requires Antigravity's own
 installed-app Google OAuth client id/secret (not a QuotaPeek secret, and not
 a per-user credential — every copy of the Antigravity app ships the same
-pair). To keep this out of source control, the daemon reads it from two
-optional build-time `-ldflags`, falling back to environment variables:
-
-```sh
-go build -ldflags "-X main.antigravityOAuthClientIDs=<id1,id2,...> -X main.antigravityOAuthClientSecrets=<secret1,secret2,...>" .
-# or, for `go run .` / local dev:
-QUOTAPEEK_ANTIGRAVITY_OAUTH_CLIENT_IDS=<id1,id2,...> \
-QUOTAPEEK_ANTIGRAVITY_OAUTH_CLIENT_SECRETS=<secret1,secret2,...> \
-go run .
-```
-
-Official release builds (via `.github/workflows/release.yml`) inject these
-from the repo's `ANTIGRAVITY_OAUTH_CLIENT_IDS` / `ANTIGRAVITY_OAUTH_CLIENT_SECRETS`
-Actions secrets, so curl/DMG/Homebrew installs work out of the box. A plain
-local source build (`./install.sh` without these set) will report Antigravity
-Keychain polling as "not configured" and fall back cleanly — Antigravity's
+pair, embedded in its compiled binary). Rather than QuotaPeek shipping or
+maintaining a copy of that pair itself, the daemon reads it directly out of
+the user's own locally installed Antigravity CLI (`~/.local/bin/agy`, or
+`agy` on `PATH`) the first time it's needed
+(`Backend/antigravity_oauth_discovery.go`), and caches the working pair at
+`~/Library/Application Support/QuotaPeek/antigravity-oauth-cache.json`
+(0600) so it doesn't rescan the ~180MB binary on every poll. If every cached
+pair ever stops working — e.g. Google/Antigravity rotates the credential —
+the daemon automatically rescans the local binary for the current one and
+retries. If `agy` isn't installed locally, Antigravity Keychain polling
+reports itself unavailable and the daemon falls back cleanly; Antigravity's
 Injection route (its statusLine hook) is unaffected either way.
 
 The daemon shuts down gracefully on SIGINT/SIGTERM: it stops scheduling new
