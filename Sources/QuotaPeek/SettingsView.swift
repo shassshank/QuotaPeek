@@ -607,6 +607,7 @@ private struct AddAccountSheet: View {
     @State private var selectedProvider: Provider = .claude
     @State private var label: String = ""
     @State private var configDir: String = "~/.claude"
+    @State private var antigravityManualEntry = false
     @State private var antigravityRefreshToken: String = ""
     @State private var antigravityEmail: String = ""
     @State private var isCreating = false
@@ -650,17 +651,38 @@ private struct AddAccountSheet: View {
                         .foregroundStyle(.secondary)
                 }
             } else {
-                // Antigravity manual capture flow
+                // Antigravity: detect the login from Keychain by default —
+                // no end user can reasonably obtain their own refresh token
+                // by hand. Manual entry stays available as an advanced
+                // fallback (e.g. no local `agy` CLI login found).
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Google OAuth Token (Advanced/Manual)")
-                        .font(.caption).bold()
-                    SecureField("OAuth Refresh Token", text: $antigravityRefreshToken)
-                        .textFieldStyle(.roundedBorder)
-                    TextField("Account Email", text: $antigravityEmail)
-                        .textFieldStyle(.roundedBorder)
-                    Text("Enter your OAuth refresh token and associated email address. The daemon will securely store and refresh this token directly.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    if !antigravityManualEntry {
+                        Text("Detect from Antigravity login")
+                            .font(.caption).bold()
+                        Text("QuotaPeek will read the credential the `agy` CLI is currently signed in with from the Keychain — nothing to paste in.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Button("Enter refresh token manually instead") {
+                            antigravityManualEntry = true
+                        }
+                        .font(.caption)
+                        .buttonStyle(.link)
+                    } else {
+                        Text("Google OAuth Token (Advanced/Manual)")
+                            .font(.caption).bold()
+                        SecureField("OAuth Refresh Token", text: $antigravityRefreshToken)
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Account Email", text: $antigravityEmail)
+                            .textFieldStyle(.roundedBorder)
+                        Text("Enter your OAuth refresh token and associated email address. The daemon will securely store and refresh this token directly.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Button("Detect from Keychain instead") {
+                            antigravityManualEntry = false
+                        }
+                        .font(.caption)
+                        .buttonStyle(.link)
+                    }
                 }
             }
 
@@ -701,9 +723,11 @@ private struct AddAccountSheet: View {
         if label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
         if selectedProvider == .claude || selectedProvider == .codex {
             return configDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        } else {
+        } else if antigravityManualEntry {
             return antigravityRefreshToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || antigravityEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } else {
+            return false
         }
     }
 
@@ -721,7 +745,7 @@ private struct AddAccountSheet: View {
                 label: trimmedLabel,
                 credentialLocation: CredentialLocation(kind: "config_dir", configDir: expanded)
             )
-        } else {
+        } else if antigravityManualEntry {
             req = CreateAccountRequest(
                 provider: .antigravity,
                 label: trimmedLabel,
@@ -730,6 +754,13 @@ private struct AddAccountSheet: View {
                     refreshToken: antigravityRefreshToken.trimmingCharacters(in: .whitespacesAndNewlines),
                     email: antigravityEmail.trimmingCharacters(in: .whitespacesAndNewlines)
                 )
+            )
+        } else {
+            req = CreateAccountRequest(
+                provider: .antigravity,
+                label: trimmedLabel,
+                credentialLocation: CredentialLocation(kind: "daemon_token"),
+                autoDetect: true
             )
         }
 
@@ -745,6 +776,8 @@ private struct AddAccountSheet: View {
                 case .badResponse(let code):
                     if code == 409 {
                         errorMessage = "An account with this configuration directory or email already exists."
+                    } else if code == 422 && !antigravityManualEntry && selectedProvider == .antigravity {
+                        errorMessage = "No Antigravity login found in Keychain. Sign in with the agy CLI first, or enter a refresh token manually."
                     } else {
                         errorMessage = "Server error (\(code)). Check daemon logs."
                     }

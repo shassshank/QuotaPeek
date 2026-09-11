@@ -1,12 +1,71 @@
 package main
 
 import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestAntigravityAccountAutoDetectsFromKeychain(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Accounts = []AccountConfig{}
+	cfg.CollectionPaused = true
+	s := NewServer(NewStore(cfg), NewCollector(), filepath.Join(t.TempDir(), "config.json"))
+	s.authToken = "secret"
+	defer s.poller.Stop()
+
+	raw, err := json.Marshal(antigravityCreds{Email: "detected@example.com", Token: struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		Expiry       string `json:"expiry"`
+	}{RefreshToken: "detected-refresh"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.collector.readKeychain = func(context.Context, string, string) ([]byte, error) {
+		return []byte("go-keyring-base64:" + base64.StdEncoding.EncodeToString(raw)), nil
+	}
+
+	body := `{"provider":"antigravity","label":"Personal","credentialLocation":{"kind":"daemon_token"},"autoDetect":true}`
+	w := p2Request(s, "POST", "/accounts", body, "secret")
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	accounts := s.store.Config().Accounts
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accounts))
+	}
+	c := s.accountCollectors[accounts[0].ID]
+	if c == nil || c.antigravityTokens.refresh != "detected-refresh" || c.antigravityTokens.email != "detected@example.com" {
+		t.Fatalf("auto-detected credentials not applied: %+v", c)
+	}
+}
+
+func TestAntigravityAccountAutoDetectFailsWithoutKeychainEntry(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Accounts = []AccountConfig{}
+	cfg.CollectionPaused = true
+	s := NewServer(NewStore(cfg), NewCollector(), filepath.Join(t.TempDir(), "config.json"))
+	s.authToken = "secret"
+	defer s.poller.Stop()
+	s.collector.readKeychain = func(context.Context, string, string) ([]byte, error) {
+		return nil, fmt.Errorf("keychain read failed for service gemini")
+	}
+
+	body := `{"provider":"antigravity","label":"Personal","credentialLocation":{"kind":"daemon_token"},"autoDetect":true}`
+	w := p2Request(s, "POST", "/accounts", body, "secret")
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d %s", w.Code, w.Body.String())
+	}
+	if len(s.store.Config().Accounts) != 0 {
+		t.Fatal("expected no account created on failed auto-detect")
+	}
+}
 
 func TestAntigravityDuplicateEmail(t *testing.T) {
 	for _, restart := range []bool{false, true} {

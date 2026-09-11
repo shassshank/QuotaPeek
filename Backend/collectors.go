@@ -292,6 +292,10 @@ func (c *Collector) loadAntigravityCredsCached(ctx context.Context) (antigravity
 }
 
 func loadAntigravityCreds(ctx context.Context) (antigravityCreds, error) {
+	return loadAntigravityCredsVia(ctx, readKeychain)
+}
+
+func loadAntigravityCredsVia(ctx context.Context, readKeychain func(context.Context, string, string) ([]byte, error)) (antigravityCreds, error) {
 	raw, err := readKeychain(ctx, "gemini", "antigravity")
 	if err != nil {
 		return antigravityCreds{}, err

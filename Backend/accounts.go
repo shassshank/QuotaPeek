@@ -185,6 +185,12 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 			RefreshToken string `json:"refreshToken"`
 			Email        string `json:"email"`
 		} `json:"oauthBootstrap"`
+		// AutoDetect asks the daemon to read the refresh token itself from
+		// the local Antigravity CLI's Keychain entry, instead of requiring
+		// the caller to supply oauthBootstrap directly. No end user can
+		// reasonably obtain their own refresh token by hand, so this is the
+		// primary path; oauthBootstrap remains for advanced/manual use.
+		AutoDetect bool `json:"autoDetect"`
 	}
 	if !decodeAccountBody(w, r, &req) {
 		return
@@ -195,8 +201,23 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	loc := req.CredentialLocation
 	if req.Provider == ProviderAntigravity {
-		if loc.Kind != "daemon_token" || loc.ConfigDir != nil || req.OAuthBootstrap == nil || strings.TrimSpace(req.OAuthBootstrap.RefreshToken) == "" {
-			http.Error(w, "daemon_token requires oauthBootstrap.refreshToken", 400)
+		if loc.Kind != "daemon_token" || loc.ConfigDir != nil {
+			http.Error(w, "daemon_token requires oauthBootstrap.refreshToken or autoDetect", 400)
+			return
+		}
+		if req.OAuthBootstrap == nil && req.AutoDetect {
+			creds, err := loadAntigravityCredsVia(r.Context(), s.collector.readKeychain)
+			if err != nil || strings.TrimSpace(creds.Token.RefreshToken) == "" {
+				http.Error(w, "no Antigravity login found in Keychain; sign in with the agy CLI first, or enter a refresh token manually", 422)
+				return
+			}
+			req.OAuthBootstrap = &struct {
+				RefreshToken string `json:"refreshToken"`
+				Email        string `json:"email"`
+			}{RefreshToken: creds.Token.RefreshToken, Email: creds.Email}
+		}
+		if req.OAuthBootstrap == nil || strings.TrimSpace(req.OAuthBootstrap.RefreshToken) == "" {
+			http.Error(w, "daemon_token requires oauthBootstrap.refreshToken or autoDetect", 400)
 			return
 		}
 	} else {

@@ -546,10 +546,22 @@ config only, no live data, requires `X-Auth-Token` (as does `GET /status`).
 ```json
 {"provider":"claude","label":"Work","credentialLocation":{"kind":"config_dir","configDir":"/Users/x/.claude-work"}}
 ```
-or, for Antigravity's daemon_token kind:
+or, for Antigravity's daemon_token kind, either auto-detected from the local
+Antigravity CLI's Keychain entry (the normal path — no end user can
+reasonably obtain their own refresh token by hand):
+```json
+{"provider":"antigravity","label":"Personal Gmail","credentialLocation":{"kind":"daemon_token"},"autoDetect":true}
+```
+or supplied manually as a fallback:
 ```json
 {"provider":"antigravity","label":"Personal Gmail","credentialLocation":{"kind":"daemon_token"},"oauthBootstrap":{"refreshToken":"...","email":"..."}}
 ```
+`autoDetect` reads the same local Keychain entry
+`Backend/collectors.go`'s Keychain route already polls (service `gemini`,
+account `antigravity` — whatever `agy` itself is currently logged in as);
+it returns HTTP 422 if no Antigravity CLI login is found there. Exactly one
+of `autoDetect` or `oauthBootstrap` is required for `daemon_token`.
+
 Returns HTTP 201 with the created `Account` (data null, state "unknown", until
 the first poll). `configDir` must be an absolute path; a `config_dir` account
 pointing at a path that has no valid credentials yet is allowed (state stays

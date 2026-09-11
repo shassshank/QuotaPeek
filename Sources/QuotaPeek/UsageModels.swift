@@ -111,6 +111,11 @@ struct CreateAccountRequest: Codable {
     var label: String
     var credentialLocation: CredentialLocation
     var oauthBootstrap: OAuthBootstrap?
+    /// Asks the daemon to read the Antigravity refresh token itself from the
+    /// local `agy` CLI's Keychain entry, instead of the caller supplying
+    /// oauthBootstrap directly — no end user can reasonably obtain their own
+    /// refresh token by hand.
+    var autoDetect: Bool?
 
     enum CodingKeys: String, CodingKey {
         case provider
@@ -119,18 +124,21 @@ struct CreateAccountRequest: Codable {
         case credentialLocationSnake = "credential_location"
         case oauthBootstrap = "oauthBootstrap"
         case oauthBootstrapSnake = "oauth_bootstrap"
+        case autoDetect
     }
 
     init(
         provider: Provider,
         label: String,
         credentialLocation: CredentialLocation,
-        oauthBootstrap: OAuthBootstrap? = nil
+        oauthBootstrap: OAuthBootstrap? = nil,
+        autoDetect: Bool? = nil
     ) {
         self.provider = provider
         self.label = label
         self.credentialLocation = credentialLocation
         self.oauthBootstrap = oauthBootstrap
+        self.autoDetect = autoDetect
     }
 
     init(from decoder: Decoder) throws {
@@ -141,6 +149,7 @@ struct CreateAccountRequest: Codable {
             ?? container.decode(CredentialLocation.self, forKey: .credentialLocationSnake))
         self.oauthBootstrap = (try? container.decodeIfPresent(OAuthBootstrap.self, forKey: .oauthBootstrap))
             ?? (try? container.decodeIfPresent(OAuthBootstrap.self, forKey: .oauthBootstrapSnake))
+        self.autoDetect = try container.decodeIfPresent(Bool.self, forKey: .autoDetect)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -149,6 +158,7 @@ struct CreateAccountRequest: Codable {
         try container.encode(label, forKey: .label)
         try container.encode(credentialLocation, forKey: .credentialLocation)
         try container.encodeIfPresent(oauthBootstrap, forKey: .oauthBootstrap)
+        try container.encodeIfPresent(autoDetect, forKey: .autoDetect)
     }
 }
 
