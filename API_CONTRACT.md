@@ -69,6 +69,11 @@ Config {
 // If neither is fresh, show the newest enabled quota sample. Context-only
 // payloads never replace quota samples. Headline errors belong only to the
 // active route (or preferred enabled route when there is no sample).
+// After 10 minutes with no authenticated GET /status or /accounts request,
+// scheduled polling backs off to a 15-minute cadence regardless of the
+// configured interval, and returns to normal cadence immediately on the
+// next such request. A client that polls /status on its normal cadence
+// (the app and both statusLine hooks do) never triggers this backoff.
 // Codex injection uses the free `codex app-server` JSON-RPC poll.
 // Codex keychain uses stored OAuth credentials to fetch ChatGPT quota.
 // Each provider config also accepts optional notify_threshold_percent: integer

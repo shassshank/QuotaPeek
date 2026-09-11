@@ -19,7 +19,9 @@ curl -fsSL https://raw.githubusercontent.com/<owner>/AIUsageWidget/main/install.
 ```
 
 Downloads a prebuilt release tarball instead of building anything locally.
-Pin a version with `-s -- --version vX.Y.Z`.
+Pin a version with `-s -- --version vX.Y.Z`. The tarball's SHA256 is
+verified against the `SHA256SUMS` file published alongside each release
+before extraction; installation aborts if it's missing or doesn't match.
 
 ### 3. DMG drag-to-install
 
