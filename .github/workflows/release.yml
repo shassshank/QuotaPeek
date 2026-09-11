@@ -29,9 +29,12 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build Go daemon
+        env:
+          ANTIGRAVITY_OAUTH_CLIENT_IDS: ${{ secrets.ANTIGRAVITY_OAUTH_CLIENT_IDS }}
+          ANTIGRAVITY_OAUTH_CLIENT_SECRETS: ${{ secrets.ANTIGRAVITY_OAUTH_CLIENT_SECRETS }}
         run: |
           cd Backend
-          go build -o ../.build-go/quotapeekd .
+          go build -ldflags "-X main.antigravityOAuthClientIDs=$ANTIGRAVITY_OAUTH_CLIENT_IDS -X main.antigravityOAuthClientSecrets=$ANTIGRAVITY_OAUTH_CLIENT_SECRETS" -o ../.build-go/quotapeekd .
 
       - name: Build Swift app
         run: swift build -c release

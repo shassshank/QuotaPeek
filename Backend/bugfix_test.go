@@ -157,6 +157,10 @@ func TestCodexRefreshRetainsResponseFields(t *testing.T) {
 }
 
 func TestAntigravityRefreshRetainsResponseFields(t *testing.T) {
+	oldIDs, oldSecrets := antigravityOAuthClientIDs, antigravityOAuthClientSecrets
+	antigravityOAuthClientIDs, antigravityOAuthClientSecrets = "test-client-id", "test-client-secret"
+	defer func() { antigravityOAuthClientIDs, antigravityOAuthClientSecrets = oldIDs, oldSecrets }()
+
 	c := NewCollector()
 	c.client = &http.Client{Transport: oauthTestTransport(func(r *http.Request) (*http.Response, error) {
 		if err := r.ParseForm(); err != nil {

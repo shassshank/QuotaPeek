@@ -312,9 +312,52 @@ func loadAntigravityCreds(ctx context.Context) (antigravityCreds, error) {
 	return creds, nil
 }
 
-var antigravityOAuthPairs = []oauthPair{
-	{"REDACTED-GOOGLE-OAUTH-CLIENT-ID", "REDACTED-GOOGLE-OAUTH-CLIENT-SECRET"},
-	{"REDACTED-GOOGLE-OAUTH-CLIENT-ID", "REDACTED-GOOGLE-OAUTH-CLIENT-SECRET"},
+// antigravityOAuthClientIDs / antigravityOAuthClientSecrets are populated at
+// build time via `-ldflags -X`, or left empty for local/source builds. They
+// hold Antigravity's own installed-app Google OAuth client credentials
+// (shared by every copy of that app, not a QuotaPeek secret and not a
+// per-user credential) needed to refresh the access token behind a Keychain
+// refresh token. Never hardcode real values here — see Backend/README.md for
+// how release builds and local dev supply them.
+var (
+	antigravityOAuthClientIDs     string
+	antigravityOAuthClientSecrets string
+)
+
+func init() {
+	if antigravityOAuthClientIDs == "" {
+		antigravityOAuthClientIDs = os.Getenv("QUOTAPEEK_ANTIGRAVITY_OAUTH_CLIENT_IDS")
+	}
+	if antigravityOAuthClientSecrets == "" {
+		antigravityOAuthClientSecrets = os.Getenv("QUOTAPEEK_ANTIGRAVITY_OAUTH_CLIENT_SECRETS")
+	}
+}
+
+func antigravityOAuthPairsList() []oauthPair {
+	ids := splitNonEmpty(antigravityOAuthClientIDs, ",")
+	secrets := splitNonEmpty(antigravityOAuthClientSecrets, ",")
+	pairs := make([]oauthPair, 0, len(ids)*len(secrets))
+	for _, id := range ids {
+		for _, secret := range secrets {
+			pairs = append(pairs, oauthPair{clientID: id, clientSecret: secret})
+		}
+	}
+	return pairs
+}
+
+func splitNonEmpty(s, sep string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, sep)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (c *Collector) refreshAntigravityToken(ctx context.Context, refreshToken string) (oauthTokenResponse, error) {
@@ -329,7 +372,11 @@ func (c *Collector) refreshAntigravityToken(ctx context.Context, refreshToken st
 		c.cachedAntigravityPair = nil
 		c.mu.Unlock()
 	}
-	for _, pair := range antigravityOAuthPairs {
+	pairs := antigravityOAuthPairsList()
+	if len(pairs) == 0 {
+		return oauthTokenResponse{}, errors.New("antigravity Keychain polling is not configured on this build (no OAuth client credentials); use the Injection route instead, or see Backend/README.md to supply your own for a local build")
+	}
+	for _, pair := range pairs {
 		token, err := c.tryRefreshPair(ctx, refreshToken, pair)
 		if err == nil {
 			c.mu.Lock()

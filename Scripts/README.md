@@ -55,4 +55,3 @@ downloads the prebuilt release tarball instead. See the header comment in
 | `uninstall.sh` | Complete uninstaller (LaunchAgents + app files + statusLine hooks) |
 | `claude-statusline-hook.py` | StatusLine hook script for Claude Code |
 | `antigravity-statusline-hook.py` | StatusLine hook script for Antigravity |
-| `antigravity-quota-probe.swift` | Standalone debug script that queries Antigravity's quota directly from the Keychain credential, bypassing the daemon — for manually diagnosing Antigravity collector issues |
