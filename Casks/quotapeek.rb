@@ -4,7 +4,7 @@
 #   homebrew-quotapeek/Casks/quotapeek.rb
 #
 # Users would install via:
-#   brew tap <owner>/quotapeek
+#   brew tap shassshank/quotapeek
 #   brew install --cask quotapeek
 #
 # This provides a free, familiar distribution + uninstall story via:
@@ -17,10 +17,10 @@ cask "quotapeek" do
   # Use that digest (also in SHA256SUMS) for the version and URL below.
   sha256 :no_check
 
-  url "https://github.com/<owner>/QuotaPeek/releases/download/v#{version}/quotapeek-macos.tar.gz"
+  url "https://github.com/shassshank/QuotaPeek/releases/download/v#{version}/quotapeek-macos.tar.gz"
   name "QuotaPeek"
   desc "macOS menu bar widget showing AI coding assistant usage and quotas"
-  homepage "https://github.com/<owner>/QuotaPeek"
+  homepage "https://github.com/shassshank/QuotaPeek"
 
   # The tarball is not a .app directly — it contains the app plus supporting
   # files. The `app` stanza installs QuotaPeek.app into /Applications

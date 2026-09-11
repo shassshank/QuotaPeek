@@ -7,7 +7,7 @@ Build, install, and distribution scripts for QuotaPeek.
 ### 1. Homebrew Cask (recommended for most users)
 
 ```bash
-brew tap <owner>/quotapeek
+brew tap shassshank/quotapeek
 brew install --cask quotapeek
 # Uninstall: brew uninstall --cask quotapeek
 ```
@@ -15,7 +15,7 @@ brew install --cask quotapeek
 ### 2. Curl-based installer (no local toolchain needed)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/QuotaPeek/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/shassshank/QuotaPeek/main/install.sh | bash
 ```
 
 Downloads a prebuilt release tarball instead of building anything locally.

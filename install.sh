@@ -20,7 +20,7 @@
 #     builds the Go daemon and Swift app from source.
 #   - Piped via curl, or run with --remote: downloads a prebuilt release
 #     tarball from GitHub instead of building anything locally.
-#     curl -fsSL https://raw.githubusercontent.com/<owner>/QuotaPeek/main/install.sh | bash
+#     curl -fsSL https://raw.githubusercontent.com/shassshank/QuotaPeek/main/install.sh | bash
 #
 #     Files delivered via `curl` (or any programmatic download) do NOT
 #     receive the com.apple.quarantine extended attribute that macOS
@@ -36,7 +36,7 @@
 # the settings.json merge only ever touches the "statusLine" key.
 set -euo pipefail
 
-GITHUB_REPO="${QUOTAPEEK_GITHUB_REPO:-<owner>/QuotaPeek}"
+GITHUB_REPO="${QUOTAPEEK_GITHUB_REPO:-shassshank/QuotaPeek}"
 APP_SUPPORT="$HOME/Library/Application Support/QuotaPeek"
 BIN_DIR="$APP_SUPPORT/bin"
 LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
