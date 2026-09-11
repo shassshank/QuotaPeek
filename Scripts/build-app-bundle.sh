@@ -9,6 +9,7 @@
 #   - .build-go/aiusaged             (go build output)
 #   - Info.plist                      (repo root)
 #   - AIUsageWidget.entitlements      (repo root)
+#   - Resources/AppIcon.icns          (repo root)
 #
 # Output:
 #   - .build/release/AIUsageWidget.app/  (ready-to-distribute bundle)
@@ -39,9 +40,10 @@ GO_BINARY="$REPO_DIR/.build-go/aiusaged"
 APP_BUNDLE="$REPO_DIR/.build/release/AIUsageWidget.app"
 INFO_PLIST="$REPO_DIR/Info.plist"
 ENTITLEMENTS="$REPO_DIR/AIUsageWidget.entitlements"
+APP_ICON="$REPO_DIR/Resources/AppIcon.icns"
 
 # Verify prerequisites
-for f in "$SWIFT_BINARY" "$GO_BINARY" "$INFO_PLIST" "$ENTITLEMENTS"; do
+for f in "$SWIFT_BINARY" "$GO_BINARY" "$INFO_PLIST" "$ENTITLEMENTS" "$APP_ICON"; do
     if [[ ! -f "$f" ]]; then
         echo "ERROR: Required file not found: $f" >&2
         exit 1
@@ -57,6 +59,9 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 
 # Copy the Swift binary into the bundle
 cp "$SWIFT_BINARY" "$APP_BUNDLE/Contents/MacOS/AIUsageWidget"
+
+# Copy the app icon into the bundle
+cp "$APP_ICON" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
 # Generate Info.plist with stamped version/build numbers
 sed -e "s#<string>1.0.0</string>#<string>${VERSION}</string>#" \
