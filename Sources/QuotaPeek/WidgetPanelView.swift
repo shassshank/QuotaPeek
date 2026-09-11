@@ -166,7 +166,7 @@ struct WidgetPanelView: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            Text(configuration.name.isEmpty ? "AI USAGE" : configuration.name.uppercased())
+            Text(configuration.name.isEmpty ? "QUOTAPEEK" : configuration.name.uppercased())
                 .font(.system(size: 10, weight: .bold, design: .rounded))
                 .foregroundStyle(.secondary)
                 .tracking(0.8)

@@ -66,7 +66,7 @@ struct PopoverView: View {
 
     private var header: some View {
         HStack {
-            Label("AI Usage", systemImage: "gauge.with.dots.needle.67percent")
+            Label("QuotaPeek", systemImage: "gauge.with.dots.needle.67percent")
                 .font(.headline)
             Spacer()
             Button {
