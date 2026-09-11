@@ -11,11 +11,11 @@ struct SettingsView: View {
                 .tabItem { Label("Accounts", systemImage: "person.2") }
             GeneralSettingsTab(store: store, displayPrefs: displayPrefs)
                 .tabItem { Label("General", systemImage: "slider.horizontal.3") }
+            WidgetSettingsTab(store: store, displayPrefs: displayPrefs)
+                .tabItem { Label("Widget", systemImage: "rectangle.on.desktop") }
             ProviderHealthTab(store: store)
                 .tabItem { Label("Account Health", systemImage: "person.badge.shield.checkmark") }
-            DiagnosticsSettingsTab(store: store)
-                .tabItem { Label("Diagnostics", systemImage: "stethoscope") }
-            AdvancedSettingsTab()
+            AdvancedSettingsTab(store: store)
                 .tabItem { Label("Advanced", systemImage: "gearshape.2") }
         }
         .frame(minWidth: 560, idealWidth: 620, maxWidth: 720, minHeight: 580, idealHeight: 720)
@@ -773,11 +773,6 @@ private struct GeneralSettingsTab: View {
     @State private var launchAtLoginError: String?
     @State private var pauseError: String?
 
-    // Uninstall state (Task D11)
-    @State private var showUninstallConfirmation = false
-    @State private var uninstallResultAlert: String?
-    @State private var isUninstallSuccessful = false
-
     var body: some View {
         Form {
             Section("System") {
@@ -907,43 +902,6 @@ private struct GeneralSettingsTab: View {
                 .padding(.top, 4)
             }
 
-            Section("Desktop Widgets") {
-                if displayPrefs.widgetConfigurations.isEmpty {
-                    Text("No desktop widgets configured yet")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                ForEach($displayPrefs.widgetConfigurations) { configuration in
-                    widgetConfigurationRow(configuration)
-                }
-
-                Button {
-                    displayPrefs.addWidgetConfiguration()
-                } label: {
-                    Label("Add Widget", systemImage: "plus")
-                }
-                .buttonStyle(.borderless)
-            }
-
-            // Task D11: Uninstall button with confirmation dialog
-            Section("Maintenance & Uninstall") {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Uninstall AI Usage Widget")
-                            .font(.body)
-                        Text("Stops the background service, removes launch agents, and clears installed hooks.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("Uninstall AIUsageWidget…", role: .destructive) {
-                        showUninstallConfirmation = true
-                    }
-                    .buttonStyle(.bordered)
-                }
-            }
-
             Section {
                 HStack(spacing: 6) {
                     if isSaving {
@@ -1001,31 +959,51 @@ private struct GeneralSettingsTab: View {
                 saveStatus = ok ? "Saved automatically" : "Could not save - background service unreachable"
             }
         }
-        .alert("Uninstall AIUsageWidget?", isPresented: $showUninstallConfirmation) {
-            Button("Uninstall", role: .destructive) {
-                runUninstallScript()
-            }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("This will invoke the official uninstaller to remove the background daemon LaunchAgent, clear statusLine hooks, and remove installed binaries.")
+    }
+
+    private func formatDuration(_ seconds: Int) -> String {
+        if seconds < 60 {
+            return "\(seconds)s"
+        } else if seconds % 60 == 0 {
+            let mins = seconds / 60
+            return mins == 1 ? "1 min" : "\(mins) mins"
+        } else {
+            let mins = seconds / 60
+            let rem = seconds % 60
+            return "\(mins)m \(rem)s"
         }
-        .alert("Uninstall Result", isPresented: Binding(
-            get: { uninstallResultAlert != nil },
-            set: { if !$0 {
-                uninstallResultAlert = nil
-                if isUninstallSuccessful {
-                    NSApp.terminate(nil)
+    }
+
+}
+
+// MARK: - Widget Tab
+
+private struct WidgetSettingsTab: View {
+    @ObservedObject var store: UsageStore
+    @ObservedObject var displayPrefs: DisplayPreferences
+
+    var body: some View {
+        Form {
+            Section("Desktop Widgets") {
+                if displayPrefs.widgetConfigurations.isEmpty {
+                    Text("No desktop widgets configured yet")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-            }}
-        )) {
-            Button("OK", role: .cancel) {
-                if isUninstallSuccessful {
-                    NSApp.terminate(nil)
+
+                ForEach($displayPrefs.widgetConfigurations) { configuration in
+                    widgetConfigurationRow(configuration)
                 }
+
+                Button {
+                    displayPrefs.addWidgetConfiguration()
+                } label: {
+                    Label("Add Widget", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
             }
-        } message: {
-            Text(uninstallResultAlert ?? "")
         }
+        .formStyle(.grouped)
     }
 
     private func widgetConfigurationRow(_ configuration: Binding<WidgetConfiguration>) -> some View {
@@ -1143,55 +1121,6 @@ private struct GeneralSettingsTab: View {
 
         }
         .padding(.vertical, 4)
-    }
-
-    private func formatDuration(_ seconds: Int) -> String {
-        if seconds < 60 {
-            return "\(seconds)s"
-        } else if seconds % 60 == 0 {
-            let mins = seconds / 60
-            return mins == 1 ? "1 min" : "\(mins) mins"
-        } else {
-            let mins = seconds / 60
-            let rem = seconds % 60
-            return "\(mins)m \(rem)s"
-        }
-    }
-
-    /// Task D11: Executes fixed contract uninstaller at ~/Library/Application Support/AIUsageWidget/bin/uninstall.sh
-    private func runUninstallScript() {
-        let scriptPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/AIUsageWidget/bin/uninstall.sh")
-            .path
-
-        guard FileManager.default.fileExists(atPath: scriptPath) else {
-            uninstallResultAlert = "Uninstaller script not found at expected path:\n\(scriptPath)"
-            isUninstallSuccessful = false
-            return
-        }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = [scriptPath]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-            if process.terminationStatus == 0 {
-                isUninstallSuccessful = true
-                uninstallResultAlert = "AIUsageWidget uninstalled successfully. The application will now close."
-            } else {
-                isUninstallSuccessful = false
-                uninstallResultAlert = "Uninstall failed with exit code \(process.terminationStatus)."
-            }
-        } catch {
-            isUninstallSuccessful = false
-            uninstallResultAlert = "Failed to run uninstall script: \(error.localizedDescription)"
-        }
     }
 }
 
@@ -1387,10 +1316,15 @@ private struct ProviderHealthTab: View {
     }
 }
 
-// MARK: - Diagnostics Tab
+// MARK: - Advanced Tab
 
-private struct DiagnosticsSettingsTab: View {
+private struct AdvancedSettingsTab: View {
     @ObservedObject var store: UsageStore
+
+    // Uninstall state (Task D11)
+    @State private var showUninstallConfirmation = false
+    @State private var uninstallResultAlert: String?
+    @State private var isUninstallSuccessful = false
 
     private var appSupportPath: String {
         FileManager.default.homeDirectoryForCurrentUser
@@ -1403,42 +1337,60 @@ private struct DiagnosticsSettingsTab: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Recent errors").font(.headline)
-                Spacer()
-                Button("Refresh") { Task { await store.loadErrors() } }
-                    .accessibilityLabel("Refresh error log")
-            }
-
-            if store.errors.isEmpty {
-                Text("No errors recorded.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List(store.errors) { entry in
+        Form {
+            // Task D11: Uninstall button with confirmation dialog
+            Section("Maintenance & Uninstall") {
+                HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        HStack {
-                            Text(entry.provider.displayName).bold()
-                            Text("(\(entry.route.rawValue))")
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text(relativeAge(entry.at))
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                        Text(entry.message)
+                        Text("Uninstall AI Usage Widget")
+                            .font(.body)
+                        Text("Stops the background service, removes launch agents, and clears installed hooks.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    Button("Uninstall AIUsageWidget…", role: .destructive) {
+                        showUninstallConfirmation = true
+                    }
+                    .buttonStyle(.bordered)
                 }
             }
 
-            Divider()
+            Section {
+                HStack {
+                    Text("Recent errors").font(.headline)
+                    Spacer()
+                    Button("Refresh") { Task { await store.loadErrors() } }
+                        .accessibilityLabel("Refresh error log")
+                }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Diagnostics & Files").font(.subheadline).bold()
+                if store.errors.isEmpty {
+                    Text("No errors recorded.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List(store.errors) { entry in
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text(entry.provider.displayName).bold()
+                                Text("(\(entry.route.rawValue))")
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text(relativeAge(entry.at))
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            Text(entry.message)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(minHeight: 180)
+                }
+            }
+
+            Section("Diagnostics & Files") {
                 HStack(spacing: 12) {
                     Button("Reveal Config in Finder") {
                         revealInFinder(path: appSupportPath)
@@ -1453,9 +1405,69 @@ private struct DiagnosticsSettingsTab: View {
                     .controlSize(.small)
                 }
             }
-            .padding(.top, 4)
         }
-        .padding()
+        .formStyle(.grouped)
+        .alert("Uninstall AIUsageWidget?", isPresented: $showUninstallConfirmation) {
+            Button("Uninstall", role: .destructive) {
+                runUninstallScript()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This will invoke the official uninstaller to remove the background daemon LaunchAgent, clear statusLine hooks, and remove installed binaries.")
+        }
+        .alert("Uninstall Result", isPresented: Binding(
+            get: { uninstallResultAlert != nil },
+            set: { if !$0 {
+                uninstallResultAlert = nil
+                if isUninstallSuccessful {
+                    NSApp.terminate(nil)
+                }
+            }}
+        )) {
+            Button("OK", role: .cancel) {
+                if isUninstallSuccessful {
+                    NSApp.terminate(nil)
+                }
+            }
+        } message: {
+            Text(uninstallResultAlert ?? "")
+        }
+    }
+
+    /// Task D11: Executes fixed contract uninstaller at ~/Library/Application Support/AIUsageWidget/bin/uninstall.sh
+    private func runUninstallScript() {
+        let scriptPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/AIUsageWidget/bin/uninstall.sh")
+            .path
+
+        guard FileManager.default.fileExists(atPath: scriptPath) else {
+            uninstallResultAlert = "Uninstaller script not found at expected path:\n\(scriptPath)"
+            isUninstallSuccessful = false
+            return
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [scriptPath]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            if process.terminationStatus == 0 {
+                isUninstallSuccessful = true
+                uninstallResultAlert = "AIUsageWidget uninstalled successfully. The application will now close."
+            } else {
+                isUninstallSuccessful = false
+                uninstallResultAlert = "Uninstall failed with exit code \(process.terminationStatus)."
+            }
+        } catch {
+            isUninstallSuccessful = false
+            uninstallResultAlert = "Failed to run uninstall script: \(error.localizedDescription)"
+        }
     }
 
     private static let relativeDateFormatter: RelativeDateTimeFormatter = {
@@ -1477,49 +1489,5 @@ private struct DiagnosticsSettingsTab: View {
             let folderURL = fileURL.hasDirectoryPath ? fileURL : fileURL.deletingLastPathComponent()
             NSWorkspace.shared.open(folderURL)
         }
-    }
-}
-
-// MARK: - Advanced Tab
-
-private struct AdvancedSettingsTab: View {
-    private var appSupportPath: String {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/AIUsageWidget", isDirectory: true)
-            .path
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Config & logs").font(.headline)
-                Text(appSupportPath)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Multi-Account Model (P5)").font(.headline)
-                Text("Accounts are managed independently with their own configuration directories or tokens. Claude and Codex accounts point to isolated config directories (like ~/.claude-work or ~/.codex-personal). Antigravity accounts use daemon-managed OAuth tokens.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Routes explained").font(.headline)
-                Text("**Keychain** - the app polls the provider's API directly using credentials discovered from CLI stores.")
-                    .font(.caption)
-                Text("**Injection** - provider CLIs push live usage updates to the daemon in real time via statusLine hooks (Claude, Antigravity).")
-                    .font(.caption)
-                Text("**Local RPC** (Codex only) - Codex polls `codex app-server` RPC without external network calls.")
-                    .font(.caption)
-                Text("Trust states: fresh (live), stale (exceeded freshness threshold), restored (stale since daemon restart), unknown (no recent observation), error (poll failure).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-        }
-        .padding()
     }
 }
