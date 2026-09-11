@@ -21,7 +21,8 @@ app's Settings window (gear icon in the popover):
 
 - **Keychain** — the daemon reads the OAuth credential the provider's own
   CLI already stored in the macOS Keychain, and polls that provider's API
-  directly on a timer. This is how Claude and Antigravity work by default.
+  directly on a timer. This is how Antigravity works by default (Claude also
+  supports Keychain polling, but inference polling is off by default).
 - **Injection** — the provider's own CLI pushes live usage data to the
   daemon in real time, via its documented `statusLine` hook (Claude Code and
   Antigravity both support one; the hook script piggybacks on it — see
