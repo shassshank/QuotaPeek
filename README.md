@@ -39,7 +39,7 @@ recently) — this is real fallback, not an either/or choice.
 The daemon never silently drops a failure: every collector error is recorded
 with the redacted message (tokens/secrets/full response bodies are always
 stripped or truncated before anything is stored) and surfaced in the app's
-Settings → Diagnostics tab.
+Settings → Advanced tab, under Recent errors.
 
 Each provider also supports multiple accounts (e.g. two Claude subscriptions),
 managed from the Settings → Accounts tab — add, rename, or remove accounts and
