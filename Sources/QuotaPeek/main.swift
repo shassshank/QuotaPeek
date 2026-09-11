@@ -144,7 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let targetState: StatusItemRenderState
 
         if isWarning {
-            let label = "AI Usage: Service warning"
+            let label = "QuotaPeek: Service warning"
             let value = "Service unreachable or provider error"
 
             switch mode {
@@ -170,8 +170,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } else if let maxUsage = store.highestUsagePercent {
             let displayVal = displayPrefs.displayPercent(forUsedPercent: maxUsage)
-            let accessibilityDesc = "AI Usage: \(Int(displayVal))% \(metric.displayName.lowercased())"
-            let label = "AI Usage"
+            let accessibilityDesc = "QuotaPeek: \(Int(displayVal))% \(metric.displayName.lowercased())"
+            let label = "QuotaPeek"
             let value = accessibilityDesc
 
             switch mode {
@@ -196,8 +196,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
             }
         } else {
-            let accessibilityDesc = "AI Usage: No recent data"
-            let label = "AI Usage"
+            let accessibilityDesc = "QuotaPeek: No recent data"
+            let label = "QuotaPeek"
             let value = accessibilityDesc
 
             switch mode {
@@ -268,12 +268,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func warningImage() -> NSImage? {
         let config = NSImage.SymbolConfiguration(paletteColors: [.systemOrange])
-        if let image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "AI Usage: Service warning")?
+        if let image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "QuotaPeek: Service warning")?
             .withSymbolConfiguration(config) {
             image.isTemplate = false
             return image
         } else {
-            let fallback = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: "AI Usage: Service warning")
+            let fallback = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: "QuotaPeek: Service warning")
             fallback?.isTemplate = true
             return fallback
         }
