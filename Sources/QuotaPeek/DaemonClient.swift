@@ -75,11 +75,11 @@ final class DaemonClient {
     func updateAccount(id: String, label: String) async -> Result<Account, DaemonError> {
         let payload = UpdateAccountRequest(label: label)
         guard let body = try? JSONEncoder().encode(payload) else { return .failure(.decodeFailed) }
-        return await request(path: "/accounts/\(id)", method: "PATCH", body: body)
+        return await request(url: accountURL(id: id), method: "PATCH", body: body)
     }
 
     func deleteAccount(id: String) async -> Result<SimpleSuccessResponse, DaemonError> {
-        await request(path: "/accounts/\(id)", method: "DELETE")
+        await request(url: accountURL(id: id), method: "DELETE")
     }
 
     /// Tests exactly the requested route for an account, per P5 contract.
@@ -91,16 +91,17 @@ final class DaemonClient {
 
     /// Clears daemon credential/discovery cache for a specific account.
     func resetCredentials(accountId: String) async -> Result<ResetCredentialsResponse, DaemonError> {
-        await request(path: "/accounts/\(accountId)/reset-credentials", method: "POST")
+        await request(url: accountURL(id: accountId, trailingPathComponent: "reset-credentials"), method: "POST")
     }
 
     /// Fetches usage history points for a given account and route, per P5 contract.
     func history(accountId: String, route: Route? = nil) async -> Result<HistoryResponse, DaemonError> {
-        var path = "/history?accountId=\(accountId)"
+        var queryItems = [URLQueryItem(name: "accountId", value: accountId)]
         if let route, route != .none {
-            path += "&route=\(route.rawValue)"
+            queryItems.append(URLQueryItem(name: "route", value: route.rawValue))
         }
-        return await request(path: path, method: "GET")
+        let url = Self.makeURL(path: "/history", queryItems: queryItems)
+        return await request(url: url, method: "GET")
     }
 
     // MARK: - Config & Diagnostics
@@ -122,7 +123,8 @@ final class DaemonClient {
     }
 
     func errors(limit: Int = 50) async -> Result<ErrorsResponse, DaemonError> {
-        await request(path: "/errors?limit=\(limit)", method: "GET")
+        let url = Self.makeURL(path: "/errors", queryItems: [URLQueryItem(name: "limit", value: String(limit))])
+        return await request(url: url, method: "GET")
     }
 
     /// Pauses background data collection on the daemon.
@@ -135,14 +137,57 @@ final class DaemonClient {
         await updateConfigFields(["collectionPaused": false])
     }
 
+    // MARK: - URL Construction
+
+    /// Characters safe to leave unescaped within a single opaque path segment
+    /// (an account id, say). Deliberately narrower than `.urlPathAllowed` -
+    /// that set still permits "/", which would let a value containing a slash
+    /// smuggle in an extra path segment. Everything outside RFC 3986's
+    /// "unreserved" set (including "#", "?", "=", "+", space, "/") gets
+    /// percent-encoded.
+    private static let pathSegmentAllowedCharacters: CharacterSet = {
+        CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+    }()
+
+    private static func encodedPathSegment(_ raw: String) -> String {
+        raw.addingPercentEncoding(withAllowedCharacters: pathSegmentAllowedCharacters) ?? raw
+    }
+
+    /// Builds a URL under `baseURL` from literal path segments (assumed to
+    /// already be URL-safe, e.g. `"/accounts"`) plus optional query items.
+    /// Uses `URLComponents` throughout instead of `URL(string:)` string
+    /// concatenation or `appendingPathComponent`, so values containing `#`,
+    /// `?`, `=`, `+`, or spaces are always correctly percent-encoded rather
+    /// than truncating the URL or corrupting the query string.
+    private static func makeURL(path: String, queryItems: [URLQueryItem] = []) -> URL {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
+        components.percentEncodedPath += path
+        if !queryItems.isEmpty {
+            components.queryItems = queryItems
+        }
+        return components.url ?? baseURL
+    }
+
+    /// Builds `/accounts/<id>` (optionally with a trailing literal path
+    /// component, e.g. `"reset-credentials"`), percent-encoding `id` as a
+    /// single opaque path segment so ids containing `#`, `?`, `=`, or spaces
+    /// can't break the URL or get misinterpreted.
+    private func accountURL(id: String, trailingPathComponent: String? = nil) -> URL {
+        var path = "/accounts/" + Self.encodedPathSegment(id)
+        if let trailingPathComponent {
+            path += "/" + trailingPathComponent
+        }
+        return Self.makeURL(path: path)
+    }
+
     // MARK: - Internal HTTP Request
 
     private func request<T: Decodable>(path: String, method: String, body: Data? = nil, isRetryAfterAuthRefresh: Bool = false) async -> Result<T, DaemonError> {
-        var request = URLRequest(url: Self.baseURL.appendingPathComponent(path.hasPrefix("/") ? String(path.dropFirst()) : path))
-        // appendingPathComponent escapes "?" - rebuild with URLComponents when there's a query string.
-        if path.contains("?"), let url = URL(string: Self.baseURL.absoluteString + path) {
-            request = URLRequest(url: url)
-        }
+        await request(url: Self.makeURL(path: path), method: method, body: body, isRetryAfterAuthRefresh: isRetryAfterAuthRefresh)
+    }
+
+    private func request<T: Decodable>(url: URL, method: String, body: Data? = nil, isRetryAfterAuthRefresh: Bool = false) async -> Result<T, DaemonError> {
+        var request = URLRequest(url: url)
         request.httpMethod = method
         if let token = getAuthToken(forceReload: isRetryAfterAuthRefresh) {
             request.setValue(token, forHTTPHeaderField: "X-Auth-Token")
@@ -157,9 +202,22 @@ final class DaemonClient {
             guard let http = response as? HTTPURLResponse else { return .failure(.unreachable) }
             if http.statusCode == 401 && !isRetryAfterAuthRefresh {
                 invalidateToken()
-                return await self.request(path: path, method: method, body: body, isRetryAfterAuthRefresh: true)
+                return await self.request(url: url, method: method, body: body, isRetryAfterAuthRefresh: true)
             }
             guard (200...299).contains(http.statusCode) else { return .failure(.badResponse(http.statusCode)) }
+
+            // A genuinely empty body (typically paired with 204 No Content) means
+            // success with no payload - if `T` can represent that directly, return
+            // it without forcing the empty body through JSON decoding of a shape
+            // that may not tolerate an empty object (e.g. `SimpleSuccessResponse.ok`
+            // is a non-optional `Bool`, so decoding "{}" into it always fails).
+            // A non-empty but malformed body still correctly fails decode below.
+            if data.isEmpty || http.statusCode == 204 {
+                if let emptyType = T.self as? DaemonEmptySuccessRepresentable.Type {
+                    return .success(emptyType.emptySuccess as! T)
+                }
+            }
+
             let responseData = data.isEmpty ? "{}".data(using: .utf8)! : data
             guard let decoded = try? JSONDecoder().decode(T.self, from: responseData) else { return .failure(.decodeFailed) }
             return .success(decoded)
@@ -167,4 +225,15 @@ final class DaemonClient {
             return .failure(.unreachable)
         }
     }
+}
+
+/// Conformed to by response types that have a well-defined "successful, empty
+/// body" value, so `DaemonClient`'s request layer can short-circuit an empty
+/// or 204 response straight to success instead of trying to JSON-decode it.
+protocol DaemonEmptySuccessRepresentable {
+    static var emptySuccess: Self { get }
+}
+
+extension SimpleSuccessResponse: DaemonEmptySuccessRepresentable {
+    static var emptySuccess: SimpleSuccessResponse { SimpleSuccessResponse(ok: true, message: nil) }
 }

@@ -218,10 +218,26 @@ final class DisplayPreferences: ObservableObject {
 
     @Published var widgetConfigurations: [WidgetConfiguration] {
         didSet {
-            if let data = try? JSONEncoder().encode(widgetConfigurations) {
-                UserDefaults.standard.set(data, forKey: Keys.widgetConfigurations)
-            }
+            persistWidgetConfigurationsDebounced()
         }
+    }
+
+    /// Coalesces the UserDefaults write for `widgetConfigurations` so rapid-fire
+    /// changes (e.g. every keystroke while typing a widget name in a bound
+    /// TextField) don't each do a synchronous JSON encode + disk write. Only the
+    /// most recent snapshot within the debounce window is ever persisted, so the
+    /// final typed value still ends up saved.
+    private var widgetConfigurationsSaveWorkItem: DispatchWorkItem?
+
+    private func persistWidgetConfigurationsDebounced() {
+        widgetConfigurationsSaveWorkItem?.cancel()
+        let snapshot = widgetConfigurations
+        let workItem = DispatchWorkItem {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            UserDefaults.standard.set(data, forKey: Keys.widgetConfigurations)
+        }
+        widgetConfigurationsSaveWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: workItem)
     }
 
     private init() {
@@ -403,11 +419,5 @@ final class DisplayPreferences: ObservableObject {
         image.unlockFocus()
         image.isTemplate = false
         return image
-    }
-
-    /// Backward compatibility overload for provider-keyed calls
-    func generateDotsImage(providers: [(provider: Provider, status: ProviderStatus?)], isStaleOrFailing: Bool) -> NSImage {
-        let accounts = providers.compactMap { $0.status }
-        return generateDotsImage(accounts: accounts, isDaemonReachable: !isStaleOrFailing)
     }
 }

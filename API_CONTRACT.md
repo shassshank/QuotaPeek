@@ -72,8 +72,9 @@ Config {
 // After 10 minutes with no authenticated GET /status or /accounts request,
 // scheduled polling backs off to a 15-minute cadence regardless of the
 // configured interval, and returns to normal cadence immediately on the
-// next such request. A client that polls /status on its normal cadence
-// (the app and both statusLine hooks do) never triggers this backoff.
+// next such request. An active app client polling /status on its normal
+// cadence avoids this backoff; statusLine hooks push data via POST to an
+// ingest endpoint rather than polling /status.
 // Codex injection uses the free `codex app-server` JSON-RPC poll.
 // Codex keychain uses stored OAuth credentials to fetch ChatGPT quota.
 // Each provider config also accepts optional notify_threshold_percent: integer
@@ -233,11 +234,14 @@ Quitting the menu-bar app unloads the daemon LaunchAgent (`launchctl unload
 ~/Library/LaunchAgents/com.quotapeek.daemon.plist` without `-w`), stopping the
 daemon for the current session without permanently disabling it (it will restart
 at next login or when explicitly loaded). Disabling app launch-at-login
-(`./install.sh --app-login-off` or the Settings toggle) uses `launchctl unload -w`
-for the app LaunchAgent; `--app-login-on` uses `load -w`. These persist across
-login/reboot. To explicitly and persistently stop the daemon, use
-`./install.sh --daemon-stop` (unload -w); restart/re-enable it using
-`--daemon-start` (load -w). A normal reinstall reloads agents without overriding
+(`./install.sh --app-login-off` or the Settings toggle) uses
+`launchctl disable gui/<uid>/com.quotapeek.app` for the app LaunchAgent (without
+killing the running app); `--app-login-on` uses `launchctl enable gui/<uid>/com.quotapeek.app`.
+These persist across login/reboot. To explicitly and persistently stop the daemon,
+use `launchctl unload -w ~/Library/LaunchAgents/com.quotapeek.daemon.plist` (or
+`./install.sh --daemon-stop`); restart/re-enable it using
+`launchctl load -w ~/Library/LaunchAgents/com.quotapeek.daemon.plist` (or
+`--daemon-start`). A normal reinstall reloads agents without overriding
 persisted disabled preferences.
 
 Hook installation preserves unrelated settings, skips equivalent statusLine

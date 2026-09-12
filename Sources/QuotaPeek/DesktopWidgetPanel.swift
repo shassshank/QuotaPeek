@@ -73,10 +73,24 @@ final class DesktopWidgetPanel: NSPanel {
     }
 
     /// Re-renders this panel's content for an updated configuration (style/scope/visible
-    /// metrics may have changed) without recreating the window itself.
+    /// metrics may have changed) without recreating the window itself. Also re-attaches
+    /// a hosting view if `detachContent()` previously tore it down (e.g. the widget was
+    /// disabled and is now being re-enabled).
     func update(configuration: WidgetConfiguration, store: UsageStore, displayPrefs: DisplayPreferences) {
         let rootView = WidgetPanelView(store: store, displayPrefs: displayPrefs, configuration: configuration)
-        (contentView as? NSHostingView<WidgetPanelView>)?.rootView = rootView
+        if let hostingView = contentView as? NSHostingView<WidgetPanelView> {
+            hostingView.rootView = rootView
+        } else {
+            contentView = NSHostingView(rootView: rootView)
+        }
+    }
+
+    /// Detaches the hosted SwiftUI view tree so it stops observing `store`/`displayPrefs`
+    /// and re-rendering on every poll tick while this panel is hidden (mirrors how the
+    /// menu bar popover detaches its content on close). `update(configuration:store:displayPrefs:)`
+    /// recreates the hosting view on next use.
+    func detachContent() {
+        contentView = nil
     }
 
     override var canBecomeKey: Bool { true }

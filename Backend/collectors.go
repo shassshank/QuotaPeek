@@ -224,13 +224,16 @@ func (c *Collector) FetchAntigravity(ctx context.Context) (UsageData, error) {
 	if token == "" {
 		token = creds.AccessToken
 	}
-	if creds.Token.RefreshToken != "" {
+	if creds.Token.RefreshToken != "" || token != "" {
 		expiry, _ := time.Parse(time.RFC3339Nano, creds.Token.Expiry)
 		refreshed, err := c.antigravityTokens.token(ctx, token, creds.Token.RefreshToken, expiry, c.refreshAntigravityToken)
 		if err != nil {
 			return UsageData{}, err
 		}
 		token = refreshed
+	}
+	if err := c.antigravityTokens.setEmail(creds.Email); err != nil {
+		return UsageData{}, err
 	}
 	if token == "" {
 		return UsageData{}, errors.New("could not find Antigravity OAuth access token in Keychain credential")
@@ -254,6 +257,7 @@ func (c *Collector) FetchAntigravity(ctx context.Context) (UsageData, error) {
 			if status == http.StatusUnauthorized || status == http.StatusForbidden {
 				c.invalidateAntigravityDiscovery()
 				c.credCache.invalidate("antigravity")
+				c.antigravityTokens.invalidateAccess()
 			}
 			lastErr = errors.New(filepath.Base(endpoint) + " returned status " + http.StatusText(status) + ": " + apiErrorMessage(respBody))
 			continue
@@ -279,7 +283,11 @@ func (c *Collector) loadAntigravityCredsCached(ctx context.Context) (antigravity
 			return creds, nil
 		}
 	}
-	creds, err := loadAntigravityCreds(ctx)
+	reader := c.readKeychain
+	if reader == nil {
+		reader = readKeychain
+	}
+	creds, err := loadAntigravityCredsVia(ctx, reader)
 	if err != nil {
 		return antigravityCreds{}, err
 	}
@@ -378,9 +386,7 @@ func (c *Collector) antigravityOAuthCandidates(forceRescan bool) ([]oauthPair, b
 	if err != nil {
 		return nil, false, errors.New("antigravity Keychain polling is unavailable (" + err.Error() + "); use the Injection route instead")
 	}
-	if pathErr == nil {
-		_ = saveAntigravityOAuthPairs(path, pairs)
-	}
+
 	return pairs, false, nil
 }
 
@@ -407,6 +413,9 @@ func (c *Collector) tryRefreshPair(ctx context.Context, refreshToken string, pai
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil || out.AccessToken == "" {
 		return oauthTokenResponse{}, errors.New("token endpoint returned no access token")
 	}
+	if path, err := antigravityOAuthCachePath(c.configDir); err == nil {
+		_ = saveAntigravityOAuthPairs(path, []oauthPair{pair})
+	}
 	return out, nil
 }
 
@@ -423,6 +432,10 @@ func (c *Collector) antigravityDiscovery(ctx context.Context, token string, fall
 		return antigravityDiscovery{}, errors.New("Antigravity discovery failed: " + err.Error())
 	}
 	if status < 200 || status > 299 {
+		if status == http.StatusUnauthorized || status == http.StatusForbidden {
+			c.credCache.invalidate("antigravity")
+			c.antigravityTokens.invalidateAccess()
+		}
 		return antigravityDiscovery{}, errors.New("Antigravity discovery failed: loadCodeAssist returned status " + http.StatusText(status) + ": " + apiErrorMessage(respBody))
 	}
 	var jsonObj map[string]any

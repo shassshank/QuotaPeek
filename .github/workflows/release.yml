@@ -44,10 +44,13 @@ jobs:
           cp .build/apple/Products/Release/QuotaPeek .build/release/QuotaPeek
 
       - name: Assemble .app bundle and ad-hoc sign
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
         run: |
           bash Scripts/build-app-bundle.sh \
-            --version "${{ steps.version.outputs.version }}" \
-            --build "${{ github.run_number }}"
+            --version "$VERSION" \
+            --build "$BUILD_NUMBER"
 
       - name: Package release tarball
         run: |
@@ -70,14 +73,18 @@ jobs:
           rm -rf "$STAGING"
 
       - name: Build DMG
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           bash Scripts/build-dmg.sh \
-            --version "${{ steps.version.outputs.version }}"
+            --version "$VERSION"
 
       - name: Compute release checksums
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           shasum -a 256 quotapeek-macos.tar.gz > SHA256SUMS
-          (cd .build/release && shasum -a 256 "QuotaPeek-${{ steps.version.outputs.version }}.dmg") >> SHA256SUMS
+          (cd .build/release && shasum -a 256 "QuotaPeek-${VERSION}.dmg") >> SHA256SUMS
 
       - name: Update Homebrew cask
         run: |

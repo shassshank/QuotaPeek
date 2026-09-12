@@ -25,25 +25,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// Sends an immediate test notification to confirm permissions and delivery.
-    func sendTestNotification(for provider: Provider = .claude) {
-        Task {
-            _ = await requestAuthorization()
-            let content = UNMutableNotificationContent()
-            content.title = "\(provider.displayName) Limit Alert (Test)"
-            content.body = "Notifications are working properly for \(provider.displayName)."
-            content.sound = .default
-
-            let request = UNNotificationRequest(
-                identifier: "test-\(provider.rawValue)-\(UUID().uuidString)",
-                content: content,
-                trigger: nil
-            )
-
-            try? await UNUserNotificationCenter.current().add(request)
-        }
-    }
-
     /// Evaluates current account usage against configured notification thresholds.
     /// Fires local notifications when a threshold is crossed and prevents duplicate spam.
     func evaluate(accounts: [Account], config: DaemonConfig?) {
@@ -76,11 +57,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
                 lastNotifiedThreshold.removeValue(forKey: account.id)
             }
         }
-    }
-
-    /// Backward compatibility overload
-    func evaluate(providers: [Provider: Account], config: DaemonConfig?) {
-        evaluate(accounts: Array(providers.values), config: config)
     }
 
     private func dispatchThresholdNotification(for account: Account, usage: Double, threshold: Int) {

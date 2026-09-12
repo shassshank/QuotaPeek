@@ -51,10 +51,13 @@ func (c *oauthTokenCache) token(ctx context.Context, access, refresh string, exp
 			if c.daemonOwned || saved.Source == oauthSource(access, refresh) {
 				c.sourceAccess, c.sourceRefresh = access, refresh
 				c.access, c.refresh, c.expiry = saved.Access, saved.Refresh, saved.Expiry
+				if c.email == "" {
+					c.email = saved.Email
+				}
 			}
 		}
-		c.loaded = true
 	}
+	c.loaded = true
 	if c.sourceAccess != access || c.sourceRefresh != refresh {
 		c.sourceAccess, c.sourceRefresh = access, refresh
 		c.access, c.refresh, c.expiry = access, refresh, expiry
@@ -202,4 +205,48 @@ func (c *oauthTokenCache) accountEmail() (string, error) {
 		return "", err
 	}
 	return saved.Email, nil
+}
+
+// Keep the rotated refresh token, but never serve a rejected access token again.
+func (c *oauthTokenCache) invalidateAccess() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.access = ""
+	c.expiry = time.Time{}
+	c.dirty = true
+}
+
+func (c *oauthTokenCache) setEmail(email string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if email == "" || c.email == email {
+		return nil
+	}
+	c.email = email
+	// Do not overwrite an unloaded rotation file just to update metadata.
+	c.dirty = true
+	if c.loaded {
+		return c.persist()
+	}
+	return nil
+}
+
+func (c *oauthTokenCache) bootstrap(b accountBootstrap) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Write the replacement atomically before publishing it to the live cache.
+	raw, err := json.Marshal(persistedOAuth{Source: oauthSource("", ""), Refresh: b.RefreshToken, Email: b.Email})
+	if err != nil {
+		return err
+	}
+	if c.path != "" {
+		if err := atomicPrivateWrite(c.path, raw); err != nil {
+			return err
+		}
+	}
+	c.email, c.refresh = b.Email, b.RefreshToken
+	c.sourceAccess, c.sourceRefresh, c.access = "", "", ""
+	c.expiry = time.Time{}
+	c.loaded, c.dirty = true, false
+	return nil
 }

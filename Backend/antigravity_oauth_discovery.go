@@ -16,7 +16,7 @@ import (
 // intentionally avoid \b and instead match Google's fixed-length formats
 // exactly, so a match can't overrun into a neighboring packed string. Any
 // wrong extraction just fails to redeem against Google's token endpoint and
-// is discarded — see antigravityOAuthCandidates, which only ever caches a
+// is discarded — see tryRefreshPair, which only ever persists a
 // pair once it has actually redeemed a token.
 var (
 	antigravityClientIDPattern     = regexp.MustCompile(`[0-9]{6,}-[a-z0-9]{20,40}\.apps\.googleusercontent\.com`)
@@ -90,7 +90,7 @@ func uniqueMatches(re *regexp.Regexp, data []byte) []string {
 	return out
 }
 
-// antigravityOAuthCachePath persists the pairs last discovered locally, so a
+// antigravityOAuthCachePath stores the last successfully redeemed pair, so a
 // normal poll doesn't rescan the (~180MB) agy binary on every refresh.
 func antigravityOAuthCachePath(configDir string) (string, error) {
 	if configDir != "" {

@@ -34,17 +34,6 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    /// Backward compatibility helper for legacy code accessing providers dictionary
-    var providers: [Provider: Account] {
-        var map: [Provider: Account] = [:]
-        for account in accounts {
-            if map[account.provider] == nil {
-                map[account.provider] = account
-            }
-        }
-        return map
-    }
-
     private let client = DaemonClient()
     private var timer: Timer?
 
@@ -58,14 +47,45 @@ final class UsageStore: ObservableObject {
     private var isPopoverVisible = false
     private var isWidgetVisible = false
 
-    // In-flight guard per Task C7. Shared between `reload()` (timer-driven) and
-    // `refresh()` (manual "Refresh Now") so the two triggers can't fire concurrent
-    // daemon requests - whichever gets there second is skipped for that tick.
+    // MARK: - Fetch coalescing (reload/refresh)
+    //
+    // `reload()` (timer-driven) and `refresh()` (manual "Refresh Now", and the
+    // post-mutation reloads after account create/update/delete/reset-credentials)
+    // must never both have a daemon request in flight at once, but a caller's
+    // request must also never be silently dropped. This is a "coalesce trailing"
+    // single-flight queue: at most one fetch runs at a time; any calls that arrive
+    // while one is running just replace `pendingFetchKind` (latest request wins)
+    // and get their own continuation queued in `fetchWaiters`. The single driver
+    // loop (spawned by whichever call finds `isFetchInFlight == false`) keeps
+    // picking up the newest pending kind and running it until none remain, and
+    // resumes exactly the waiters that were queued for the round that just ran -
+    // so every caller's `await` returns only once a fetch matching (or superseding
+    // via latest-wins) its own request has actually completed.
+    //
+    // All of this state is only ever touched on the MainActor, and there is no
+    // `await` between reading and mutating it within a single synchronous
+    // stretch of code, so no additional locking is required.
+    private enum FetchKind {
+        case reload
+        case refresh(accountId: String?)
+    }
     private var isFetchInFlight = false
+    private var pendingFetchKind: FetchKind?
+    private var fetchWaiters: [CheckedContinuation<Void, Never>] = []
 
-    // Save serialization per Task D10
-    private var activeSaveTask: Task<Bool, Never>?
+    // MARK: - Config save coalescing
+    //
+    // Same "coalesce trailing" shape as the fetch queue above: at most one
+    // `PUT /config` in flight at a time. A `saveConfig` call that arrives while
+    // one is in flight replaces `pendingConfigToSave` (latest wins) and queues a
+    // continuation; the single driver loop resumes each round's waiters with the
+    // outcome of the save that actually ran for that round, so a caller only ever
+    // sees "true" if its own config (or a newer one that superseded it) was
+    // genuinely the last thing persisted - never a false success for a write that
+    // never landed.
+    private var isSaveInFlight = false
     private var pendingConfigToSave: DaemonConfig?
+    private var saveWaiters: [CheckedContinuation<Bool, Never>] = []
 
     func start() {
         Task {
@@ -116,57 +136,89 @@ final class UsageStore: ObservableObject {
     }
 
     func reload() async {
-        // In-flight guard: prevent overlapping reload calls from stacking up, and
-        // coalesce against a concurrent manual refresh() (Task C7 + latent race fix).
-        guard !isFetchInFlight else { return }
-        isFetchInFlight = true
-        defer { isFetchInFlight = false }
+        await requestFetch(.reload)
+    }
 
-        switch await client.status() {
-        case .success(let response):
-            lastDaemonError = nil
-            if !isDaemonReachable {
-                isDaemonReachable = true
-            }
-            if accounts != response.accounts {
-                accounts = response.accounts
-            }
-            NotificationManager.shared.evaluate(accounts: accounts, config: config)
-        case .failure(let error):
-            lastDaemonError = error
-            if isDaemonReachable {
-                isDaemonReachable = false
+    func refresh(accountId: String? = nil) async {
+        await requestFetch(.refresh(accountId: accountId))
+    }
+
+    /// Entry point for both `reload()` and `refresh()`. Queues `kind` as the
+    /// newest pending request and, if no driver loop is currently running,
+    /// starts one. Always awaits a continuation that is resumed once a fetch
+    /// covering this call's request has actually completed - so a caller is
+    /// never told "done" without a matching daemon round-trip having happened.
+    private func requestFetch(_ kind: FetchKind) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            pendingFetchKind = kind
+            fetchWaiters.append(continuation)
+            if !isFetchInFlight {
+                isFetchInFlight = true
+                Task { await self.runFetchLoop() }
             }
         }
     }
 
-    func refresh(accountId: String? = nil) async {
-        // Shares the same in-flight guard as reload() so a manual "Refresh Now"
-        // and a timer-driven reload() can never both be in flight at once.
-        guard !isFetchInFlight else { return }
-        isFetchInFlight = true
-        isRefreshing = true
-        defer {
-            isFetchInFlight = false
-            isRefreshing = false
-        }
+    /// The single driver loop. Only one of these ever runs at a time (gated by
+    /// `isFetchInFlight`): it repeatedly takes whatever is the newest pending
+    /// fetch kind, runs it, and resumes exactly the waiters that were queued as
+    /// of the start of that round - so a request that arrives mid-fetch is
+    /// coalesced into the *next* round rather than dropped, and its caller's
+    /// `await` only resolves once that next round is done.
+    private func runFetchLoop() async {
+        while let currentKind = pendingFetchKind {
+            pendingFetchKind = nil
+            let waiters = fetchWaiters
+            fetchWaiters = []
 
-        switch await client.refresh(accountId: accountId) {
-        case .success(let response):
-            lastDaemonError = nil
-            if !isDaemonReachable {
-                isDaemonReachable = true
+            await performFetch(currentKind)
+
+            for waiter in waiters {
+                waiter.resume()
             }
-            if accounts != response.accounts {
-                accounts = response.accounts
+        }
+        isFetchInFlight = false
+    }
+
+    private func performFetch(_ kind: FetchKind) async {
+        switch kind {
+        case .reload:
+            switch await client.status() {
+            case .success(let response):
+                lastDaemonError = nil
+                if !isDaemonReachable {
+                    isDaemonReachable = true
+                }
+                if accounts != response.accounts {
+                    accounts = response.accounts
+                }
+                NotificationManager.shared.evaluate(accounts: accounts, config: config)
+            case .failure(let error):
+                lastDaemonError = error
+                if isDaemonReachable {
+                    isDaemonReachable = false
+                }
             }
-            NotificationManager.shared.evaluate(accounts: accounts, config: config)
-            await loadAllHistory()
-        case .failure(let error):
-            lastDaemonError = error
-            if isDaemonReachable {
-                isDaemonReachable = false
+        case .refresh(let accountId):
+            isRefreshing = true
+            switch await client.refresh(accountId: accountId) {
+            case .success(let response):
+                lastDaemonError = nil
+                if !isDaemonReachable {
+                    isDaemonReachable = true
+                }
+                if accounts != response.accounts {
+                    accounts = response.accounts
+                }
+                NotificationManager.shared.evaluate(accounts: accounts, config: config)
+                await loadAllHistory()
+            case .failure(let error):
+                lastDaemonError = error
+                if isDaemonReachable {
+                    isDaemonReachable = false
+                }
             }
+            isRefreshing = false
         }
     }
 
@@ -219,49 +271,64 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    /// Serializes saves to avoid in-flight clobbering (Task D10).
+    /// Single-flight + "coalesce trailing" save: at most one `PUT /config` is
+    /// ever in flight. A call that arrives while one is already running just
+    /// replaces `pendingConfigToSave` with its (newer) payload and queues a
+    /// continuation in `saveWaiters`; the single driver loop below picks up the
+    /// newest pending config on its next iteration and resumes exactly the
+    /// waiters queued for that round with that round's real outcome.
     ///
-    /// Iterative rather than recursive: if newer edits arrive while a save is in
-    /// flight, the newest pending config just replaces `pendingConfigToSave` and
-    /// the loop below picks it up on its next iteration, instead of this function
-    /// calling itself again. This keeps the "latest wins, coalesce intermediate
-    /// edits" behavior without any risk of deep call-stack growth from rapid
-    /// successive edits.
+    /// This means a caller's `await saveConfig(...)` only ever returns `true`
+    /// if its own config, or a newer one that superseded it before its round
+    /// started, was actually the thing that got persisted - never a false
+    /// "success" for a write that was silently dropped, and never two
+    /// overlapping PUT requests in flight at once. All state here
+    /// (`isSaveInFlight`, `pendingConfigToSave`, `saveWaiters`) is only ever
+    /// touched synchronously on the MainActor between suspension points, so no
+    /// extra locking is needed.
     func saveConfig(_ newConfig: DaemonConfig) async -> Bool {
-        pendingConfigToSave = newConfig
-        if let active = activeSaveTask {
-            _ = await active.value
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            pendingConfigToSave = newConfig
+            saveWaiters.append(continuation)
+            if !isSaveInFlight {
+                isSaveInFlight = true
+                Task { await self.runSaveLoop() }
+            }
         }
+    }
 
-        var outcome = true
+    /// The single driver loop for `saveConfig`. Only one instance ever runs at
+    /// a time (gated by `isSaveInFlight`).
+    private func runSaveLoop() async {
         while let configToSave = pendingConfigToSave {
             pendingConfigToSave = nil
+            let waiters = saveWaiters
+            saveWaiters = []
 
-            let task = Task<Bool, Never> { @MainActor in
-                let result = await self.client.updateConfig(configToSave)
-                switch result {
-                case .success(let cfg):
-                    self.lastDaemonError = nil
-                    self.config = cfg
-                    if let paused = cfg.collectionPaused {
-                        self.isCollectionPaused = paused
-                    }
-                    NotificationManager.shared.evaluate(accounts: self.accounts, config: cfg)
-                    await self.reload()
-                    return true
-                case .failure(let error):
-                    self.lastDaemonError = error
-                    return false
+            let success: Bool
+            switch await client.updateConfig(configToSave) {
+            case .success(let cfg):
+                lastDaemonError = nil
+                config = cfg
+                if let paused = cfg.collectionPaused {
+                    isCollectionPaused = paused
                 }
+                NotificationManager.shared.evaluate(accounts: accounts, config: cfg)
+                await reload()
+                success = true
+            case .failure(let error):
+                lastDaemonError = error
+                success = false
             }
-            activeSaveTask = task
-            outcome = await task.value
-            activeSaveTask = nil
+
+            for waiter in waiters {
+                waiter.resume(returning: success)
+            }
 
             // Loop again if another change came in while this save was in flight -
             // `pendingConfigToSave` will be non-nil and we save the newest draft.
         }
-        return outcome
+        isSaveInFlight = false
     }
 
     /// Non-optimistic pause toggle: reverts on failure per Task D9

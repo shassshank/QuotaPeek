@@ -42,6 +42,7 @@ func FetchCodexAt(ctx context.Context, configDir string) (UsageData, error) {
 	if err != nil {
 		return UsageData{}, err
 	}
+	defer stdin.Close()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return UsageData{}, err

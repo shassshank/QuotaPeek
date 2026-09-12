@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -62,5 +66,108 @@ func TestUniqueMatches(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLocateAndDiscoverAntigravity(t *testing.T) {
+	id := "123456-" + strings.Repeat("a", 20) + ".apps.googleusercontent.com"
+	secret := "GOCSPX-" + strings.Repeat("b", 28)
+	for _, tt := range []struct {
+		name               string
+		local, path, valid bool
+	}{
+		{"local preferred", true, true, true}, {"PATH fallback", false, true, true}, {"missing", false, false, false}, {"invalid binary", true, false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			home, pathDir := t.TempDir(), t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("PATH", pathDir)
+			local := filepath.Join(home, ".local", "bin", "agy")
+			fallback := filepath.Join(pathDir, "agy")
+			payload := []byte(id + "\x00" + secret)
+			if !tt.valid {
+				payload = []byte("no credentials")
+			}
+			for path, create := range map[string]bool{local: tt.local, fallback: tt.path} {
+				if create {
+					if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(path, payload, 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			got, err := locateAntigravityBinary()
+			if !tt.local && !tt.path {
+				if err == nil {
+					t.Fatal(got)
+				}
+			} else {
+				want := fallback
+				if tt.local {
+					want = local
+				}
+				if err != nil || got != want {
+					t.Fatal(got, err)
+				}
+			}
+			pairs, err := discoverAntigravityOAuthPairs()
+			if (err == nil) != tt.valid {
+				t.Fatal(pairs, err)
+			}
+			if tt.valid && (len(pairs) != 1 || pairs[0] != (oauthPair{id, secret})) {
+				t.Fatal(pairs)
+			}
+		})
+	}
+}
+
+func TestAntigravityOnlyPersistsRedeemedPair(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	bin := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	id := "123456-" + strings.Repeat("a", 20) + ".apps.googleusercontent.com"
+	bad, good := "GOCSPX-"+strings.Repeat("b", 28), "GOCSPX-"+strings.Repeat("c", 28)
+	if err := os.WriteFile(filepath.Join(bin, "agy"), []byte(strings.Join([]string{id, bad, good}, "\x00")), 0700); err != nil {
+		t.Fatal(err)
+	}
+	c := NewCollector()
+	c.configDir = t.TempDir()
+	path, _ := antigravityOAuthCachePath(c.configDir)
+	pairs, _, err := c.antigravityOAuthCandidates(false)
+	if err != nil || len(pairs) != 2 {
+		t.Fatal(pairs, err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("unverified candidates persisted", err)
+	}
+	attempts := 0
+	c.client = &http.Client{Transport: oauthTestTransport(func(r *http.Request) (*http.Response, error) {
+		attempts++
+		r.ParseForm()
+		if r.Form.Get("client_secret") == bad {
+			return reviewResponse(401, `{}`), nil
+		}
+		return reviewResponse(200, `{"access_token":"access","refresh_token":"rotated","expires_in":3600}`), nil
+	})}
+	if _, err := c.refreshAntigravityToken(context.Background(), "refresh"); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := loadCachedAntigravityOAuthPairs(path)
+	if err != nil || len(saved) != 1 || saved[0].clientSecret != good || attempts != 2 {
+		t.Fatal(saved, attempts, err)
+	}
+	restarted := NewCollector()
+	restarted.configDir = c.configDir
+	restarted.client = c.client
+	if _, err := restarted.refreshAntigravityToken(context.Background(), "rotated"); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 {
+		t.Fatal("restart retried rejected pair", attempts)
 	}
 }

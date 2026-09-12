@@ -32,6 +32,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
+        // Force NotificationManager's singleton to initialize now, not lazily on
+        // first use (which today only happens after the first async reload
+        // completes). Its init registers the UNUserNotificationCenter delegate,
+        // so touching it here ensures a notification delivered or tapped at
+        // launch - before that first reload finishes - isn't missed because the
+        // delegate wasn't registered yet.
+        _ = NotificationManager.shared
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.action = #selector(handleStatusItemClick)
@@ -49,13 +57,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        // Debounced: displayPrefs.objectWillChange fires on every mutation of a
+        // bound preference, including once per keystroke while typing (e.g. a
+        // desktop widget's name). Without coalescing, that would re-run a full
+        // status-item re-render and desktop-widget reconciliation pass on every
+        // character typed. The debounce collapses a burst of rapid changes into
+        // a single pass shortly after they stop, while still applying the final
+        // value.
         displayPrefs.objectWillChange
-            .receive(on: DispatchQueue.main)
+            .debounce(for: .milliseconds(250), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
-                DispatchQueue.main.async {
-                    self?.updateStatusItem()
-                    self?.updateDesktopWidgetVisibility()
-                }
+                self?.updateStatusItem()
+                self?.updateDesktopWidgetVisibility()
             }
             .store(in: &cancellables)
 
@@ -93,8 +106,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let allKnownIds = Set(configs.map(\.id))
 
         // Close panels whose configuration was disabled or deleted entirely.
+        // Also detach the hosted SwiftUI view (mirroring how the popover detaches
+        // its content on close) so a hidden/disabled widget's view stops
+        // observing the store and re-rendering on every poll tick while off
+        // screen; `update(configuration:store:displayPrefs:)` re-attaches it if
+        // the widget is re-enabled later.
         for (id, panel) in desktopWidgetPanels where !enabledIds.contains(id) {
             panel.orderOut(nil)
+            panel.detachContent()
             if !allKnownIds.contains(id) {
                 desktopWidgetPanels.removeValue(forKey: id)
             }
@@ -396,8 +415,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.performClose(nil)
         } else {
             attachPopoverContent()
+            // setPopoverVisible(true) already triggers an immediate reload via
+            // applyPollingCadence(triggerImmediateReload:) - an extra explicit
+            // reload() here would just duplicate that call.
             store.setPopoverVisible(true)
-            Task { await store.reload() }
             NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()

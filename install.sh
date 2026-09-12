@@ -65,14 +65,17 @@ FROM_DIR=""
 
 # Lifecycle commands run without rebuilding or reinstalling.
 case "${1:-}" in
-    --app-login-on|--app-login-off|--daemon-start|--daemon-stop)
-        case "$1" in
-            --app-login-on) service=com.quotapeek.app; action=load ;;
-            --app-login-off) service=com.quotapeek.app; action=unload ;;
-            --daemon-start) service=com.quotapeek.daemon; action=load ;;
-            --daemon-stop) service=com.quotapeek.daemon; action=unload ;;
-        esac
-        exec launchctl "$action" -w "$LAUNCH_AGENTS/$service.plist"
+    --app-login-on)
+        exec launchctl enable "gui/$(id -u)/com.quotapeek.app"
+        ;;
+    --app-login-off)
+        exec launchctl disable "gui/$(id -u)/com.quotapeek.app"
+        ;;
+    --daemon-start)
+        exec launchctl load -w "$LAUNCH_AGENTS/com.quotapeek.daemon.plist"
+        ;;
+    --daemon-stop)
+        exec launchctl unload -w "$LAUNCH_AGENTS/com.quotapeek.daemon.plist"
         ;;
     "") ;;
     --remote) MODE="remote" ;;
@@ -247,18 +250,38 @@ for name in com.quotapeek.daemon com.quotapeek.app; do
         echo "  warning: $template not found, skipping" >&2
         continue
     fi
-    sed -e "s#__BIN_DIR__#$BIN_DIR#g" \
-        -e "s#__HOME__#$HOME#g" \
-        -e "s#__APP_SUPPORT__#$APP_SUPPORT#g" \
-        -e "s#__APP_BUNDLE__#$APP_BUNDLE_DEST#g" \
-        "$template" > "$dest"
+    "$PYTHON3" - "$template" "$dest" "$BIN_DIR" "$HOME" "$APP_SUPPORT" "$APP_BUNDLE_DEST" <<'PY'
+import sys
+tmpl, dest, bin_dir, home, app_support, app_bundle = sys.argv[1:7]
+with open(tmpl, "r", encoding="utf-8") as f:
+    c = f.read()
+c = (c.replace("__BIN_DIR__", bin_dir)
+      .replace("__HOME__", home)
+      .replace("__APP_SUPPORT__", app_support)
+      .replace("__APP_BUNDLE__", app_bundle))
+with open(dest, "w", encoding="utf-8") as f:
+    f.write(c)
+PY
+    was_disabled=false
+    if launchctl print-disabled "gui/$(id -u)/" 2>/dev/null | grep -E "\"$name\"\s*=>\s*disabled" >/dev/null 2>&1; then
+        was_disabled=true
+    fi
     launchctl unload "$dest" >/dev/null 2>&1 || true
-    # -w also clears any persisted "Disabled" override left by a prior
-    # `install.sh --daemon-stop`/`--app-login-off`, so a reinstall always
-    # actually starts the service instead of silently no-opping.
-    launchctl load -w "$dest"
-    echo "  loaded $dest"
+    if [ "$was_disabled" = true ]; then
+        echo "  preserving disabled state for $dest (skipping load)"
+    else
+        launchctl load -w "$dest"
+        echo "  loaded $dest"
+    fi
 done
+
+has_cli() {
+    local cmd="$1"
+    command -v "$cmd" >/dev/null 2>&1 || \
+        [ -e "$HOME/.local/bin/$cmd" ] || \
+        [ -e "/opt/homebrew/bin/$cmd" ] || \
+        [ -e "/usr/local/bin/$cmd" ]
+}
 
 # POST /accounts creates credentials/account metadata; PUT /config enables routes.
 setup_detected_accounts() {
@@ -284,7 +307,7 @@ setup_detected_accounts() {
         interval=300
         case "$provider" in
             claude|codex)
-                if ! command -v "$provider" >/dev/null 2>&1; then
+                if ! has_cli "$provider"; then
                     echo "  $provider not detected."
                     continue
                 fi
@@ -345,7 +368,7 @@ PY
         # Antigravity's normal default is Keychain OAuth polling. Claude and
         # Codex need "injection" instead: chooseSample (Backend/store.go)
         # only surfaces a route's data if it's in routes_enabled, so without
-        # this the statusLine hook merge_statusline already registered above
+        # this the statusLine hook registered below by merge_statusline
         # would push samples the daemon silently drops. Codex has no real
         # Keychain route at all — its poller (Backend/server.go's
         # pollProvider) only runs under "injection", where it spawns
@@ -382,20 +405,39 @@ merge_statusline() {
         echo '{}' > "$settings_file"
     fi
     "$PYTHON3" - "$settings_file" "$command" "${3:-}" <<'PY'
-import json, sys, shutil, datetime, os, tempfile
+import datetime, json, os, shutil, sys, tempfile
 path, command = sys.argv[1], sys.argv[2]
-with open(path) as f:
-    data = json.load(f)
+interval = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else None
+
+if not os.path.exists(path) or os.path.getsize(path) == 0:
+    data = {}
+else:
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        data = {}
+
 desired = {"type": "command", "command": command, "enabled": True}
-if sys.argv[3]:
-    desired["refreshInterval"] = int(sys.argv[3])
+if interval:
+    desired["refreshInterval"] = int(interval)
+
 existing = data.get("statusLine")
 if isinstance(existing, dict) and all(existing.get(k) == v for k, v in desired.items()):
     sys.exit(0)
-if "statusLine" in data:
+
+is_ours = (
+    isinstance(existing, dict)
+    and existing.get("type") == "command"
+    and isinstance(existing.get("command", ""), str)
+    and "QuotaPeek" in existing.get("command", "")
+)
+
+if "statusLine" in data and not is_ours:
     backup = path + ".bak." + datetime.datetime.now().strftime("%Y%m%dT%H%M%S%f")
     shutil.copy2(path, backup)
     print("  backed up settings to " + backup)
+
 data["statusLine"] = desired
 fd, tmp = tempfile.mkstemp(prefix=".settings-", dir=os.path.dirname(path))
 try:
@@ -418,7 +460,7 @@ echo "==> Registering statusLine hooks (Injection route)"
 # Only register each hook for a CLI that's actually installed - writing into
 # ~/.claude/settings.json or ~/.gemini/antigravity-cli/settings.json when that
 # CLI isn't even present would create dead config for an app that doesn't exist.
-if command -v claude >/dev/null 2>&1; then
+if has_cli claude; then
     merge_statusline "$HOME/.claude/settings.json" "\"$PYTHON3\" \"$BIN_DIR/claude-statusline-hook.py\"" 3
 else
     echo "  claude not detected; skipping Claude statusLine hook."
@@ -441,5 +483,10 @@ echo "Claude inference polling remains off by default. For an added Claude accou
 echo "enable Injection in Settings and run Claude Code for passive updates."
 echo "Enabling inference polling in Settings sends a real"
 echo "one-token inference request every 60s (~1,440/day) to read live rate-limit headers."
-echo "Quitting the app also stops the background daemon; run $0 --daemon-start to bring it back without relaunching the app."
-echo "Use $0 --app-login-off or --app-login-on to persist app login preferences."
+if [[ -f "$0" ]]; then
+    SCRIPT_CMD="$0"
+else
+    SCRIPT_CMD="./install.sh"
+fi
+echo "Quitting the app also stops the background daemon; run 'launchctl load ~/Library/LaunchAgents/com.quotapeek.daemon.plist' (or '$SCRIPT_CMD --daemon-start') to bring it back without relaunching the app."
+echo "Use Settings (or 'launchctl [enable|disable] gui/\$(id -u)/com.quotapeek.app', or '$SCRIPT_CMD --app-login-off/--app-login-on') to manage app login preferences."

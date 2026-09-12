@@ -605,6 +605,32 @@ struct ErrorLogEntry: Codable, Identifiable {
     var route: Route
     var message: String
     var at: Int
+
+    enum CodingKeys: String, CodingKey {
+        case provider
+        case route
+        case message
+        case at
+    }
+
+    init(provider: Provider, route: Route, message: String, at: Int) {
+        self.provider = provider
+        self.route = route
+        self.message = message
+        self.at = at
+    }
+
+    /// Tolerant like `Account.init(from:)`: an unrecognized `provider` or
+    /// `route` value must degrade this single entry rather than fail the
+    /// entire batch decode in `ErrorsResponse` (which would blank the whole
+    /// Advanced tab's error log because of one unmapped enum case).
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.provider = (try? container.decode(Provider.self, forKey: .provider)) ?? .claude
+        self.route = (try? container.decode(Route.self, forKey: .route)) ?? .none
+        self.message = (try? container.decode(String.self, forKey: .message)) ?? ""
+        self.at = (try? container.decode(Int.self, forKey: .at)) ?? 0
+    }
 }
 
 struct ErrorsResponse: Codable {

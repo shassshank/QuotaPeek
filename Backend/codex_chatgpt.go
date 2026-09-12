@@ -63,6 +63,7 @@ func (c *Collector) FetchCodexKeychain(ctx context.Context) (data UsageData, err
 		var authErr *codexAuthError
 		if errors.As(err, &authErr) {
 			c.credCache.invalidate("codex")
+			c.codexTokens.invalidateAccess()
 		}
 	}()
 	home, err := codexHomeDir()

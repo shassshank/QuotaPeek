@@ -80,7 +80,10 @@ func (s *Store) enablePersistence(path string) error {
 		key := item.Provider
 		if item.AccountID != "" {
 			key = ProviderID(item.AccountID)
-			if s.providerLocked(key) == key {
+			if s.cfg.Accounts == nil && item.AccountID == defaultAccountID(item.Provider) {
+				// Restore legacy defaults under provider keys; migration moves them.
+				key = item.Provider
+			} else if s.providerLocked(key) == key {
 				continue
 			}
 		} else {

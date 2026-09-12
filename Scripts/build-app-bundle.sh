@@ -23,15 +23,32 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${2:-1.0.0}"
-BUILD_NUMBER="${4:-1}"
+VERSION="1.0.0"
+BUILD_NUMBER="1"
 
 # Parse named arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --version) VERSION="$2"; shift 2 ;;
-        --build)   BUILD_NUMBER="$2"; shift 2 ;;
-        *) shift ;;
+        --version)
+            if [[ $# -lt 2 || -z "$2" ]]; then
+                echo "ERROR: --version requires a non-empty value" >&2
+                exit 1
+            fi
+            VERSION="$2"
+            shift 2
+            ;;
+        --build)
+            if [[ $# -lt 2 || -z "$2" ]]; then
+                echo "ERROR: --build requires a non-empty value" >&2
+                exit 1
+            fi
+            BUILD_NUMBER="$2"
+            shift 2
+            ;;
+        *)
+            echo "ERROR: Unknown argument: $1" >&2
+            exit 1
+            ;;
     esac
 done
 
@@ -74,18 +91,20 @@ cp "$MENU_BAR_ICON_1X" "$MENU_BAR_ICON_2X" "$MENU_BAR_ICON_3X" "$APP_BUNDLE/Cont
 
 # Generate Info.plist with stamped version/build numbers
 cp "$INFO_PLIST" "$APP_BUNDLE/Contents/Info.plist"
-"${PYTHON3:-python3}" -c "
+"${PYTHON3:-python3}" -c '
 import sys, re
-p = sys.argv[1]
-with open(p) as f: t = f.read()
+p, ver, bld = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(p, "r", encoding="utf-8") as f:
+    t = f.read()
 t = re.sub(
-    r'(<key>CFBundleVersion</key>\s*<string>)\d+(</string>)',
-    r'\g<1>${BUILD_NUMBER}\g<2>', t)
+    r"(<key>CFBundleVersion</key>\s*<string>)\d+(</string>)",
+    lambda m: m.group(1) + bld + m.group(2), t)
 t = re.sub(
-    r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]+(</string>)',
-    r'\g<1>${VERSION}\g<2>', t)
-with open(p, 'w') as f: f.write(t)
-" "$APP_BUNDLE/Contents/Info.plist"
+    r"(<key>CFBundleShortVersionString</key>\s*<string>)[^<]+(</string>)",
+    lambda m: m.group(1) + ver + m.group(2), t)
+with open(p, "w", encoding="utf-8") as f:
+    f.write(t)
+' "$APP_BUNDLE/Contents/Info.plist" "$VERSION" "$BUILD_NUMBER"
 
 # Create a minimal PkgInfo (standard for macOS .app bundles)
 echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"

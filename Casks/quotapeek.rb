@@ -68,7 +68,6 @@ cask "quotapeek" do
         .gsub("__APP_SUPPORT__", app_support)
         .gsub("__APP_BUNDLE__", app_bundle)
       dest = File.join(la_dir, "#{label}.plist")
-      system_command "/usr/bin/true", args: [] # ensure previous is unloaded
       system_command "launchctl", args: ["unload", dest], must_succeed: false if File.exist?(dest)
       File.write(dest, content)
       system_command "launchctl", args: ["load", "-w", dest]

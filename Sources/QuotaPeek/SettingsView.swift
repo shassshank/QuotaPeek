@@ -423,7 +423,7 @@ private struct AccountsSettingsTab: View {
                                 routes.removeAll { $0 == .keychain }
                             }
                             binding.wrappedValue.routesEnabled = routes
-                            Task { _ = await store.saveConfig(draftConfig) }
+                            Task { _ = await store.saveConfig(mergedConfigPayload()) }
                         }
                     )
                 )
@@ -446,7 +446,7 @@ private struct AccountsSettingsTab: View {
                     get: { binding.wrappedValue.keychainPollIntervalSec },
                     set: {
                         binding.wrappedValue.keychainPollIntervalSec = $0
-                        Task { _ = await store.saveConfig(draftConfig) }
+                        Task { _ = await store.saveConfig(mergedConfigPayload()) }
                     }
                 ),
                 in: 30...600,
@@ -461,11 +461,11 @@ private struct AccountsSettingsTab: View {
                         binding.wrappedValue.notifyThresholdPercent = binding.wrappedValue.notifyThresholdPercent ?? 90
                         Task {
                             await NotificationManager.shared.requestAuthorization()
-                            _ = await store.saveConfig(draftConfig)
+                            _ = await store.saveConfig(mergedConfigPayload())
                         }
                     } else {
                         binding.wrappedValue.notifyThresholdPercent = nil
-                        Task { _ = await store.saveConfig(draftConfig) }
+                        Task { _ = await store.saveConfig(mergedConfigPayload()) }
                     }
                 }
             ))
@@ -478,7 +478,7 @@ private struct AccountsSettingsTab: View {
                         get: { binding.wrappedValue.notifyThresholdPercent ?? 90 },
                         set: {
                             binding.wrappedValue.notifyThresholdPercent = $0
-                            Task { _ = await store.saveConfig(draftConfig) }
+                            Task { _ = await store.saveConfig(mergedConfigPayload()) }
                         }
                     ),
                     in: 1...100,
@@ -526,7 +526,7 @@ private struct AccountsSettingsTab: View {
                     routes.removeAll { $0 == route }
                 }
                 binding.wrappedValue.routesEnabled = routes
-                Task { _ = await store.saveConfig(draftConfig) }
+                Task { _ = await store.saveConfig(mergedConfigPayload()) }
             }
         )
 
@@ -615,6 +615,22 @@ private struct AccountsSettingsTab: View {
                 .controlSize(.small)
             }
         }
+    }
+
+    /// Builds the config payload to actually send to the daemon: starts from the
+    /// *latest known-good* config (`store.config`, refreshed just before we save)
+    /// rather than this tab's own `draftConfig`, and layers only the fields this
+    /// tab owns (per-provider route/polling settings + `claudePollingMode`) on
+    /// top. This is what prevents a stale full-object round-trip in this tab from
+    /// clobbering edits the General tab already saved (and vice versa) - see the
+    /// draftConfig staleness fix.
+    private func mergedConfigPayload() -> DaemonConfig {
+        var payload = store.config ?? draftConfig
+        payload.claude = draftConfig.claude
+        payload.codex = draftConfig.codex
+        payload.antigravity = draftConfig.antigravity
+        payload.claudePollingMode = draftConfig.claudePollingMode
+        return payload
     }
 
     private func initializeDraftConfig(_ config: DaemonConfig) {
@@ -1041,8 +1057,18 @@ private struct GeneralSettingsTab: View {
                 if !hasInitialized {
                     draftConfig = newConfig
                     hasInitialized = true
-                } else if draftConfig != newConfig && !isSaving {
-                    draftConfig = newConfig
+                } else if !isSaving {
+                    // Adopt every field from the latest known-good config (e.g. an
+                    // account/route change just saved from the Accounts tab), but
+                    // keep this tab's own in-flight edits to the fields it owns so
+                    // an external update can't clobber what the user is mid-typing
+                    // here before this tab's own debounce has had a chance to save.
+                    var merged = newConfig
+                    merged.staleAfterSeconds = draftConfig.staleAfterSeconds
+                    merged.statuslineShowOtherAgents = draftConfig.statuslineShowOtherAgents
+                    if merged != draftConfig {
+                        draftConfig = merged
+                    }
                 }
             }
         }
@@ -1055,7 +1081,15 @@ private struct GeneralSettingsTab: View {
                 try? await Task.sleep(nanoseconds: 300_000_000)
                 guard !Task.isCancelled else { return }
                 isSaving = true
-                let ok = await store.saveConfig(newDraft)
+                // Re-base onto the latest known-good config right before saving
+                // (not the possibly-stale `newDraft` snapshot captured when this
+                // task was scheduled) and layer on only the two fields this tab
+                // owns, so a save here can't revert changes another tab made to
+                // fields it owns (e.g. Accounts tab route/polling settings).
+                var payload = store.config ?? draftConfig
+                payload.staleAfterSeconds = draftConfig.staleAfterSeconds
+                payload.statuslineShowOtherAgents = draftConfig.statuslineShowOtherAgents
+                let ok = await store.saveConfig(payload)
                 isSaving = false
                 if ok {
                     saveStatus = "Saved automatically"
@@ -1311,7 +1345,7 @@ private struct ProviderHealthTab: View {
 
                 healthRow(
                     title: "Last Success",
-                    value: account.lastSuccessAt != nil ? relativeTimestamp(account.lastSuccessAt!) : "No recorded success",
+                    value: account.lastSuccessAt.map(relativeTimestamp) ?? "No recorded success",
                     icon: "checkmark.circle",
                     tint: account.lastSuccessAt != nil ? .green : .secondary
                 )

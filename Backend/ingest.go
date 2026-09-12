@@ -19,11 +19,11 @@ func parseClaudeIngest(raw []byte) (UsageData, bool, error) {
 	if rl, ok := payload["rate_limits"].(map[string]any); ok {
 		if w, ok := rl["five_hour"].(map[string]any); ok {
 			data.UsedPercent5H = floatPtr(claudeUsedPercentage(w))
-			data.ResetsAt5H = intPtr(int64FromAny(w["resets_at"]))
+			data.ResetsAt5H = parseReset(w["resets_at"])
 		}
 		if w, ok := rl["seven_day"].(map[string]any); ok {
 			data.UsedPercentWeekly = floatPtr(claudeUsedPercentage(w))
-			data.ResetsAtWeekly = intPtr(int64FromAny(w["resets_at"]))
+			data.ResetsAtWeekly = parseReset(w["resets_at"])
 		}
 	}
 	if ctx, ok := payload["context_window"].(map[string]any); ok {

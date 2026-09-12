@@ -45,6 +45,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PATCH /accounts/{id}", s.handleAccount)
 	mux.HandleFunc("DELETE /accounts/{id}", s.handleAccount)
 	mux.HandleFunc("POST /accounts/{id}/reset-credentials", s.handleResetCredentials)
+	mux.HandleFunc("POST /accounts/{id}/reauthenticate", s.handleReauthenticate)
 	mux.HandleFunc("POST /test-route", s.handleTestRoute)
 	mux.HandleFunc("GET /config", s.handleGetConfig)
 	mux.HandleFunc("PUT /config", s.handlePutConfig)
@@ -93,11 +94,17 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 			go func(a AccountConfig) {
 				defer wg.Done()
 				defer s.store.recoverPollPanic(ProviderID(a.ID), "")
-				s.pollProvider(r.Context(), ProviderID(a.ID))
+				s.pollProvider(context.Background(), ProviderID(a.ID))
 			}(a)
 		}
 	}
-	wg.Wait()
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-r.Context().Done():
+		return
+	case <-done:
+	}
 	writeJSON(w, s.status())
 }
 
@@ -310,6 +317,10 @@ func (s *Store) recoverPollPanic(key ProviderID, route Route) {
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
+	writeJSONStatus(w, http.StatusOK, v)
+}
+
+func writeJSONStatus(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	raw, err := json.Marshal(v)
 	if err != nil {
@@ -318,6 +329,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 		_, _ = w.Write([]byte(`{"error":"response encoding failed"}`))
 		return
 	}
+	w.WriteHeader(code)
 	if _, err := w.Write(append(raw, '\n')); err != nil {
 		log.Printf("JSON response write failed: %v", err)
 	}
@@ -531,9 +543,7 @@ func (s *Server) handleResetCredentials(w http.ResponseWriter, r *http.Request) 
 	id := r.PathValue("id")
 	a, ok := s.store.account(id)
 	fail := func(code int, message string) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(code)
-		writeJSON(w, map[string]any{"ok": false, "accountId": id, "provider": a.Provider, "message": redactMessage(message)})
+		writeJSONStatus(w, code, map[string]any{"ok": false, "accountId": id, "provider": a.Provider, "message": redactMessage(message)})
 	}
 	if !ok {
 		fail(404, "Unknown account.")

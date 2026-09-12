@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type CredentialLocation struct {
@@ -28,7 +29,7 @@ type AccountConfig struct {
 type Account struct {
 	AccountConfig
 	ProviderStatus `json:"-"` // MarshalJSON flattens status with the account ID.
-	State string `json:"state"`
+	State          string     `json:"state"`
 }
 
 // Explicit outer id overrides the legacy embedded status id in JSON.
@@ -181,10 +182,7 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 		Provider           ProviderID         `json:"provider"`
 		Label              string             `json:"label"`
 		CredentialLocation CredentialLocation `json:"credentialLocation"`
-		OAuthBootstrap     *struct {
-			RefreshToken string `json:"refreshToken"`
-			Email        string `json:"email"`
-		} `json:"oauthBootstrap"`
+		OAuthBootstrap     *accountBootstrap  `json:"oauthBootstrap"`
 		// AutoDetect asks the daemon to read the refresh token itself from
 		// the local Antigravity CLI's Keychain entry, instead of requiring
 		// the caller to supply oauthBootstrap directly. No end user can
@@ -205,21 +203,12 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "daemon_token requires oauthBootstrap.refreshToken or autoDetect", 400)
 			return
 		}
-		if req.OAuthBootstrap == nil && req.AutoDetect {
-			creds, err := loadAntigravityCredsVia(r.Context(), s.collector.readKeychain)
-			if err != nil || strings.TrimSpace(creds.Token.RefreshToken) == "" {
-				http.Error(w, "no Antigravity login found in Keychain; sign in with the agy CLI first, or enter a refresh token manually", 422)
-				return
-			}
-			req.OAuthBootstrap = &struct {
-				RefreshToken string `json:"refreshToken"`
-				Email        string `json:"email"`
-			}{RefreshToken: creds.Token.RefreshToken, Email: creds.Email}
-		}
-		if req.OAuthBootstrap == nil || strings.TrimSpace(req.OAuthBootstrap.RefreshToken) == "" {
-			http.Error(w, "daemon_token requires oauthBootstrap.refreshToken or autoDetect", 400)
+		var ok bool
+		req.OAuthBootstrap, ok = s.resolveBootstrap(w, r, req.OAuthBootstrap, req.AutoDetect)
+		if !ok {
 			return
 		}
+
 	} else {
 		if loc.Kind != "config_dir" || loc.ConfigDir == nil || !filepath.IsAbs(*loc.ConfigDir) || req.OAuthBootstrap != nil {
 			http.Error(w, "config_dir requires an absolute configDir", 400)
@@ -256,11 +245,7 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 	a := AccountConfig{ID: "acct_" + hex.EncodeToString(b), Provider: req.Provider, Label: req.Label, CredentialLocation: loc}
 	c := s.newAccountCollector(a)
 	if req.OAuthBootstrap != nil {
-		c.antigravityTokens.daemonOwned = true
-		c.antigravityTokens.email = req.OAuthBootstrap.Email
-		c.antigravityTokens.refresh = req.OAuthBootstrap.RefreshToken
-		c.antigravityTokens.loaded = true
-		if err := c.antigravityTokens.persist(); err != nil {
+		if err := c.antigravityTokens.bootstrap(*req.OAuthBootstrap); err != nil {
 			http.Error(w, "could not persist OAuth bootstrap", 500)
 			return
 		}
@@ -280,11 +265,14 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 	// Return the promised empty snapshot before admitting the first scheduled poll.
 	result := s.accountView(a)
 	s.poller.Reschedule(cfg)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-	writeJSON(w, result)
+	writeJSONStatus(w, http.StatusCreated, result)
 }
 func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch && r.Method != http.MethodDelete {
+		w.Header().Set("Allow", "PATCH, DELETE")
+		http.Error(w, "method not allowed", 405)
+		return
+	}
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
 	id := r.PathValue("id")
@@ -326,13 +314,7 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.store.endCredentialReset(key)
-	c := s.collectorFor(a)
-	if c != nil {
-		if err := c.resetCredentials(a.Provider); err != nil {
-			http.Error(w, redactMessage(err.Error()), 500)
-			return
-		}
-	}
+
 	for i, v := range cfg.Accounts {
 		if v.ID == id {
 			cfg.Accounts = append(cfg.Accounts[:i], cfg.Accounts[i+1:]...)
@@ -343,6 +325,8 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not save accounts", 500)
 		return
 	}
+	c := s.collectorFor(a)
+	resetErr := c.resetCredentials(a.Provider)
 	s.store.SetConfig(cfg)
 	s.store.mu.Lock()
 	delete(s.store.samples, key)
@@ -354,6 +338,10 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 	delete(s.accountCollectors, id)
 	s.accountMu.Unlock()
 	s.poller.Reschedule(cfg)
+	if resetErr != nil {
+		http.Error(w, redactMessage(resetErr.Error()), 500)
+		return
+	}
 	if err != nil {
 		http.Error(w, "could not persist sample removal", 500)
 		return
@@ -403,7 +391,9 @@ func claudeService(configDir string) (string, error) {
 	}
 	normalized := configDir
 	if !isASCII(configDir) {
-		out, err := exec.Command("/usr/bin/python3", "-c", "import sys,unicodedata;sys.stdout.write(unicodedata.normalize('NFC',sys.argv[1]))", configDir).Output()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "/usr/bin/python3", "-c", "import sys,unicodedata;sys.stdout.write(unicodedata.normalize('NFC',sys.argv[1]))", configDir).Output()
 		if err != nil {
 			return "", errors.New("could not normalize Claude configDir")
 		}
@@ -477,4 +467,85 @@ func collectorEnv(ctx context.Context) []string {
 		}
 	}
 	return append(out, pair[0]+"="+pair[1])
+}
+
+// Reuse creation's credential discovery and persistence without replacing the account.
+type accountBootstrap struct {
+	RefreshToken string `json:"refreshToken"`
+	Email        string `json:"email"`
+}
+
+func (s *Server) resolveBootstrap(w http.ResponseWriter, r *http.Request, bootstrap *accountBootstrap, autoDetect bool) (*accountBootstrap, bool) {
+	if bootstrap == nil && autoDetect {
+		reader := readKeychain
+		if s.collector != nil && s.collector.readKeychain != nil {
+			reader = s.collector.readKeychain
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		creds, err := loadAntigravityCredsVia(ctx, reader)
+		if err != nil || strings.TrimSpace(creds.Token.RefreshToken) == "" {
+			http.Error(w, "no Antigravity login found in Keychain; sign in with the agy CLI first, or enter a refresh token manually", 422)
+			return nil, false
+		}
+		bootstrap = &accountBootstrap{creds.Token.RefreshToken, creds.Email}
+	}
+	if bootstrap == nil || strings.TrimSpace(bootstrap.RefreshToken) == "" {
+		http.Error(w, "daemon_token requires oauthBootstrap.refreshToken or autoDetect", 400)
+		return nil, false
+	}
+	return bootstrap, true
+}
+
+func (s *Server) handleReauthenticate(w http.ResponseWriter, r *http.Request) {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	a, ok := s.store.account(r.PathValue("id"))
+	if !ok {
+		http.Error(w, "unknown account", 404)
+		return
+	}
+	if a.Provider != ProviderAntigravity || a.ID == defaultAccountID(a.Provider) {
+		http.Error(w, "sign in using the provider CLI; the next poll rediscovers default credentials", 400)
+		return
+	}
+	var req struct {
+		OAuthBootstrap *accountBootstrap `json:"oauthBootstrap"`
+		AutoDetect     bool              `json:"autoDetect"`
+	}
+	if !decodeAccountBody(w, r, &req) {
+		return
+	}
+	key := ProviderID(a.ID)
+	if !s.store.beginCredentialReset(key) {
+		http.Error(w, "account poll or reset in flight", 409)
+		return
+	}
+	defer s.store.endCredentialReset(key)
+	bootstrap, ok := s.resolveBootstrap(w, r, req.OAuthBootstrap, req.AutoDetect)
+	if !ok {
+		return
+	}
+	for _, other := range s.store.Config().Accounts {
+		if other.ID == a.ID || other.Provider != a.Provider {
+			continue
+		}
+		email, err := s.collectorFor(other).antigravityTokens.accountEmail()
+		if err != nil {
+			http.Error(w, "could not read account email", 500)
+			return
+		}
+		if email != "" && strings.EqualFold(email, bootstrap.Email) {
+			http.Error(w, "duplicate email", 409)
+			return
+		}
+	}
+	c := s.collectorFor(a)
+	if err := c.antigravityTokens.bootstrap(*bootstrap); err != nil {
+		http.Error(w, "could not persist OAuth bootstrap", 500)
+		return
+	}
+	c.credCache.invalidate("antigravity")
+	c.invalidateAntigravityDiscovery()
+	writeJSON(w, map[string]any{"ok": true, "accountId": a.ID})
 }

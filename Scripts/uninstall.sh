@@ -6,17 +6,20 @@
 # The Swift UI's Settings "Uninstall" button shells out to exactly that path.
 #
 # Actions (in this order — see note below on why):
-#   1. Reverse the statusLine hook injection in settings files:
+#   1. Stop and remove daemon LaunchAgent (launchctl unload -w, then delete
+#      the plist) and force-kill fallback (pkill) before deleting app support.
+#   2. Reverse the statusLine hook injection in settings files:
 #      - ~/.claude/settings.json
 #      - ~/.gemini/antigravity-cli/settings.json
 #      Restores from .bak.<timestamp> backup ONLY if the current statusLine
 #      value still matches what the installer wrote.  If the user has since
 #      changed statusLine to something else, we leave the file alone (don't
 #      clobber user changes) but still remove the key if it equals ours.
-#   2. Remove ~/Library/Application Support/QuotaPeek entirely
-#   3. Remove QuotaPeek.app from /Applications or ~/Applications
-#   4. Stop and remove both LaunchAgents (launchctl unload -w, then delete
-#      the plist) — the daemon's first, the app's own LAST.
+#   3. Remove ~/Library/Application Support/QuotaPeek entirely
+#   4. Remove QuotaPeek.app from /Applications or ~/Applications
+#   5. Clean up the temp re-exec script
+#   6. Stop and remove app LaunchAgent (launchctl unload -w, then delete
+#      the plist) deliberately LAST.
 #
 # The Swift UI's Settings "Uninstall" button shells out to this exact path
 # as a child process of the running app. Unloading com.quotapeek.app's own
@@ -131,6 +134,19 @@ PY
 reverse_statusline "$HOME/.claude/settings.json"
 reverse_statusline "$HOME/.gemini/antigravity-cli/settings.json"
 
+echo "==> Stopping and removing daemon LaunchAgent"
+daemon_plist="$LAUNCH_AGENTS/com.quotapeek.daemon.plist"
+if [[ -f "$daemon_plist" ]]; then
+    launchctl unload -w "$daemon_plist" 2>/dev/null || true
+    rm -f "$daemon_plist"
+    echo "  removed $daemon_plist"
+fi
+
+# Belt-and-suspenders: if the daemon was started outside launchd, is hung, or
+# launchctl unload silently failed to stop it, make sure no orphaned
+# quotapeekd process is left holding the local port.
+pkill -f "^${DAEMON_BIN}($|[[:space:]])" 2>/dev/null || true
+
 echo "==> Removing application support directory"
 if [[ -d "$APP_SUPPORT" ]]; then
     rm -rf "$APP_SUPPORT"
@@ -151,23 +167,16 @@ echo "QuotaPeek has been fully uninstalled."
 echo "Backup copies of your settings files (.bak.*) were left in place"
 echo "in case you need to recover any prior configuration."
 
+# Clean up the temp copy of this script we re-exec'd from at the top.
+rm -f -- "${TMPSELF:-}" 2>/dev/null || true
+
 # Deliberately last: unloading com.quotapeek.app's own LaunchAgent kills the
 # running app, and this script along with it if the app is its parent
 # process. Everything above must already be done by this point.
-echo "==> Stopping and removing LaunchAgents"
-for label in com.quotapeek.daemon com.quotapeek.app; do
-    plist="$LAUNCH_AGENTS/$label.plist"
-    if [[ -f "$plist" ]]; then
-        launchctl unload -w "$plist" 2>/dev/null || true
-        rm -f "$plist"
-        echo "  removed $plist"
-    fi
-done
-
-# Belt-and-suspenders: if the daemon was started outside launchd, is hung, or
-# launchctl unload silently failed to stop it, make sure no orphaned
-# quotapeekd process is left holding the local port.
-pkill -f "^${DAEMON_BIN}($|[[:space:]])" 2>/dev/null || true
-
-# Clean up the temp copy of this script we re-exec'd from at the top.
-rm -f -- "${TMPSELF:-}" 2>/dev/null || true
+echo "==> Stopping and removing app LaunchAgent"
+app_plist="$LAUNCH_AGENTS/com.quotapeek.app.plist"
+if [[ -f "$app_plist" ]]; then
+    launchctl unload -w "$app_plist" 2>/dev/null || true
+    rm -f "$app_plist"
+    echo "  removed $app_plist"
+fi

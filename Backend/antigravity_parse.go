@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 )
 
@@ -42,8 +43,10 @@ func ParseAntigravityQuota(raw []byte) (UsageData, bool) {
 					data.ResetsAtWeeklyThirdParty = reset
 				}
 			case "gemini":
-				data.UsedPercentWeekly = &used
-				data.ResetsAtWeekly = reset
+				if data.UsedPercentWeekly == nil || used > *data.UsedPercentWeekly {
+					data.UsedPercentWeekly = &used
+					data.ResetsAtWeekly = reset
+				}
 			default:
 				if genericWeekly == nil || used > *genericWeekly {
 					genericWeekly = &used
@@ -58,8 +61,10 @@ func ParseAntigravityQuota(raw []byte) (UsageData, bool) {
 					data.ResetsAt5HThirdParty = reset
 				}
 			case "gemini":
-				data.UsedPercent5H = &used
-				data.ResetsAt5H = reset
+				if data.UsedPercent5H == nil || used > *data.UsedPercent5H {
+					data.UsedPercent5H = &used
+					data.ResetsAt5H = reset
+				}
 			default:
 				if generic5H == nil || used > *generic5H {
 					generic5H = &used
@@ -105,7 +110,13 @@ func collectQuotaBuckets(v any, inheritedID, inheritedGroup string) []quotaBucke
 		if b, ok := quotaBucketFromMap(x, inheritedID, group); ok {
 			buckets = append(buckets, b)
 		}
-		for k, child := range x {
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			child := x[k]
 			childGroup := group
 			if childGroup == "" && (k == "groups" || k == "buckets") {
 				childGroup = inheritedGroup
