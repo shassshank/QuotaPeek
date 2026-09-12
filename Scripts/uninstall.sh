@@ -138,6 +138,11 @@ echo "==> Stopping and removing daemon LaunchAgent"
 daemon_plist="$LAUNCH_AGENTS/com.quotapeek.daemon.plist"
 if [[ -f "$daemon_plist" ]]; then
     launchctl unload -w "$daemon_plist" 2>/dev/null || true
+    # -w persists a "disabled" override in launchd independent of the plist
+    # file. A full uninstall should leave no trace of that, so a future
+    # fresh install doesn't mistake this uninstall's unload for a user's
+    # deliberate "keep this disabled" choice and refuse to start it back up.
+    launchctl enable "gui/$(id -u)/com.quotapeek.daemon" 2>/dev/null || true
     rm -f "$daemon_plist"
     echo "  removed $daemon_plist"
 fi
@@ -177,6 +182,9 @@ echo "==> Stopping and removing app LaunchAgent"
 app_plist="$LAUNCH_AGENTS/com.quotapeek.app.plist"
 if [[ -f "$app_plist" ]]; then
     launchctl unload -w "$app_plist" 2>/dev/null || true
+    # See the matching comment above for the daemon: clear the persisted
+    # disabled override so a future fresh install isn't silently skipped.
+    launchctl enable "gui/$(id -u)/com.quotapeek.app" 2>/dev/null || true
     rm -f "$app_plist"
     echo "  removed $app_plist"
 fi
