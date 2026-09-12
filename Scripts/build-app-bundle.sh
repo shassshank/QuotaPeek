@@ -73,12 +73,7 @@ cp "$APP_ICON" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 cp "$MENU_BAR_ICON_1X" "$MENU_BAR_ICON_2X" "$MENU_BAR_ICON_3X" "$APP_BUNDLE/Contents/Resources/"
 
 # Generate Info.plist with stamped version/build numbers
-sed -e "s#<string>1.0.0</string>#<string>${VERSION}</string>#" \
-    -e "s#<key>CFBundleVersion</key>\n[[:space:]]*<string>1</string>#<key>CFBundleVersion</key>\n    <string>${BUILD_NUMBER}</string>#" \
-    "$INFO_PLIST" > "$APP_BUNDLE/Contents/Info.plist"
-
-# Fallback: if the sed for CFBundleVersion didn't match (due to whitespace),
-# use a python one-liner for reliable replacement.
+cp "$INFO_PLIST" "$APP_BUNDLE/Contents/Info.plist"
 "${PYTHON3:-python3}" -c "
 import sys, re
 p = sys.argv[1]

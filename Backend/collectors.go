@@ -17,7 +17,10 @@ import (
 	"time"
 )
 
-const antigravityUserAgent = "antigravity/cli/1.1.26 (aidev_client; os_type=darwin; arch=arm64; cl=976013059; auth_method=consumer)"
+// antigravityCLIVersion should be bumped when Antigravity's CLI protocol/version changes.
+const antigravityCLIVersion = "1.1.26"
+
+const antigravityUserAgent = "antigravity/cli/" + antigravityCLIVersion + " (aidev_client; os_type=darwin; arch=arm64; cl=976013059; auth_method=consumer)"
 
 type Collector struct {
 	configDir         string

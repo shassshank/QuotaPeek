@@ -9,7 +9,12 @@ Build, install, and distribution scripts for QuotaPeek.
 ```bash
 brew tap shassshank/quotapeek
 brew install --cask quotapeek
-# Uninstall: brew uninstall --cask quotapeek
+
+# Uninstall (removes app and LaunchAgents; keeps config/tokens/logs):
+brew uninstall --cask quotapeek
+
+# Full removal (also removes config, tokens, logs, and statusLine hooks):
+brew uninstall --zap --cask quotapeek
 ```
 
 ### 2. Curl-based installer (no local toolchain needed)

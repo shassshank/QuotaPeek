@@ -58,6 +58,11 @@ func discoverAntigravityOAuthPairs() ([]oauthPair, error) {
 	if err != nil {
 		return nil, errors.New("could not read local antigravity CLI binary")
 	}
+	return extractAntigravityOAuthPairs(data)
+}
+
+// extractAntigravityOAuthPairs returns candidate pairs from embedded binary strings.
+func extractAntigravityOAuthPairs(data []byte) ([]oauthPair, error) {
 	ids := uniqueMatches(antigravityClientIDPattern, data)
 	secrets := uniqueMatches(antigravityClientSecretPattern, data)
 	if len(ids) == 0 || len(secrets) == 0 {

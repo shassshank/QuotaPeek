@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"os/exec"
-	"strconv"
 	"time"
 )
 
@@ -147,11 +146,4 @@ func assignCodexWindow(data *UsageData, value any, fallback string) {
 			data.ResetsAtWeekly = &resetInt
 		}
 	}
-}
-
-func formatRPCError(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	return "codex RPC error: " + strconv.Quote(redactMessage(string(raw)))
 }

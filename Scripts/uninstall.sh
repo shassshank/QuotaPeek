@@ -45,6 +45,7 @@ fi
 PYTHON3="${PYTHON3:-$(command -v python3 || echo python3)}"
 APP_SUPPORT="$HOME/Library/Application Support/QuotaPeek"
 LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
+DAEMON_BIN="$APP_SUPPORT/bin/quotapeekd"
 
 echo "==> Reversing statusLine hook injection"
 
@@ -166,7 +167,7 @@ done
 # Belt-and-suspenders: if the daemon was started outside launchd, is hung, or
 # launchctl unload silently failed to stop it, make sure no orphaned
 # quotapeekd process is left holding the local port.
-pkill -f quotapeekd 2>/dev/null || true
+pkill -f "^${DAEMON_BIN}($|[[:space:]])" 2>/dev/null || true
 
 # Clean up the temp copy of this script we re-exec'd from at the top.
 rm -f -- "${TMPSELF:-}" 2>/dev/null || true

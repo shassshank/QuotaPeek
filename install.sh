@@ -247,8 +247,7 @@ for name in com.quotapeek.daemon com.quotapeek.app; do
         echo "  warning: $template not found, skipping" >&2
         continue
     fi
-    sed -e "s#__PYTHON3__#$PYTHON3#g" \
-        -e "s#__BIN_DIR__#$BIN_DIR#g" \
+    sed -e "s#__BIN_DIR__#$BIN_DIR#g" \
         -e "s#__HOME__#$HOME#g" \
         -e "s#__APP_SUPPORT__#$APP_SUPPORT#g" \
         -e "s#__APP_BUNDLE__#$APP_BUNDLE_DEST#g" \

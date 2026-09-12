@@ -13,6 +13,27 @@ final class UsageStore: ObservableObject {
     @Published var errors: [ErrorLogEntry] = []
     @Published var config: DaemonConfig?
 
+    /// The specific error from the most recent failed daemon call, preserved
+    /// alongside `isDaemonReachable` so callers can distinguish "daemon not
+    /// running" (`.unreachable`) from "daemon is running but returned a
+    /// malformed/incompatible response" (`.badResponse`/`.decodeFailed`) -
+    /// those call for different user guidance even though both currently
+    /// collapse into the same `isDaemonReachable == false` UI state.
+    /// `nil` once a call succeeds again.
+    @Published var lastDaemonError: DaemonError?
+
+    /// True when the daemon is reachable and responding, but with a response
+    /// this client couldn't parse or a non-2xx status - i.e. a real HTTP
+    /// round-trip happened, unlike `.unreachable` (connection-level failure).
+    var isDaemonIncompatible: Bool {
+        switch lastDaemonError {
+        case .badResponse, .decodeFailed:
+            return true
+        case .unreachable, .none:
+            return false
+        }
+    }
+
     /// Backward compatibility helper for legacy code accessing providers dictionary
     var providers: [Provider: Account] {
         var map: [Provider: Account] = [:]
@@ -37,8 +58,10 @@ final class UsageStore: ObservableObject {
     private var isPopoverVisible = false
     private var isWidgetVisible = false
 
-    // In-flight guard per Task C7
-    private var isReloading = false
+    // In-flight guard per Task C7. Shared between `reload()` (timer-driven) and
+    // `refresh()` (manual "Refresh Now") so the two triggers can't fire concurrent
+    // daemon requests - whichever gets there second is skipped for that tick.
+    private var isFetchInFlight = false
 
     // Save serialization per Task D10
     private var activeSaveTask: Task<Bool, Never>?
@@ -93,13 +116,15 @@ final class UsageStore: ObservableObject {
     }
 
     func reload() async {
-        // In-flight guard: prevent overlapping reload calls from stacking up
-        guard !isReloading else { return }
-        isReloading = true
-        defer { isReloading = false }
+        // In-flight guard: prevent overlapping reload calls from stacking up, and
+        // coalesce against a concurrent manual refresh() (Task C7 + latent race fix).
+        guard !isFetchInFlight else { return }
+        isFetchInFlight = true
+        defer { isFetchInFlight = false }
 
         switch await client.status() {
         case .success(let response):
+            lastDaemonError = nil
             if !isDaemonReachable {
                 isDaemonReachable = true
             }
@@ -107,7 +132,8 @@ final class UsageStore: ObservableObject {
                 accounts = response.accounts
             }
             NotificationManager.shared.evaluate(accounts: accounts, config: config)
-        case .failure:
+        case .failure(let error):
+            lastDaemonError = error
             if isDaemonReachable {
                 isDaemonReachable = false
             }
@@ -115,12 +141,19 @@ final class UsageStore: ObservableObject {
     }
 
     func refresh(accountId: String? = nil) async {
-        guard !isRefreshing else { return }
+        // Shares the same in-flight guard as reload() so a manual "Refresh Now"
+        // and a timer-driven reload() can never both be in flight at once.
+        guard !isFetchInFlight else { return }
+        isFetchInFlight = true
         isRefreshing = true
-        defer { isRefreshing = false }
+        defer {
+            isFetchInFlight = false
+            isRefreshing = false
+        }
 
         switch await client.refresh(accountId: accountId) {
         case .success(let response):
+            lastDaemonError = nil
             if !isDaemonReachable {
                 isDaemonReachable = true
             }
@@ -129,7 +162,8 @@ final class UsageStore: ObservableObject {
             }
             NotificationManager.shared.evaluate(accounts: accounts, config: config)
             await loadAllHistory()
-        case .failure:
+        case .failure(let error):
+            lastDaemonError = error
             if isDaemonReachable {
                 isDaemonReachable = false
             }
@@ -185,38 +219,47 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    /// Serializes saves to avoid in-flight clobbering (Task D10)
+    /// Serializes saves to avoid in-flight clobbering (Task D10).
+    ///
+    /// Iterative rather than recursive: if newer edits arrive while a save is in
+    /// flight, the newest pending config just replaces `pendingConfigToSave` and
+    /// the loop below picks it up on its next iteration, instead of this function
+    /// calling itself again. This keeps the "latest wins, coalesce intermediate
+    /// edits" behavior without any risk of deep call-stack growth from rapid
+    /// successive edits.
     func saveConfig(_ newConfig: DaemonConfig) async -> Bool {
         pendingConfigToSave = newConfig
         if let active = activeSaveTask {
             _ = await active.value
         }
 
-        guard let configToSave = pendingConfigToSave else { return true }
-        pendingConfigToSave = nil
+        var outcome = true
+        while let configToSave = pendingConfigToSave {
+            pendingConfigToSave = nil
 
-        let task = Task<Bool, Never> { @MainActor in
-            let result = await self.client.updateConfig(configToSave)
-            switch result {
-            case .success(let cfg):
-                self.config = cfg
-                if let paused = cfg.collectionPaused {
-                    self.isCollectionPaused = paused
+            let task = Task<Bool, Never> { @MainActor in
+                let result = await self.client.updateConfig(configToSave)
+                switch result {
+                case .success(let cfg):
+                    self.lastDaemonError = nil
+                    self.config = cfg
+                    if let paused = cfg.collectionPaused {
+                        self.isCollectionPaused = paused
+                    }
+                    NotificationManager.shared.evaluate(accounts: self.accounts, config: cfg)
+                    await self.reload()
+                    return true
+                case .failure(let error):
+                    self.lastDaemonError = error
+                    return false
                 }
-                NotificationManager.shared.evaluate(accounts: self.accounts, config: cfg)
-                await self.reload()
-                return true
-            case .failure:
-                return false
             }
-        }
-        activeSaveTask = task
-        let outcome = await task.value
-        activeSaveTask = nil
+            activeSaveTask = task
+            outcome = await task.value
+            activeSaveTask = nil
 
-        // If another change came in while this save was in flight, save the newest draft
-        if pendingConfigToSave != nil {
-            return await saveConfig(pendingConfigToSave!)
+            // Loop again if another change came in while this save was in flight -
+            // `pendingConfigToSave` will be non-nil and we save the newest draft.
         }
         return outcome
     }

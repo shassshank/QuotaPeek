@@ -335,16 +335,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// login too, not just for the rest of this session. Quitting should only
     /// stop the daemon for now — `install.sh --daemon-stop` is the explicit,
     /// persistent version of this if that's what's wanted instead.
+    ///
+    /// Runs the `launchctl unload` process and waits for it off the main thread
+    /// (mirroring the uninstall-script fix in SettingsView.runUninstallScript) so
+    /// Quit never blocks the UI. `NSApp.terminate(nil)` is only called once the
+    /// unload attempt has finished (or failed to launch), hopped back to the main
+    /// thread. There's no existing timeout mechanism elsewhere in this codebase to
+    /// model a hard bound on `launchctl unload` after, so this keeps the wait
+    /// unbounded but off the main thread; a hang here only delays app exit, it no
+    /// longer freezes the UI.
     static func quitAndStopDaemon() {
         let plistPath = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/LaunchAgents/com.quotapeek.daemon.plist")
             .path
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["unload", plistPath]
-        try? process.run()
-        process.waitUntilExit()
-        NSApp.terminate(nil)
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            process.arguments = ["unload", plistPath]
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                // Ignore - proceed to quit regardless of whether the unload succeeded.
+            }
+            DispatchQueue.main.async {
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     /// Creates and attaches a fresh popover content view controller, wiring up the

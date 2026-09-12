@@ -3,7 +3,7 @@ import Foundation
 /// Talks to the local Go daemon over loopback HTTP, per API_CONTRACT.md. The Swift app never
 /// touches Keychain, provider APIs, or any local cache file directly - the daemon owns all of
 /// that, and this is the only network client the app has.
-enum DaemonError: Error {
+enum DaemonError: Error, Equatable {
     case unreachable
     case badResponse(Int)
     case decodeFailed

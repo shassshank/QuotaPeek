@@ -58,6 +58,21 @@ private enum LaunchAgentManager {
         "gui/\(getuid())/\(serviceName)"
     }
 
+    /// launchctl calls are normally fast, but nothing guarantees that: a hung
+    /// launchctl would otherwise block whichever thread calls waitUntilExit()
+    /// forever. This bounds the wait and force-terminates the process if it
+    /// hasn't exited within `timeout` seconds.
+    private static func waitWithTimeout(_ process: Process, timeout: TimeInterval = 5.0) {
+        let watchdog = DispatchWorkItem {
+            if process.isRunning {
+                process.terminate()
+            }
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: watchdog)
+        process.waitUntilExit()
+        watchdog.cancel()
+    }
+
     /// Whether the LaunchAgent is currently disabled via a launchctl override
     /// (i.e. `launchctl disable`d — this does NOT affect the already-running
     /// process, only whether it launches again at next login/boot).
@@ -65,6 +80,8 @@ private enum LaunchAgentManager {
     /// Note: this reflects the *enabled/disabled* override, not whether the
     /// job happens to be loaded/running right now — that distinction is the
     /// whole point of using `enable`/`disable` instead of `load -w`/`unload -w`.
+    ///
+    /// Shells out synchronously - call from a background queue (see `isLoadedAsync`).
     static func isLoaded() -> Bool {
         guard isPlistInstalled else { return false }
         let process = Process()
@@ -76,7 +93,7 @@ private enum LaunchAgentManager {
         do {
             try process.run()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
+            waitWithTimeout(process)
             guard process.terminationStatus == 0,
                   let output = String(data: data, encoding: .utf8) else {
                 // If we can't determine the override state, assume enabled
@@ -95,6 +112,16 @@ private enum LaunchAgentManager {
         }
     }
 
+    /// Async wrapper around `isLoaded()` that runs the shell-out off the main
+    /// thread and delivers the result back on the main thread.
+    static func isLoadedAsync(completion: @escaping (Bool) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = isLoaded()
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    /// Shells out synchronously - call from a background queue (see `setEnabledAsync`).
     @discardableResult
     static func setEnabled(_ enable: Bool) -> Bool {
         guard isPlistInstalled else { return false }
@@ -110,10 +137,19 @@ private enum LaunchAgentManager {
         process.standardError = pipe
         do {
             try process.run()
-            process.waitUntilExit()
+            waitWithTimeout(process)
             return process.terminationStatus == 0
         } catch {
             return false
+        }
+    }
+
+    /// Async wrapper around `setEnabled(_:)` that runs the shell-out off the main
+    /// thread and delivers the result back on the main thread.
+    static func setEnabledAsync(_ enable: Bool, completion: @escaping (Bool) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = setEnabled(enable)
+            DispatchQueue.main.async { completion(result) }
         }
     }
 }
@@ -842,13 +878,14 @@ private struct GeneralSettingsTab: View {
                     get: { isLaunchAtLoginEnabled },
                     set: { enable in
                         let prev = isLaunchAtLoginEnabled
-                        let success = LaunchAgentManager.setEnabled(enable)
-                        if success {
-                            isLaunchAtLoginEnabled = enable
-                        } else {
-                            // Revert on failure (Task D9)
-                            isLaunchAtLoginEnabled = prev
-                            launchAtLoginError = "Failed to update launch at login setting via launchctl."
+                        LaunchAgentManager.setEnabledAsync(enable) { success in
+                            if success {
+                                isLaunchAtLoginEnabled = enable
+                            } else {
+                                // Revert on failure (Task D9)
+                                isLaunchAtLoginEnabled = prev
+                                launchAtLoginError = "Failed to update launch at login setting via launchctl."
+                            }
                         }
                     }
                 ))
@@ -995,7 +1032,9 @@ private struct GeneralSettingsTab: View {
                 hasInitialized = true
             }
             isLaunchAgentInstalled = LaunchAgentManager.isPlistInstalled
-            isLaunchAtLoginEnabled = LaunchAgentManager.isLoaded()
+            LaunchAgentManager.isLoadedAsync { isLoaded in
+                isLaunchAtLoginEnabled = isLoaded
+            }
         }
         .onChange(of: store.config) { newConfig in
             if let newConfig {
@@ -1018,7 +1057,13 @@ private struct GeneralSettingsTab: View {
                 isSaving = true
                 let ok = await store.saveConfig(newDraft)
                 isSaving = false
-                saveStatus = ok ? "Saved automatically" : "Could not save - background service unreachable"
+                if ok {
+                    saveStatus = "Saved automatically"
+                } else if store.isDaemonIncompatible {
+                    saveStatus = "Could not save - background service returned an unexpected response (it may need an update)"
+                } else {
+                    saveStatus = "Could not save - background service unreachable"
+                }
             }
         }
     }
