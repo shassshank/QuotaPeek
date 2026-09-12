@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(access_token|refresh_token|id_token|api[_-]?key|client_secret|authorization)"?\s*[:=]\s*"?[^",}\s]+`),
 	regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._~+/=-]+`),
 	regexp.MustCompile(`ya29\.[A-Za-z0-9._-]+`),
+	regexp.MustCompile(`1//[A-Za-z0-9._~+/-]+`),
+	regexp.MustCompile(`eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`),
 	regexp.MustCompile(`sk-[A-Za-z0-9._-]+`),
 }
 
@@ -28,7 +31,11 @@ func redactMessage(s string) string {
 		})
 	}
 	if len(s) > 200 {
-		s = s[:200]
+		end := 200
+		for end > 0 && !utf8.RuneStart(s[end]) {
+			end--
+		}
+		s = s[:end]
 	}
 	return s
 }

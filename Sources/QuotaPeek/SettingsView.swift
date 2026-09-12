@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import SwiftUI
 
 struct SettingsView: View {
@@ -52,30 +53,58 @@ private enum LaunchAgentManager {
         FileManager.default.fileExists(atPath: plistPath)
     }
 
+    /// gui/<uid>/<label> target string launchctl's per-user domain commands expect.
+    private static var guiTarget: String {
+        "gui/\(getuid())/\(serviceName)"
+    }
+
+    /// Whether the LaunchAgent is currently disabled via a launchctl override
+    /// (i.e. `launchctl disable`d — this does NOT affect the already-running
+    /// process, only whether it launches again at next login/boot).
+    ///
+    /// Note: this reflects the *enabled/disabled* override, not whether the
+    /// job happens to be loaded/running right now — that distinction is the
+    /// whole point of using `enable`/`disable` instead of `load -w`/`unload -w`.
     static func isLoaded() -> Bool {
         guard isPlistInstalled else { return false }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["list", serviceName]
+        process.arguments = ["print-disabled", "gui/\(getuid())/"]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
         do {
             try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
-            return process.terminationStatus == 0
+            guard process.terminationStatus == 0,
+                  let output = String(data: data, encoding: .utf8) else {
+                // If we can't determine the override state, assume enabled
+                // (the common/default case) rather than reporting disabled.
+                return true
+            }
+            // Lines look like: "\t\"com.quotapeek.app\" => disabled"
+            for line in output.split(separator: "\n") {
+                guard line.contains(serviceName) else { continue }
+                return !line.contains("=> disabled")
+            }
+            // Not listed in the disabled table at all means it's enabled.
+            return true
         } catch {
-            return false
+            return true
         }
     }
 
     @discardableResult
     static func setEnabled(_ enable: Bool) -> Bool {
         guard isPlistInstalled else { return false }
-        let path = plistPath
+        // `enable`/`disable` only flips a persisted override in launchd's
+        // per-user domain — it never loads, unloads, starts, or stops the
+        // job, so it cannot touch the already-running app process. This is
+        // the same mechanism macOS's own "Open at Login" toggle uses.
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = enable ? ["load", "-w", path] : ["unload", "-w", path]
+        process.arguments = [enable ? "enable" : "disable", guiTarget]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -1487,19 +1516,34 @@ private struct AdvancedSettingsTab: View {
         process.standardOutput = pipe
         process.standardError = pipe
 
-        do {
-            try process.run()
-            process.waitUntilExit()
-            if process.terminationStatus == 0 {
-                isUninstallSuccessful = true
-                uninstallResultAlert = "QuotaPeek uninstalled successfully. The application will now close."
-            } else {
-                isUninstallSuccessful = false
-                uninstallResultAlert = "Uninstall failed with exit code \(process.terminationStatus)."
+        // The uninstall script's last step unloads com.quotapeek.app's own
+        // LaunchAgent, which kills this app's running process as an expected
+        // side effect. Blocking the main thread on waitUntilExit() would race
+        // that self-termination and could hang/silently kill the UI before
+        // the result alert ever shows. Run the process and wait for it off
+        // the main thread instead, using a termination handler to hop back.
+        process.terminationHandler = { finishedProcess in
+            let status = finishedProcess.terminationStatus
+            DispatchQueue.main.async {
+                if status == 0 {
+                    isUninstallSuccessful = true
+                    uninstallResultAlert = "QuotaPeek uninstalled successfully. The application will now close."
+                } else {
+                    isUninstallSuccessful = false
+                    uninstallResultAlert = "Uninstall failed with exit code \(status)."
+                }
             }
-        } catch {
-            isUninstallSuccessful = false
-            uninstallResultAlert = "Failed to run uninstall script: \(error.localizedDescription)"
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try process.run()
+            } catch {
+                DispatchQueue.main.async {
+                    isUninstallSuccessful = false
+                    uninstallResultAlert = "Failed to run uninstall script: \(error.localizedDescription)"
+                }
+            }
         }
     }
 

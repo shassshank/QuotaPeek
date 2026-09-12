@@ -309,23 +309,6 @@ func (s *Store) recoverPollPanic(key ProviderID, route Route) {
 	}
 }
 
-func (s *Server) pollCodexRoute(ctx context.Context, route Route, fetch func(context.Context) (UsageData, error)) {
-	started, available := s.store.beginPoll(ProviderCodex, route)
-	if !available {
-		return
-	}
-	defer s.store.endPoll(ProviderCodex, route)
-	data, err := fetch(ctx)
-	if err == nil && !s.store.SetSampleAt(ProviderCodex, route, data, started) {
-		err = errors.New("Fetch returned invalid, empty, or older quota data.")
-	}
-	s.store.recordPoll(ProviderCodex, data, err)
-	if err != nil {
-		s.store.AddError(ProviderCodex, route, err.Error())
-		return
-	}
-}
-
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	raw, err := json.Marshal(v)

@@ -20,6 +20,16 @@
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <!-- launchd's default PATH is stripped to /usr/bin:/bin:/usr/sbin:/sbin,
+         which is missing Homebrew's install locations. The daemon shells out
+         via exec.LookPath to find sub-binaries like codex/agy, which usually
+         live in /opt/homebrew/bin or /usr/local/bin, so make sure those are
+         on PATH for the daemon's process. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
     <key>StandardOutPath</key>
     <string>__APP_SUPPORT__/daemon.log</string>
     <key>StandardErrorPath</key>

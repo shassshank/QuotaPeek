@@ -154,7 +154,7 @@ func (s *Store) Status(now int64) StatusResponse {
 
 func (s *Store) providerStatusLocked(id ProviderID, cfg ProviderConfig, now int64) ProviderStatus {
 	id = s.keyLocked(id)
-	sample, active := chooseSample(cfg, s.samples[id], now, s.cfg.StaleAfterSeconds)
+	sample, active := chooseSample(cfg, s.samples[id])
 	var data *UsageData
 	var asOf *int64
 	if active != RouteNone {
@@ -192,7 +192,8 @@ func (s *Store) providerStatusLocked(id ProviderID, cfg ProviderConfig, now int6
 	}
 }
 
-func chooseSample(cfg ProviderConfig, samples map[Route]routeSample, now int64, staleAfter ...int64) (routeSample, Route) {
+// chooseSample keeps the latest quota even when stale; RouteFresh checks age.
+func chooseSample(cfg ProviderConfig, samples map[Route]routeSample) (routeSample, Route) {
 	if len(samples) == 0 {
 		return routeSample{}, RouteNone
 	}

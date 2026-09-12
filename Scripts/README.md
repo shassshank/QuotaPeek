@@ -15,7 +15,7 @@ brew install --cask quotapeek
 ### 2. Curl-based installer (no local toolchain needed)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shassshank/QuotaPeek/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/shassshank/QuotaPeek/master/install.sh | bash
 ```
 
 Downloads a prebuilt release tarball instead of building anything locally.

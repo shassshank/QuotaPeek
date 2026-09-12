@@ -59,7 +59,7 @@ Or without cloning the repo, via curl (downloads a prebuilt release tarball
 instead of building anything locally):
 
 ```
-curl -fsSL https://raw.githubusercontent.com/shassshank/QuotaPeek/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/shassshank/QuotaPeek/master/install.sh | bash
 ```
 
 `install.sh` auto-detects which of these it's doing — building from source

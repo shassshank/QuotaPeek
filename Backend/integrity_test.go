@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,25 @@ import (
 	"testing"
 	"time"
 )
+
+// pollCodexRoute is a test-only helper mirroring the production poll path
+// for Codex routes, used to exercise single-flight and staleness behavior.
+func (s *Server) pollCodexRoute(ctx context.Context, route Route, fetch func(context.Context) (UsageData, error)) {
+	started, available := s.store.beginPoll(ProviderCodex, route)
+	if !available {
+		return
+	}
+	defer s.store.endPoll(ProviderCodex, route)
+	data, err := fetch(ctx)
+	if err == nil && !s.store.SetSampleAt(ProviderCodex, route, data, started) {
+		err = errors.New("Fetch returned invalid, empty, or older quota data.")
+	}
+	s.store.recordPoll(ProviderCodex, data, err)
+	if err != nil {
+		s.store.AddError(ProviderCodex, route, err.Error())
+		return
+	}
+}
 
 func TestPollSingleFlightAndStartTimestamp(t *testing.T) {
 	cfg := defaultConfig()

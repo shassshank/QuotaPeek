@@ -31,7 +31,7 @@ type Collector struct {
 	cachedAntigravityPair *oauthPair
 	cachedDiscovery       *antigravityDiscovery
 
-	credCache keychainCache
+	credCache  keychainCache
 	codexCache codexSubprocessCache
 
 	anthropicURL string
@@ -56,10 +56,10 @@ func NewCollector() *Collector {
 		client:       &http.Client{Timeout: 10 * time.Second},
 		anthropicURL: "https://api.anthropic.com/v1/messages",
 		tokenURL:     "https://oauth2.googleapis.com/token",
-		discoveryURL: "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+		discoveryURL: "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
 		quotaURLs: []string{
-			"https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
-			"https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
+			"https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+			"https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
 		},
 	}
 }

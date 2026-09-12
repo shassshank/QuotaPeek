@@ -320,10 +320,11 @@ def main():
         line = build_status_line(payload)
     except Exception:
         line = "Claude Code"
-    print(line or "Claude Code")
+    base = line or "Claude Code"
     extras = extra_status_segments()
     if extras:
-        print(" | ".join(extras))
+        base = f"{base} | {' | '.join(extras)}"
+    print(base)
     post_ingest(raw)
 
 

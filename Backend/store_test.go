@@ -8,25 +8,25 @@ func TestChooseSample(t *testing.T) {
 	cfg := ProviderConfig{RoutesEnabled: []Route{RouteInjection, RouteKeychain}, KeychainPollIntervalSec: 60}
 	now := int64(1_000)
 
-	if _, route := chooseSample(cfg, nil, now); route != RouteNone {
+	if _, route := chooseSample(cfg, nil); route != RouteNone {
 		t.Fatalf("empty samples route = %s, want none", route)
 	}
 
 	injection := routeSample{data: UsageData{UsedPercent5H: f(10)}, asOf: now - 10}
-	if got, route := chooseSample(cfg, map[Route]routeSample{RouteInjection: injection}, now); route != RouteInjection || *got.data.UsedPercent5H != 10 {
+	if got, route := chooseSample(cfg, map[Route]routeSample{RouteInjection: injection}); route != RouteInjection || *got.data.UsedPercent5H != 10 {
 		t.Fatalf("injection-only = (%v, %s), want injection", got, route)
 	}
 
 	keychain := routeSample{data: UsageData{UsedPercent5H: f(20)}, asOf: now - 700}
-	if got, route := chooseSample(cfg, map[Route]routeSample{RouteKeychain: keychain}, now); route != RouteKeychain || *got.data.UsedPercent5H != 20 {
+	if got, route := chooseSample(cfg, map[Route]routeSample{RouteKeychain: keychain}); route != RouteKeychain || *got.data.UsedPercent5H != 20 {
 		t.Fatalf("keychain-only = (%v, %s), want keychain", got, route)
 	}
 
-	if _, route := chooseSample(cfg, map[Route]routeSample{RouteInjection: {data: UsageData{UsedPercent5H: f(30)}, asOf: now - 601}, RouteKeychain: keychain}, now); route != RouteInjection {
+	if _, route := chooseSample(cfg, map[Route]routeSample{RouteInjection: {data: UsageData{UsedPercent5H: f(30)}, asOf: now - 601}, RouteKeychain: keychain}); route != RouteInjection {
 		t.Fatalf("stale fallback route = %s, want newer injection", route)
 	}
 
-	if _, route := chooseSample(cfg, map[Route]routeSample{RouteInjection: injection, RouteKeychain: keychain}, now); route != RouteInjection {
+	if _, route := chooseSample(cfg, map[Route]routeSample{RouteInjection: injection, RouteKeychain: keychain}); route != RouteInjection {
 		t.Fatalf("fresh injection route = %s, want injection", route)
 	}
 }
@@ -40,12 +40,12 @@ func TestChooseSampleOrderIndependent(t *testing.T) {
 	injection := routeSample{data: UsageData{UsedPercent5H: f(10)}, asOf: now - 10}
 	keychain := routeSample{data: UsageData{UsedPercent5H: f(20)}, asOf: now - 700}
 
-	if _, route := chooseSample(cfg, map[Route]routeSample{RouteInjection: injection, RouteKeychain: keychain}, now); route != RouteInjection {
+	if _, route := chooseSample(cfg, map[Route]routeSample{RouteInjection: injection, RouteKeychain: keychain}); route != RouteInjection {
 		t.Fatalf("keychain-listed-first with fresh injection = %s, want injection", route)
 	}
 
 	stale := routeSample{data: UsageData{UsedPercent5H: f(30)}, asOf: now - 601}
-	if _, route := chooseSample(cfg, map[Route]routeSample{RouteInjection: stale, RouteKeychain: keychain}, now); route != RouteInjection {
+	if _, route := chooseSample(cfg, map[Route]routeSample{RouteInjection: stale, RouteKeychain: keychain}); route != RouteInjection {
 		t.Fatalf("keychain-listed-first stale fallback = %s, want newer injection", route)
 	}
 }
@@ -58,7 +58,7 @@ func TestChooseSampleStaleInjectionNoFallback(t *testing.T) {
 	now := int64(1_000)
 	stale := routeSample{data: UsageData{UsedPercent5H: f(40)}, asOf: now - 601}
 
-	got, route := chooseSample(cfg, map[Route]routeSample{RouteInjection: stale}, now)
+	got, route := chooseSample(cfg, map[Route]routeSample{RouteInjection: stale})
 	if route != RouteInjection || *got.data.UsedPercent5H != 40 {
 		t.Fatalf("stale injection-only = (%v, %s), want stale injection data instead of none", got, route)
 	}

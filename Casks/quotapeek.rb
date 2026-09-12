@@ -71,7 +71,7 @@ cask "quotapeek" do
       system_command "/usr/bin/true", args: [] # ensure previous is unloaded
       system_command "launchctl", args: ["unload", dest], must_succeed: false if File.exist?(dest)
       File.write(dest, content)
-      system_command "launchctl", args: ["load", dest]
+      system_command "launchctl", args: ["load", "-w", dest]
     end
   end
 

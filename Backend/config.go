@@ -45,7 +45,11 @@ func saveConfig(path string, cfg Config) error {
 	if err := validateConfig(cfg); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	// Tighten directories created by older versions as well.
+	if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(cfg, "", "  ")

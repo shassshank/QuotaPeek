@@ -56,7 +56,7 @@ func TestQuotaFallbackFreshness(t *testing.T) {
 		{"newer stale injection", 300, 100, RouteInjection},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, got := chooseSample(cfg, map[Route]routeSample{RouteInjection: {data: UsageData{UsedPercent5H: f(10)}, asOf: tc.injection}, RouteKeychain: {data: UsageData{UsedPercent5H: f(20)}, asOf: tc.keychain}}, 1000)
+			_, got := chooseSample(cfg, map[Route]routeSample{RouteInjection: {data: UsageData{UsedPercent5H: f(10)}, asOf: tc.injection}, RouteKeychain: {data: UsageData{UsedPercent5H: f(20)}, asOf: tc.keychain}})
 			if got != tc.want {
 				t.Fatalf("got %s want %s", got, tc.want)
 			}
@@ -69,7 +69,7 @@ func TestQuotaFallbackFreshness(t *testing.T) {
 	if got.Data.UsedPercent5H == nil || *got.Data.UsedPercent5H != 25 || *got.AsOf != 900 {
 		t.Fatalf("context replaced quota: %+v", got)
 	}
-	_, route := chooseSample(cfg, map[Route]routeSample{RouteInjection: {data: UsageData{ContextWindowUsedPercent: f(90)}, asOf: 1000}, RouteKeychain: {data: UsageData{UsedPercent5H: f(20)}, asOf: 900}}, 1000)
+	_, route := chooseSample(cfg, map[Route]routeSample{RouteInjection: {data: UsageData{ContextWindowUsedPercent: f(90)}, asOf: 1000}, RouteKeychain: {data: UsageData{UsedPercent5H: f(20)}, asOf: 900}})
 	if route != RouteKeychain {
 		t.Fatal("context displaced keychain quota")
 	}

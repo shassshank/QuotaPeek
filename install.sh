@@ -20,7 +20,7 @@
 #     builds the Go daemon and Swift app from source.
 #   - Piped via curl, or run with --remote: downloads a prebuilt release
 #     tarball from GitHub instead of building anything locally.
-#     curl -fsSL https://raw.githubusercontent.com/shassshank/QuotaPeek/main/install.sh | bash
+#     curl -fsSL https://raw.githubusercontent.com/shassshank/QuotaPeek/master/install.sh | bash
 #   - Run with --from-dir <dir>: same as --remote's file-placement step, but
 #     sourced from an already-local directory (containing quotapeekd, the
 #     hook scripts, QuotaPeek.app, and the LaunchAgent templates) instead of

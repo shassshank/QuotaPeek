@@ -26,6 +26,22 @@
 # this script does.
 set -euo pipefail
 
+# This script removes its own containing directory
+# (~/Library/Application Support/QuotaPeek) partway through. Bash reads
+# scripts incrementally rather than loading the whole file up front, so a
+# script deleting the directory it's executing from mid-run risks a
+# truncated/failed read of the remaining lines. Guard against that by
+# re-executing a copy of ourselves from a temp location before doing
+# anything else; the guard env var prevents infinite re-exec.
+if [[ -z "${QUOTAPEEK_UNINSTALL_REEXEC:-}" ]]; then
+    TMPSELF="$(mktemp "${TMPDIR:-/tmp}/quotapeek-uninstall.XXXXXX")"
+    cp -- "$0" "$TMPSELF"
+    chmod +x "$TMPSELF"
+    export QUOTAPEEK_UNINSTALL_REEXEC=1
+    export TMPSELF
+    exec "$TMPSELF" "$@"
+fi
+
 PYTHON3="${PYTHON3:-$(command -v python3 || echo python3)}"
 APP_SUPPORT="$HOME/Library/Application Support/QuotaPeek"
 LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
@@ -146,3 +162,11 @@ for label in com.quotapeek.daemon com.quotapeek.app; do
         echo "  removed $plist"
     fi
 done
+
+# Belt-and-suspenders: if the daemon was started outside launchd, is hung, or
+# launchctl unload silently failed to stop it, make sure no orphaned
+# quotapeekd process is left holding the local port.
+pkill -f quotapeekd 2>/dev/null || true
+
+# Clean up the temp copy of this script we re-exec'd from at the top.
+rm -f -- "${TMPSELF:-}" 2>/dev/null || true

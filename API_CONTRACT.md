@@ -60,9 +60,9 @@ Config {
   "staleAfterSeconds": 600,          // positive int64 seconds; default 600
   "collectionPaused": false,        // boolean; default false
   "claude_polling_mode": "disabled",  // "disabled" (default) or "inference"
-  "claude":      { "routes_enabled": ["keychain", "injection"], "keychain_poll_interval_sec": 60 },
-  "codex":       { "routes_enabled": ["injection"],              "keychain_poll_interval_sec": 60 },
-  "antigravity": { "routes_enabled": ["keychain"],               "keychain_poll_interval_sec": 120 }
+  "claude":      { "routes_enabled": ["keychain", "injection"], "keychain_poll_interval_sec": 300 },
+  "codex":       { "routes_enabled": ["injection"],              "keychain_poll_interval_sec": 300 },
+  "antigravity": { "routes_enabled": ["keychain"],               "keychain_poll_interval_sec": 300 }
 }
 // Fresh injection quota data is preferred, independent of routes_enabled order.
 // Both routes are stale after max(2 * keychain_poll_interval_sec, staleAfterSeconds) seconds.
@@ -229,12 +229,14 @@ login. These files are never returned through the config API.
 Config saves serialize the complete read/merge/write/publish/reschedule transaction
 with a server mutex. Each disk save uses its own temporary file.
 
-The daemon is independent of the menu-bar app: quitting the app or disabling app
-launch-at-login leaves collection running. The daemon's RunAtLoad and KeepAlive
-are intentional. `./install.sh --app-login-off` uses `launchctl unload -w` for the
-app LaunchAgent; `--app-login-on` uses `load -w`. These persist across login/reboot.
-The Settings toggle must use the same `-w` operations. Explicitly stop the daemon
-with `./install.sh --daemon-stop` (unload -w); restart/re-enable it using
+Quitting the menu-bar app unloads the daemon LaunchAgent (`launchctl unload
+~/Library/LaunchAgents/com.quotapeek.daemon.plist` without `-w`), stopping the
+daemon for the current session without permanently disabling it (it will restart
+at next login or when explicitly loaded). Disabling app launch-at-login
+(`./install.sh --app-login-off` or the Settings toggle) uses `launchctl unload -w`
+for the app LaunchAgent; `--app-login-on` uses `load -w`. These persist across
+login/reboot. To explicitly and persistently stop the daemon, use
+`./install.sh --daemon-stop` (unload -w); restart/re-enable it using
 `--daemon-start` (load -w). A normal reinstall reloads agents without overriding
 persisted disabled preferences.
 
@@ -343,15 +345,15 @@ endpoints are added.
 ### Credential reset
 
 ```http
-POST /providers/{name}/reset-credentials
+POST /accounts/{id}/reset-credentials
 X-Auth-Token: <token>
 ```
 
-`name` is `claude`, `codex`, or `antigravity`. No request body is required; a supplied
-body is ignored. The endpoint clears only that provider's daemon credential and
+`id` is the account identifier (e.g. `acct_codex_default`). No request body is required; a supplied
+body is ignored. The endpoint clears only that account's daemon credential and
 discovery caches, including its daemon-owned persisted OAuth rotation file.
 It does not delete or modify OS Keychain items, CLI auth.json, or other user
-credentials. The provider's `credentialSource` becomes `"unknown"` and
+credentials. The account's `credentialSource` becomes `"unknown"` and
 `effectiveAccount` becomes null until the next credential-backed poll. Samples
 and poll-health history remain intact. It does not trigger a poll; the next
 scheduled poll, refresh, or route test re-discovers credentials. Reset is allowed
@@ -360,34 +362,34 @@ while paused and is idempotent.
 HTTP 200 success:
 
 ```json
-{"ok":true,"provider":"codex"}
+{"ok":true,"accountId":"acct_codex_default","provider":"codex"}
 ```
 
-HTTP 404 unknown provider:
+HTTP 404 unknown account:
 
 ```json
-{"ok":false,"provider":"unknown-name","message":"Unknown provider."}
+{"ok":false,"accountId":"unknown-id","provider":"","message":"Unknown account."}
 ```
 
-HTTP 409 if either provider route is polling or another reset is running:
+HTTP 409 if either account route is polling or another reset is running:
 
 ```json
-{"ok":false,"provider":"codex","message":"Provider poll or credential reset already in flight."}
+{"ok":false,"accountId":"acct_codex_default","provider":"codex","message":"Account poll or credential reset already in flight."}
 ```
 
 HTTP 500 if the daemon OAuth cache cannot be removed:
 
 ```json
-{"ok":false,"provider":"codex","message":"could not remove daemon OAuth cache"}
+{"ok":false,"accountId":"acct_codex_default","provider":"codex","message":"could not remove daemon OAuth cache"}
 ```
 
 HTTP 500 if the collector is unavailable:
 
 ```json
-{"ok":false,"provider":"codex","message":"Collector unavailable."}
+{"ok":false,"accountId":"acct_codex_default","provider":"codex","message":"Collector unavailable."}
 ```
 
-Every reset response above echoes the requested name in `provider`; `ok` is boolean
+Every reset response above echoes the requested identifier in `accountId`; `ok` is boolean
 and failure `message` is a redacted string. Missing or invalid authentication
 returns HTTP 401 before any operation, using the existing response:
 
@@ -414,11 +416,11 @@ fsync, and atomic rename. Missing caches start empty; invalid/unreadable caches
 are logged and ignored without preventing startup. Write failures are logged;
 live data remains available and the next accepted update retries the full save.
 
-### `GET /history?provider=claude&route=keychain`
+### `GET /history?accountId=acct_...&route=keychain`
 
 Requires `X-Auth-Token`. Both query parameters are required:
 
-- `provider`: string enum `claude`, `codex`, `antigravity`.
+- `accountId`: string account identifier (e.g. `acct_claude_default`).
 - `route`: string enum `keychain`, `injection`.
 
 HTTP 200, `Content-Type: application/json`:
@@ -434,11 +436,11 @@ second can have the same `at`. Values use `used_percent_5h` when available,
 otherwise `used_percent_weekly`; reset-only samples produce no point.
 Each accepted quota sample with a percentage records a point, even if its value
 is unchanged. Rejected older, invalid, and context-only updates record nothing.
-At most 200 points per provider/route are retained, and points older than 24 hours
+At most 200 points per account/route are retained, and points older than 24 hours
 are excluded (the exact 24-hour boundary is included). History survives restarts,
 with the same bounds applied on load and query. Reading a disabled route is
-allowed; this endpoint never triggers collection. Missing/invalid provider or
-route returns HTTP 400 with plain-text `invalid or missing provider/route`.
+allowed; this endpoint never triggers collection. Missing/invalid accountId or
+route returns HTTP 400 with plain-text `invalid or missing accountId/route`.
 Missing/invalid authentication returns HTTP 401 as for other protected endpoints.
 
 ## P5 Multi-account model and trust-state (supersedes single-Provider status shape)
@@ -590,15 +592,13 @@ all.
 existing `provider`/`route` (provider is still included for clarity/validation
 but `accountId` is authoritative; a mismatch returns HTTP 400).
 
-`POST /accounts/{id}/reset-credentials` (requires `X-Auth-Token`) — replaces
-`POST /providers/{name}/reset-credentials`; same semantics (clears daemon
-credential/discovery cache and daemon-owned oauth file for that account only),
-scoped to one account instead of a whole provider.
+`POST /accounts/{id}/reset-credentials` (requires `X-Auth-Token`) — clears daemon
+credential/discovery cache and daemon-owned oauth file for that account only,
+scoped to one account.
 
-`GET /history?accountId=acct_...&route=keychain` — replaces the
-`provider=`+`route=` query form; same response shape
-(`{"points":[{"at":...,"usedPercent":...}]}`). Missing or invalid
-`accountId` or `route` returns HTTP 400 with plain-text
+`GET /history?accountId=acct_...&route=keychain` — returns history points for the
+specified account and route (`{"points":[{"at":...,"usedPercent":...}]}`). Missing
+or invalid `accountId` or `route` returns HTTP 400 with plain-text
 `invalid or missing accountId/route`.
 
 ### Ingest (unchanged transport, added routing)

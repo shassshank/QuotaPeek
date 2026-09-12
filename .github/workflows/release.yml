@@ -30,11 +30,18 @@ jobs:
 
       - name: Build Go daemon
         run: |
+          mkdir -p .build-go
           cd Backend
-          go build -o ../.build-go/quotapeekd .
+          GOOS=darwin GOARCH=arm64 go build -o ../.build-go/quotapeekd-arm64 .
+          GOOS=darwin GOARCH=amd64 go build -o ../.build-go/quotapeekd-amd64 .
+          cd ..
+          lipo -create -output .build-go/quotapeekd .build-go/quotapeekd-arm64 .build-go/quotapeekd-amd64
 
       - name: Build Swift app
-        run: swift build -c release
+        run: |
+          swift build -c release --arch arm64 --arch x86_64
+          mkdir -p .build/release
+          cp .build/apple/Products/Release/QuotaPeek .build/release/QuotaPeek
 
       - name: Assemble .app bundle and ad-hoc sign
         run: |
@@ -71,6 +78,30 @@ jobs:
         run: |
           shasum -a 256 quotapeek-macos.tar.gz > SHA256SUMS
           (cd .build/release && shasum -a 256 "QuotaPeek-${{ steps.version.outputs.version }}.dmg") >> SHA256SUMS
+
+      - name: Update Homebrew cask
+        run: |
+          TARBALL_SHA=$(grep 'quotapeek-macos\.tar\.gz' SHA256SUMS | awk '{print $1}')
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin master:refs/remotes/origin/master
+          git checkout -B master origin/master
+          python3 -c "
+          import sys, re
+          version, sha = sys.argv[1], sys.argv[2]
+          path = 'Casks/quotapeek.rb'
+          with open(path, 'r') as f:
+              content = f.read()
+          content = re.sub(r'\bversion \"[^\"]+\"', f'version \"{version}\"', content, count=1)
+          content = re.sub(r'\bsha256 (:no_check|\"[^\"]*\")', f'sha256 \"{sha}\"', content, count=1)
+          with open(path, 'w') as f:
+              f.write(content)
+          " "${{ steps.version.outputs.version }}" "$TARBALL_SHA"
+          git add Casks/quotapeek.rb
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(cask): update quotapeek cask to ${{ steps.version.outputs.tag }}"
+            git push origin master
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2

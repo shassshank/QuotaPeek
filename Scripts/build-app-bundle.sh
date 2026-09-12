@@ -36,6 +36,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 SWIFT_BINARY="$REPO_DIR/.build/release/QuotaPeek"
+if [[ ! -f "$SWIFT_BINARY" && -f "$REPO_DIR/.build/apple/Products/Release/QuotaPeek" ]]; then
+    # `swift build --arch ... --arch ...` (universal binary) outputs here instead.
+    SWIFT_BINARY="$REPO_DIR/.build/apple/Products/Release/QuotaPeek"
+fi
 GO_BINARY="$REPO_DIR/.build-go/quotapeekd"
 APP_BUNDLE="$REPO_DIR/.build/release/QuotaPeek.app"
 INFO_PLIST="$REPO_DIR/Info.plist"
