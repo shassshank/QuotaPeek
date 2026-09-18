@@ -23,17 +23,19 @@ var errWaitingForToken = errors.New("credentials expired, waiting for CLI to ref
 
 // A changed source credential supersedes saved tokens after CLI login.
 type oauthTokenCache struct {
-	daemonOwned   bool
-	email         string
-	mu            sync.Mutex
-	path          string
-	loaded        bool
-	dirty         bool
-	sourceAccess  string
-	sourceRefresh string
-	access        string
-	refresh       string
-	expiry        time.Time
+	triggeredForExpiry bool
+	lastTriggerAttempt time.Time
+	daemonOwned        bool
+	email              string
+	mu                 sync.Mutex
+	path               string
+	loaded             bool
+	dirty              bool
+	sourceAccess       string
+	sourceRefresh      string
+	access             string
+	refresh            string
+	expiry             time.Time
 }
 
 func (c *oauthTokenCache) token(ctx context.Context, access, refresh string, expiry time.Time) (string, error) {
@@ -60,6 +62,7 @@ func (c *oauthTokenCache) token(ctx context.Context, access, refresh string, exp
 	}
 	c.loaded = true
 	if c.sourceAccess != access || c.sourceRefresh != refresh {
+		c.triggeredForExpiry = false
 		c.sourceAccess, c.sourceRefresh = access, refresh
 		c.access, c.refresh, c.expiry = access, refresh, expiry
 		c.dirty = true
@@ -73,6 +76,7 @@ func (c *oauthTokenCache) token(ctx context.Context, access, refresh string, exp
 		return "", err
 	}
 	if c.access != "" && (c.expiry.IsZero() || time.Until(c.expiry) > time.Minute) {
+		c.triggeredForExpiry = false
 		return c.access, nil
 	}
 	return "", errWaitingForToken
@@ -250,4 +254,16 @@ func (c *oauthTokenCache) needsSourceRead() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.loaded && (c.access == "" || (!c.expiry.IsZero() && time.Until(c.expiry) <= time.Minute))
+}
+
+// Reserve before spawning so concurrent polls cannot launch duplicate prompts.
+func (c *oauthTokenCache) beginCLITrigger() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.triggeredForExpiry || time.Since(c.lastTriggerAttempt) < 10*time.Minute {
+		return false
+	}
+	c.triggeredForExpiry = true
+	c.lastTriggerAttempt = time.Now()
+	return true
 }

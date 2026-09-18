@@ -439,6 +439,7 @@ func TestReviewCodexRejectedTokenRefresh(t *testing.T) {
 	for _, status := range []int{401, 403} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			c := NewCollector()
+			c.runCLI = func(context.Context, string, ...string) error { return os.ErrNotExist }
 			c.configDir = t.TempDir()
 			c.readKeychain = func(context.Context, string, string) ([]byte, error) {
 				return []byte(`{"tokens":{"access_token":"original","refresh_token":"source"}}`), nil

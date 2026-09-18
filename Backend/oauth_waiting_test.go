@@ -16,6 +16,7 @@ func TestCodexPullsFreshSource(t *testing.T) {
 	for _, keychain := range []bool{true, false} {
 		t.Run(fmt.Sprint(keychain), func(t *testing.T) {
 			c := NewCollector()
+			c.runCLI = func(context.Context, string, ...string) error { return os.ErrNotExist }
 			c.configDir = t.TempDir()
 			token := func(exp int64) string {
 				return "e30." + base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, exp))) + ".sig"
@@ -67,6 +68,10 @@ func TestCodexPullsFreshSource(t *testing.T) {
 
 func TestAntigravityOwnedAccountPullsMatchingSource(t *testing.T) {
 	c := NewCollector()
+	c.runCLI = func(context.Context, string, ...string) error {
+		t.Fatal("daemon-owned account triggered CLI")
+		return nil
+	}
 	c.antigravityTokens.daemonOwned = true
 	if err := c.antigravityTokens.bootstrap(accountBootstrap{"old", "me@example.com"}); err != nil {
 		t.Fatal(err)

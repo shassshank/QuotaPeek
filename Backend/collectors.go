@@ -24,6 +24,8 @@ const antigravityUserAgent = "antigravity/cli/" + antigravityCLIVersion + " (aid
 
 type Collector struct {
 	configDir         string
+	runCLI            func(context.Context, string, ...string) error
+	claudeTokens      oauthTokenCache
 	readKeychain      func(context.Context, string, string) ([]byte, error)
 	client            *http.Client
 	codexTokens       oauthTokenCache
@@ -56,6 +58,7 @@ type antigravityDiscovery struct {
 func NewCollector() *Collector {
 	return &Collector{
 		readKeychain: readKeychain,
+		runCLI:       runCLI,
 		client:       &http.Client{Timeout: 10 * time.Second},
 		anthropicURL: "https://api.anthropic.com/v1/messages",
 		tokenURL:     "https://oauth2.googleapis.com/token",
@@ -87,6 +90,13 @@ func (c *Collector) FetchClaude(ctx context.Context) (UsageData, error) {
 }
 
 func (c *Collector) FetchClaudeWithMode(ctx context.Context, mode string) (UsageData, error) {
+	ctx = withConfigDir(ctx, "CLAUDE_CONFIG_DIR", c.configDir)
+	return c.fetchWithCLIRefresh(ctx, ProviderClaude, &c.claudeTokens, func() (UsageData, error) {
+		return c.fetchClaudeWithMode(ctx, mode)
+	})
+}
+
+func (c *Collector) fetchClaudeWithMode(ctx context.Context, mode string) (UsageData, error) {
 	if mode == "disabled" {
 		return UsageData{}, errors.New("Claude inference polling is disabled; enable injection for passive updates")
 	}
@@ -94,9 +104,11 @@ func (c *Collector) FetchClaudeWithMode(ctx context.Context, mode string) (Usage
 	if err != nil {
 		return UsageData{}, err
 	}
-	ctx = withConfigDir(ctx, "CLAUDE_CONFIG_DIR", c.configDir)
 
 	cacheKey := "claude:" + service
+	if c.claudeTokens.needsSourceRead() {
+		c.credCache.invalidate(cacheKey)
+	}
 	raw, cached := c.credCache.get(cacheKey, 5*time.Minute)
 	if !cached {
 		raw, err = c.readKeychain(ctx, service, os.Getenv("USER"))
@@ -117,9 +129,13 @@ func (c *Collector) FetchClaudeWithMode(ctx context.Context, mode string) (Usage
 		return UsageData{}, errors.New("could not parse Claude Code Keychain credentials")
 	}
 	c.setCredentialInfo(ProviderClaude, "keychain", "")
-	if creds.ClaudeAIOAuth.ExpiresAt > 0 && time.Now().UnixMilli() >= creds.ClaudeAIOAuth.ExpiresAt {
+	var expiry time.Time
+	if creds.ClaudeAIOAuth.ExpiresAt > 0 {
+		expiry = time.UnixMilli(creds.ClaudeAIOAuth.ExpiresAt)
+	}
+	if _, err := c.claudeTokens.token(ctx, creds.ClaudeAIOAuth.AccessToken, "", expiry); err != nil {
 		c.credCache.invalidate(cacheKey)
-		return UsageData{}, errors.New("Claude credentials expired, run claude CLI to refresh")
+		return UsageData{}, err
 	}
 
 	// Cache the raw keychain read on success, with the credential's own expiry.
@@ -205,6 +221,15 @@ type antigravityCreds struct {
 }
 
 func (c *Collector) FetchAntigravity(ctx context.Context) (UsageData, error) {
+	if c.antigravityTokens.daemonOwned {
+		return c.fetchAntigravity(ctx)
+	}
+	return c.fetchWithCLIRefresh(ctx, ProviderAntigravity, &c.antigravityTokens, func() (UsageData, error) {
+		return c.fetchAntigravity(ctx)
+	})
+}
+
+func (c *Collector) fetchAntigravity(ctx context.Context) (UsageData, error) {
 	var creds antigravityCreds
 	var err error
 	if c.antigravityTokens.daemonOwned {
@@ -520,6 +545,17 @@ func stringValue(v any) string {
 	return strings.TrimSpace(s)
 }
 
+func claudeBin() string {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		p := filepath.Join(home, ".local", "bin", "claude")
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p
+		}
+	}
+	return "claude"
+}
+
 func codexBin() string {
 	home, err := os.UserHomeDir()
 	if err == nil {
@@ -556,6 +592,7 @@ func (c *Collector) resetCredentials(id ProviderID) error {
 		err = c.antigravityTokens.reset()
 		c.credCache.invalidate("antigravity")
 	case ProviderClaude:
+		err = c.claudeTokens.reset()
 		c.credCache.invalidateAll()
 	default:
 		return errUnknownProvider

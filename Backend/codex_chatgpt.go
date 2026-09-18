@@ -55,14 +55,7 @@ func codexHomeDir() (string, error) {
 // own `cli_auth_credentials_store` config is "keyring", falling back to the
 // plain ~/.codex/auth.json file (the default, and what's used before you've
 // re-run `codex login` after switching to keyring storage).
-func (c *Collector) FetchCodexKeychain(ctx context.Context) (data UsageData, err error) {
-	defer func() {
-		var authErr *codexAuthError
-		if errors.As(err, &authErr) {
-			c.credCache.invalidate("codex")
-			c.codexTokens.invalidateAccess()
-		}
-	}()
+func (c *Collector) FetchCodexKeychain(ctx context.Context) (UsageData, error) {
 	home, err := codexHomeDir()
 	if c.configDir != "" {
 		home, err = c.configDir, nil
@@ -71,7 +64,19 @@ func (c *Collector) FetchCodexKeychain(ctx context.Context) (data UsageData, err
 		return UsageData{}, err
 	}
 	ctx = withConfigDir(ctx, "CODEX_HOME", home)
+	return c.fetchWithCLIRefresh(ctx, ProviderCodex, &c.codexTokens, func() (UsageData, error) {
+		return c.fetchCodexKeychain(ctx, home)
+	})
+}
 
+func (c *Collector) fetchCodexKeychain(ctx context.Context, home string) (data UsageData, err error) {
+	defer func() {
+		var authErr *codexAuthError
+		if errors.As(err, &authErr) {
+			c.credCache.invalidate("codex")
+			c.codexTokens.invalidateAccess()
+		}
+	}()
 	cacheKey := "codex"
 	if c.codexTokens.needsSourceRead() {
 		c.credCache.invalidate(cacheKey)

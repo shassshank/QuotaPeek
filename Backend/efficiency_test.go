@@ -62,6 +62,7 @@ func TestCodexAuthFailureRefetchesCredential(t *testing.T) {
 
 func TestCodexExpiredCredentialWaits(t *testing.T) {
 	c := NewCollector()
+	c.runCLI = func(context.Context, string, ...string) error { return os.ErrNotExist }
 	c.configDir = t.TempDir()
 	c.readKeychain = func(context.Context, string, string) ([]byte, error) {
 		return []byte(`{"tokens":{"refresh_token":"expired"}}`), nil

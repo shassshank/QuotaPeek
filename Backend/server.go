@@ -170,7 +170,7 @@ func (s *Server) handleTestRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.store.endPoll(key, req.Route)
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 	defer cancel()
 	data, err := s.fetchAccount(ctx, a, req.Route)
 	if err == nil && !s.store.SetSampleAt(key, req.Route, data, started) {
@@ -283,7 +283,7 @@ func (s *Server) pollProvider(ctx context.Context, key ProviderID) {
 		return
 	}
 	key = ProviderID(a.ID)
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	for _, route := range providerConfig(s.store.Config(), a.Provider).RoutesEnabled {
 		if route == RouteInjection && a.Provider != ProviderCodex {
