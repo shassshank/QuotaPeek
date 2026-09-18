@@ -19,23 +19,26 @@ type oauthTokenResponse struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
-// Each provider serializes refreshes and retains rotated refresh tokens across
-// polls. A changed source credential invalidates the cache after CLI login.
+var errWaitingForToken = errors.New("credentials expired, waiting for CLI to refresh")
+
+// A changed source credential supersedes saved tokens after CLI login.
 type oauthTokenCache struct {
-	daemonOwned   bool
-	email         string
-	mu            sync.Mutex
-	path          string
-	loaded        bool
-	dirty         bool
-	sourceAccess  string
-	sourceRefresh string
-	access        string
-	refresh       string
-	expiry        time.Time
+	triggeredForExpiry bool
+	lastTriggerAttempt time.Time
+	daemonOwned        bool
+	email              string
+	mu                 sync.Mutex
+	path               string
+	loaded             bool
+	dirty              bool
+	sourceAccess       string
+	sourceRefresh      string
+	access             string
+	refresh            string
+	expiry             time.Time
 }
 
-func (c *oauthTokenCache) token(ctx context.Context, access, refresh string, expiry time.Time, fetch func(context.Context, string) (oauthTokenResponse, error)) (string, error) {
+func (c *oauthTokenCache) token(ctx context.Context, access, refresh string, expiry time.Time) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.loaded && c.path != "" {
@@ -59,42 +62,28 @@ func (c *oauthTokenCache) token(ctx context.Context, access, refresh string, exp
 	}
 	c.loaded = true
 	if c.sourceAccess != access || c.sourceRefresh != refresh {
+		c.triggeredForExpiry = false
 		c.sourceAccess, c.sourceRefresh = access, refresh
 		c.access, c.refresh, c.expiry = access, refresh, expiry
-		c.dirty = false
+		c.dirty = true
 	}
 	if c.dirty {
 		if err := c.persist(); err != nil {
 			return "", err
 		}
 	}
-	if c.access != "" && (time.Until(c.expiry) > time.Minute || c.refresh == "") {
-		return c.access, nil
-	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	out, err := fetch(ctx, c.refresh)
-	if err != nil {
-		return "", err
+	if c.access != "" && (c.expiry.IsZero() || time.Until(c.expiry) > time.Minute) {
+		c.triggeredForExpiry = false
+		return c.access, nil
 	}
-	c.access = out.AccessToken
-	if out.RefreshToken != "" {
-		c.refresh = out.RefreshToken
-	}
-	c.expiry = tokenExpiry(out.AccessToken)
-	if out.ExpiresIn > 0 {
-		c.expiry = time.Now().Add(time.Duration(out.ExpiresIn) * time.Second)
-	}
-	c.dirty = true
-	if err := c.persist(); err != nil {
-		return "", err
-	}
-	return c.access, nil
+	return "", errWaitingForToken
 }
 
-// JWT expiry is a scheduling hint from trusted local credentials, not an
-// authentication decision. Opaque tokens need expires_in from the refresh API.
+// JWT expiry is a scheduling hint from trusted local credentials. Opaque
+// source tokens without an expiry are usable until the provider rejects them.
 func tokenExpiry(token string) time.Time {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
@@ -157,7 +146,7 @@ func (c *oauthTokenCache) reset() error {
 	return nil
 }
 
-// Daemon-owned accounts use the current rotated token as their source; no CLI lookup.
+// Read the saved account before looking for a matching CLI credential.
 func (c *oauthTokenCache) daemonCredentials() (antigravityCreds, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -176,7 +165,6 @@ func (c *oauthTokenCache) daemonCredentials() (antigravityCreds, error) {
 	if c.refresh == "" {
 		return antigravityCreds{}, errors.New("Antigravity account requires OAuth bootstrap")
 	}
-	c.sourceAccess, c.sourceRefresh = c.access, c.refresh
 	var creds antigravityCreds
 	creds.Email = c.email
 	creds.Token.AccessToken = c.access
@@ -231,11 +219,22 @@ func (c *oauthTokenCache) setEmail(email string) error {
 	return nil
 }
 
-func (c *oauthTokenCache) bootstrap(b accountBootstrap) error {
+func (c *oauthTokenCache) bootstrap(b accountBootstrap, tokens ...oauthTokenResponse) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// Write the replacement atomically before publishing it to the live cache.
-	raw, err := json.Marshal(persistedOAuth{Source: oauthSource("", ""), Refresh: b.RefreshToken, Email: b.Email})
+	saved := persistedOAuth{Source: oauthSource("", ""), Refresh: b.RefreshToken, Email: b.Email}
+	if len(tokens) > 0 {
+		out := tokens[0]
+		saved.Access, saved.Expiry = out.AccessToken, tokenExpiry(out.AccessToken)
+		if out.RefreshToken != "" {
+			saved.Refresh = out.RefreshToken
+		}
+		if out.ExpiresIn > 0 {
+			saved.Expiry = time.Now().Add(time.Duration(out.ExpiresIn) * time.Second)
+		}
+	}
+	raw, err := json.Marshal(saved)
 	if err != nil {
 		return err
 	}
@@ -244,9 +243,27 @@ func (c *oauthTokenCache) bootstrap(b accountBootstrap) error {
 			return err
 		}
 	}
-	c.email, c.refresh = b.Email, b.RefreshToken
-	c.sourceAccess, c.sourceRefresh, c.access = "", "", ""
-	c.expiry = time.Time{}
+	c.email, c.refresh = b.Email, saved.Refresh
+	c.sourceAccess, c.sourceRefresh, c.access = "", "", saved.Access
+	c.expiry = saved.Expiry
 	c.loaded, c.dirty = true, false
 	return nil
+}
+
+func (c *oauthTokenCache) needsSourceRead() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.loaded && (c.access == "" || (!c.expiry.IsZero() && time.Until(c.expiry) <= time.Minute))
+}
+
+// Reserve before spawning so concurrent polls cannot launch duplicate prompts.
+func (c *oauthTokenCache) beginCLITrigger() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.triggeredForExpiry || time.Since(c.lastTriggerAttempt) < 10*time.Minute {
+		return false
+	}
+	c.triggeredForExpiry = true
+	c.lastTriggerAttempt = time.Now()
+	return true
 }

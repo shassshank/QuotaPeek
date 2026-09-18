@@ -17,6 +17,7 @@ func TestAntigravityAccountAutoDetectsFromKeychain(t *testing.T) {
 	cfg.CollectionPaused = true
 	s := NewServer(NewStore(cfg), NewCollector(), filepath.Join(t.TempDir(), "config.json"))
 	s.authToken = "secret"
+	mockBootstrap(s.collector)
 	defer s.poller.Stop()
 
 	raw, err := json.Marshal(antigravityCreds{Email: "detected@example.com", Token: struct {
@@ -52,6 +53,7 @@ func TestAntigravityAccountAutoDetectFailsWithoutKeychainEntry(t *testing.T) {
 	cfg.CollectionPaused = true
 	s := NewServer(NewStore(cfg), NewCollector(), filepath.Join(t.TempDir(), "config.json"))
 	s.authToken = "secret"
+	mockBootstrap(s.collector)
 	defer s.poller.Stop()
 	s.collector.readKeychain = func(context.Context, string, string) ([]byte, error) {
 		return nil, fmt.Errorf("keychain read failed for service gemini")
@@ -76,6 +78,7 @@ func TestAntigravityDuplicateEmail(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.json")
 			s := NewServer(NewStore(cfg), NewCollector(), path)
 			s.authToken = "secret"
+			mockBootstrap(s.collector)
 			defer s.poller.Stop()
 			body := func(email string) string {
 				return fmt.Sprintf(`{"provider":"antigravity","label":"Personal","credentialLocation":{"kind":"daemon_token"},"oauthBootstrap":{"refreshToken":"test-refresh","email":%q}}`, email)
@@ -90,6 +93,7 @@ func TestAntigravityDuplicateEmail(t *testing.T) {
 				}
 				s = NewServer(NewStore(restored), NewCollector(), path)
 				s.authToken = "secret"
+				mockBootstrap(s.collector)
 				defer s.poller.Stop()
 				if len(s.accountCollectors) != 0 {
 					t.Fatal("expected lazy collectors after restart")

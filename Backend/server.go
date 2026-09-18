@@ -170,7 +170,7 @@ func (s *Server) handleTestRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.store.endPoll(key, req.Route)
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 	defer cancel()
 	data, err := s.fetchAccount(ctx, a, req.Route)
 	if err == nil && !s.store.SetSampleAt(key, req.Route, data, started) {
@@ -283,7 +283,7 @@ func (s *Server) pollProvider(ctx context.Context, key ProviderID) {
 		return
 	}
 	key = ProviderID(a.ID)
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	for _, route := range providerConfig(s.store.Config(), a.Provider).RoutesEnabled {
 		if route == RouteInjection && a.Provider != ProviderCodex {
@@ -301,7 +301,7 @@ func (s *Server) pollProvider(ctx context.Context, key ProviderID) {
 				err = errors.New("Fetch returned invalid, empty, or older quota data.")
 			}
 			s.store.recordPoll(key, data, err)
-			if err != nil {
+			if err != nil && !errors.Is(err, errWaitingForToken) {
 				s.store.AddError(key, route, err.Error())
 			}
 		}()
@@ -459,6 +459,7 @@ func run(ctx context.Context) error {
 	if err := saveConfig(path, cfg); err != nil {
 		return err
 	}
+	checkStartupHooks(cfg)
 	store := NewStore(cfg)
 	if err := store.enablePersistence(filepath.Join(filepath.Dir(path), "samples.json")); err != nil {
 		log.Printf("sample restore failed: %v", err)

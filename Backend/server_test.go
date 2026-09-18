@@ -62,8 +62,8 @@ func TestTestRouteSynchronous(t *testing.T) {
 		c.readKeychain = func(ctx context.Context, service, account string) ([]byte, error) {
 			reads++
 			deadline, ok := ctx.Deadline()
-			if !ok || time.Until(deadline) > 8*time.Second {
-				t.Error("missing short timeout")
+			if !ok || time.Until(deadline) > time.Minute || time.Until(deadline) < 45*time.Second {
+				t.Error("missing bounded timeout with room for CLI refresh")
 			}
 			return []byte(`{"claudeAiOauth":{"accessToken":"test"}}`), nil
 		}

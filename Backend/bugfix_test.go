@@ -89,72 +89,30 @@ func TestIngestAliasesAndRelativeReset(t *testing.T) {
 	}
 }
 
-func TestOAuthCacheConcurrentRefreshAndRotation(t *testing.T) {
+func TestOAuthCacheConcurrentWaiting(t *testing.T) {
 	var cache oauthTokenCache
-	calls := 0
-	fetch := func(_ context.Context, refresh string) (oauthTokenResponse, error) {
-		calls++
-		expected := "original"
-		if calls > 1 {
-			expected = "rotated"
-		}
-		if refresh != expected {
-			t.Errorf("refresh = %s want %s", refresh, expected)
-		}
-		return oauthTokenResponse{AccessToken: "access", RefreshToken: "rotated", ExpiresIn: 3600}, nil
-	}
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := cache.token(context.Background(), "", "original", time.Time{}, fetch)
-			if err != nil {
+			if _, err := cache.token(context.Background(), "", "original", time.Time{}); err != errWaitingForToken {
 				t.Error(err)
 			}
 		}()
 	}
 	wg.Wait()
-	if calls != 1 {
-		t.Fatalf("refreshed %d times", calls)
-	}
-	cache.expiry = time.Now().Add(30 * time.Second)
-	if _, err := cache.token(context.Background(), "", "original", time.Time{}, fetch); err != nil {
+	if _, err := cache.token(context.Background(), "near", "original", time.Now().Add(30*time.Second)); err != errWaitingForToken {
 		t.Fatal(err)
 	}
-	if calls != 2 {
-		t.Fatalf("did not refresh near expiry: %d", calls)
-	}
-	_, err := cache.token(context.Background(), "cli-access", "cli-refresh", time.Now().Add(time.Hour), fetch)
-	if err != nil || cache.access != "cli-access" || calls != 2 {
-		t.Fatal("did not pick up new CLI credentials")
+	if got, err := cache.token(context.Background(), "cli-access", "cli-refresh", time.Now().Add(time.Hour)); err != nil || got != "cli-access" {
+		t.Fatal(got, err)
 	}
 }
 
 type oauthTestTransport func(*http.Request) (*http.Response, error)
 
 func (f oauthTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
-func TestCodexRefreshRetainsResponseFields(t *testing.T) {
-	c := NewCollector()
-	c.client = &http.Client{Transport: oauthTestTransport(func(r *http.Request) (*http.Response, error) {
-		if r.URL.String() != codexOAuthRefreshURL {
-			t.Fatalf("unexpected URL: %s", r.URL)
-		}
-		var body map[string]string
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body["refresh_token"] != "old" {
-			t.Fatal("missing refresh token")
-		}
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"access_token":"new-access","refresh_token":"replacement","expires_in":3600}`)), Header: make(http.Header)}, nil
-	})}
-	out, err := c.refreshCodexToken(context.Background(), "old")
-	if err != nil || out.RefreshToken != "replacement" || out.ExpiresIn != 3600 || out.AccessToken != "new-access" {
-		t.Fatalf("response fields lost: %+v %v", out, err)
-	}
-}
 
 func TestAntigravityRefreshRetainsResponseFields(t *testing.T) {
 	c := NewCollector()

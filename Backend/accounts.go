@@ -125,7 +125,7 @@ func (s *Store) migrateAccounts() {
 }
 func trustState(p ProviderStatus, cfg ProviderConfig, stale, now int64) string {
 	if p.Data == nil {
-		if p.LastErrorMessage != nil {
+		if p.LastErrorMessage != nil && *p.LastErrorMessage != errWaitingForToken.Error() {
 			return "error"
 		}
 		return "unknown"
@@ -245,7 +245,7 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 	a := AccountConfig{ID: "acct_" + hex.EncodeToString(b), Provider: req.Provider, Label: req.Label, CredentialLocation: loc}
 	c := s.newAccountCollector(a)
 	if req.OAuthBootstrap != nil {
-		if err := c.antigravityTokens.bootstrap(*req.OAuthBootstrap); err != nil {
+		if err := c.bootstrapAntigravity(r.Context(), *req.OAuthBootstrap, req.AutoDetect); err != nil {
 			http.Error(w, "could not persist OAuth bootstrap", 500)
 			return
 		}
@@ -541,11 +541,22 @@ func (s *Server) handleReauthenticate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	c := s.collectorFor(a)
-	if err := c.antigravityTokens.bootstrap(*bootstrap); err != nil {
+	if err := c.bootstrapAntigravity(r.Context(), *bootstrap, req.AutoDetect); err != nil {
 		http.Error(w, "could not persist OAuth bootstrap", 500)
 		return
 	}
 	c.credCache.invalidate("antigravity")
 	c.invalidateAntigravityDiscovery()
 	writeJSON(w, map[string]any{"ok": true, "accountId": a.ID})
+}
+
+func (c *Collector) bootstrapAntigravity(ctx context.Context, b accountBootstrap, autoDetect bool) error {
+	if autoDetect {
+		return c.antigravityTokens.bootstrap(b)
+	}
+	out, err := c.refreshAntigravityToken(ctx, b.RefreshToken)
+	if err != nil {
+		return err
+	}
+	return c.antigravityTokens.bootstrap(b, out)
 }
