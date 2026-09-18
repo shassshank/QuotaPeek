@@ -301,7 +301,7 @@ func (s *Server) pollProvider(ctx context.Context, key ProviderID) {
 				err = errors.New("Fetch returned invalid, empty, or older quota data.")
 			}
 			s.store.recordPoll(key, data, err)
-			if err != nil {
+			if err != nil && !errors.Is(err, errWaitingForToken) {
 				s.store.AddError(key, route, err.Error())
 			}
 		}()
@@ -459,6 +459,7 @@ func run(ctx context.Context) error {
 	if err := saveConfig(path, cfg); err != nil {
 		return err
 	}
+	checkStartupHooks(cfg)
 	store := NewStore(cfg)
 	if err := store.enablePersistence(filepath.Join(filepath.Dir(path), "samples.json")); err != nil {
 		log.Printf("sample restore failed: %v", err)

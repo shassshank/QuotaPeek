@@ -97,6 +97,7 @@ func TestReviewReauthenticate(t *testing.T) {
 	for _, auto := range []bool{false, true} {
 		t.Run(fmt.Sprint(auto), func(t *testing.T) {
 			s, _ := reviewServer(t, ProviderAntigravity)
+			mockBootstrap(s.collector)
 			cfg := s.store.Config()
 			a := cfg.Accounts[0]
 			a.ID = "acct_personal"
@@ -413,16 +414,9 @@ func TestReviewAntigravityPollAndDiscovery(t *testing.T) {
 				t.Fatal("email not persisted", email, err)
 			}
 			if tt.discoveryStatus == 401 || tt.discoveryStatus == 403 || tt.quotaStatus == 401 || tt.quotaStatus == 403 {
-				calls := 0
-				_, err := c.antigravityTokens.token(context.Background(), "access", "refresh", time.Now().Add(time.Hour), func(_ context.Context, refresh string) (oauthTokenResponse, error) {
-					calls++
-					if refresh != "refresh" {
-						t.Error(refresh)
-					}
-					return oauthTokenResponse{AccessToken: "replacement", ExpiresIn: 3600}, nil
-				})
-				if err != nil || calls != 1 {
-					t.Fatal("rejected access reused", calls, err)
+				_, err := c.antigravityTokens.token(context.Background(), "access", "refresh", time.Now().Add(time.Hour))
+				if err != errWaitingForToken {
+					t.Fatal("rejected access reused", err)
 				}
 				if _, ok := c.credCache.get("antigravity", time.Hour); ok {
 					t.Fatal("keychain cache retained")
@@ -452,7 +446,7 @@ func TestReviewCodexRejectedTokenRefresh(t *testing.T) {
 			c.codexTokens = oauthTokenCache{loaded: true, sourceAccess: "original", sourceRefresh: "source", access: "rejected", refresh: "rotated", expiry: time.Now().Add(time.Hour)}
 			refreshed := false
 			c.client = &http.Client{Transport: oauthTestTransport(func(r *http.Request) (*http.Response, error) {
-				if r.URL.String() == codexOAuthRefreshURL {
+				if r.URL.String() == "https://auth.openai.com/oauth/token" {
 					var body map[string]string
 					json.NewDecoder(r.Body).Decode(&body)
 					if body["refresh_token"] != "rotated" {
@@ -469,11 +463,11 @@ func TestReviewCodexRejectedTokenRefresh(t *testing.T) {
 			if _, err := c.FetchCodexKeychain(context.Background()); err == nil {
 				t.Fatal("expected rejection")
 			}
-			if _, err := c.FetchCodexKeychain(context.Background()); err != nil {
+			if _, err := c.FetchCodexKeychain(context.Background()); err != errWaitingForToken {
 				t.Fatal(err)
 			}
-			if !refreshed {
-				t.Fatal("token was not refreshed")
+			if refreshed {
+				t.Fatal("token was refreshed")
 			}
 		})
 	}
@@ -568,15 +562,10 @@ func TestReviewDaemonFullPollAfterReauthenticate(t *testing.T) {
 	a.ID = "acct_personal"
 	cfg.Accounts = []AccountConfig{a}
 	s.store.SetConfig(cfg)
-	w := p2Request(s, "POST", "/accounts/"+a.ID+"/reauthenticate", `{"oauthBootstrap":{"refreshToken":"bootstrap","email":"me@example.com"}}`, "secret")
-	if w.Code != 200 {
-		t.Fatal(w.Code, w.Body.String())
-	}
 	c := s.collectorFor(a)
 	c.configDir = t.TempDir()
 	c.cachedAntigravityPair = &oauthPair{"client", "secret"}
 	c.readKeychain = func(context.Context, string, string) ([]byte, error) {
-		t.Error("daemon account consulted Keychain")
 		return nil, errors.New("unexpected")
 	}
 	calls := 0
@@ -597,6 +586,10 @@ func TestReviewDaemonFullPollAfterReauthenticate(t *testing.T) {
 		}
 		return reviewResponse(200, `{"gemini-weekly":{"remainingFraction":0.3}}`), nil
 	})}
+	w := p2Request(s, "POST", "/accounts/"+a.ID+"/reauthenticate", `{"oauthBootstrap":{"refreshToken":"bootstrap","email":"me@example.com"}}`, "secret")
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
 	for i := 0; i < 2; i++ {
 		d, err := c.FetchAntigravity(context.Background())
 		if err != nil || d.UsedPercentWeekly == nil || *d.UsedPercentWeekly != 70 {
@@ -611,4 +604,11 @@ func TestReviewDaemonFullPollAfterReauthenticate(t *testing.T) {
 	if err != nil || creds.Token.RefreshToken != "rotated" || creds.Email != "me@example.com" {
 		t.Fatal(creds, err)
 	}
+}
+
+func mockBootstrap(c *Collector) {
+	c.cachedAntigravityPair = &oauthPair{"client", "secret"}
+	c.client = &http.Client{Transport: oauthTestTransport(func(r *http.Request) (*http.Response, error) {
+		return reviewResponse(200, `{"access_token":"access","expires_in":3600}`), nil
+	})}
 }

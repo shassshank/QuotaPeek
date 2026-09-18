@@ -60,20 +60,15 @@ func TestCodexAuthFailureRefetchesCredential(t *testing.T) {
 	}
 }
 
-func TestCodexRefreshFailureInvalidatesCredential(t *testing.T) {
+func TestCodexExpiredCredentialWaits(t *testing.T) {
 	c := NewCollector()
 	c.configDir = t.TempDir()
 	c.readKeychain = func(context.Context, string, string) ([]byte, error) {
-		return []byte(`{"tokens":{"access_token":"opaque","refresh_token":"expired"}}`), nil
+		return []byte(`{"tokens":{"refresh_token":"expired"}}`), nil
 	}
-	c.client = &http.Client{Transport: oauthTestTransport(func(*http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: 400, Status: "400 Bad Request", Body: io.NopCloser(strings.NewReader(`{"error":"invalid_grant"}`))}, nil
-	})}
-	if _, err := c.FetchCodexKeychain(context.Background()); err == nil {
-		t.Fatal("expected refresh failure")
-	}
-	if _, ok := c.credCache.get("codex", 5*time.Minute); ok {
-		t.Fatal("rejected refresh credential remains cached")
+	c.client = &http.Client{Transport: oauthTestTransport(func(*http.Request) (*http.Response, error) { t.Fatal("waiting contacted endpoint"); return nil, nil })}
+	if _, err := c.FetchCodexKeychain(context.Background()); err != errWaitingForToken {
+		t.Fatal(err)
 	}
 }
 

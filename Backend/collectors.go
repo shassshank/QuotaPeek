@@ -209,6 +209,14 @@ func (c *Collector) FetchAntigravity(ctx context.Context) (UsageData, error) {
 	var err error
 	if c.antigravityTokens.daemonOwned {
 		creds, err = c.antigravityTokens.daemonCredentials()
+		expiry, _ := time.Parse(time.RFC3339Nano, creds.Token.Expiry)
+		if err == nil && (creds.Token.AccessToken == "" || (!expiry.IsZero() && time.Until(expiry) <= time.Minute)) {
+			c.credCache.invalidate("antigravity")
+			fresh, readErr := c.loadAntigravityCredsCached(ctx)
+			if readErr == nil && creds.Email != "" && strings.EqualFold(creds.Email, fresh.Email) {
+				creds = fresh
+			}
+		}
 	} else {
 		creds, err = c.loadAntigravityCredsCached(ctx)
 	}
@@ -226,8 +234,11 @@ func (c *Collector) FetchAntigravity(ctx context.Context) (UsageData, error) {
 	}
 	if creds.Token.RefreshToken != "" || token != "" {
 		expiry, _ := time.Parse(time.RFC3339Nano, creds.Token.Expiry)
-		refreshed, err := c.antigravityTokens.token(ctx, token, creds.Token.RefreshToken, expiry, c.refreshAntigravityToken)
+		refreshed, err := c.antigravityTokens.token(ctx, token, creds.Token.RefreshToken, expiry)
 		if err != nil {
+			if errors.Is(err, errWaitingForToken) {
+				c.credCache.invalidate("antigravity")
+			}
 			return UsageData{}, err
 		}
 		token = refreshed
@@ -277,6 +288,9 @@ func (c *Collector) FetchAntigravity(ctx context.Context) (UsageData, error) {
 
 func (c *Collector) loadAntigravityCredsCached(ctx context.Context) (antigravityCreds, error) {
 	cacheKey := "antigravity"
+	if c.antigravityTokens.needsSourceRead() {
+		c.credCache.invalidate(cacheKey)
+	}
 	if raw, ok := c.credCache.get(cacheKey, 5*time.Minute); ok {
 		var creds antigravityCreds
 		if json.Unmarshal(raw, &creds) == nil {

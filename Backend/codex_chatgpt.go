@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -21,15 +20,13 @@ import (
 // when its own `cli_auth_credentials_store` config is set to "keyring" - and
 // calls the same rate-limit endpoint the `codex` binary itself calls
 // (https://chatgpt.com/backend-api/wham/usage), instead of spawning a
-// `codex app-server` subprocess. Endpoint, header names, refresh flow, and
+// `codex app-server` subprocess. Endpoint, header names, and
 // JSON shapes below were taken from https://github.com/openai/codex
 // (codex-rs/backend-client, codex-rs/login, codex-rs/codex-backend-openapi-models),
 // not guessed.
 
 const (
 	codexAuthKeyringService  = "Codex Auth"
-	codexOAuthRefreshURL     = "https://auth.openai.com/oauth/token"
-	codexOAuthClientID       = "app_EMoamEEZ73f0CkXaXp7hrann"
 	codexUsageURL            = "https://chatgpt.com/backend-api/wham/usage"
 	codexIDTokenAuthClaimKey = "https://api.openai.com/auth"
 )
@@ -76,8 +73,15 @@ func (c *Collector) FetchCodexKeychain(ctx context.Context) (data UsageData, err
 	ctx = withConfigDir(ctx, "CODEX_HOME", home)
 
 	cacheKey := "codex"
+	if c.codexTokens.needsSourceRead() {
+		c.credCache.invalidate(cacheKey)
+	}
 	if raw, ok := c.credCache.get(cacheKey, 5*time.Minute); ok {
-		return c.fetchCodexUsage(ctx, raw, "keychain")
+		data, err := c.fetchCodexUsage(ctx, raw, "keychain")
+		if !errors.Is(err, errWaitingForToken) {
+			return data, err
+		}
+		c.credCache.invalidate(cacheKey)
 	}
 	if raw, err := c.readKeychain(ctx, codexAuthKeyringService, codexKeyringAccount(home)); err == nil {
 		c.cacheCodexCredential(cacheKey, raw)
@@ -119,7 +123,7 @@ func codexKeyringAccount(codexHome string) string {
 
 func (c *Collector) fetchCodexUsage(ctx context.Context, rawAuthJSON []byte, sources ...string) (UsageData, error) {
 	var auth codexAuthDotJSON
-	if err := json.Unmarshal(rawAuthJSON, &auth); err != nil || auth.Tokens == nil || auth.Tokens.RefreshToken == "" {
+	if err := json.Unmarshal(rawAuthJSON, &auth); err != nil || auth.Tokens == nil || (auth.Tokens.RefreshToken == "" && auth.Tokens.AccessToken == "") {
 		return UsageData{}, errors.New("could not parse Codex auth credential")
 	}
 
@@ -137,44 +141,12 @@ func (c *Collector) fetchCodexUsage(ctx context.Context, rawAuthJSON []byte, sou
 	}
 	c.setCredentialInfo(ProviderCodex, source, accountID)
 
-	accessToken, err := c.codexTokens.token(ctx, auth.Tokens.AccessToken, auth.Tokens.RefreshToken, tokenExpiry(auth.Tokens.AccessToken), c.refreshCodexToken)
+	accessToken, err := c.codexTokens.token(ctx, auth.Tokens.AccessToken, auth.Tokens.RefreshToken, tokenExpiry(auth.Tokens.AccessToken))
 	if err != nil {
 		return UsageData{}, err
 	}
 
 	return fetchCodexUsageWithToken(ctx, c.client, accessToken, accountID)
-}
-
-func (c *Collector) refreshCodexToken(ctx context.Context, refreshToken string) (oauthTokenResponse, error) {
-	body := map[string]string{
-		"client_id":     codexOAuthClientID,
-		"grant_type":    "refresh_token",
-		"refresh_token": refreshToken,
-	}
-	b, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, codexOAuthRefreshURL, bytes.NewReader(b))
-	if err != nil {
-		return oauthTokenResponse{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return oauthTokenResponse{}, errors.New("codex token refresh failed: " + err.Error())
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		message := "codex token refresh returned status " + resp.Status + ": " + apiErrorMessage(preview)
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusBadRequest {
-			return oauthTokenResponse{}, &codexAuthError{message}
-		}
-		return oauthTokenResponse{}, errors.New(message)
-	}
-	var out oauthTokenResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil || out.AccessToken == "" {
-		return oauthTokenResponse{}, errors.New("codex token refresh returned no access token")
-	}
-	return out, nil
 }
 
 func fetchCodexUsageWithToken(ctx context.Context, client *http.Client, accessToken, accountID string) (UsageData, error) {

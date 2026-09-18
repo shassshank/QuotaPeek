@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -296,7 +297,10 @@ func (s *Store) recordPoll(provider ProviderID, data UsageData, err error) {
 	provider = s.keyLocked(provider)
 	at := time.Now().Unix()
 	h := s.health[provider]
-	if err != nil || data.quotaEmpty() {
+	if errors.Is(err, errWaitingForToken) {
+		message := err.Error()
+		h.message = &message
+	} else if err != nil || data.quotaEmpty() {
 		message := "Fetch returned no quota data."
 		if err != nil {
 			message = redactMessage(err.Error())
@@ -304,6 +308,9 @@ func (s *Store) recordPoll(provider ProviderID, data UsageData, err error) {
 		h.failure, h.message = &at, &message
 	} else {
 		h.success = &at
+		if h.message != nil && *h.message == errWaitingForToken.Error() {
+			h.message = nil
+		}
 	}
 	s.health[provider] = h
 }

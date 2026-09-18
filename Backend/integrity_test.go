@@ -152,22 +152,20 @@ func TestLocalAuthentication(t *testing.T) {
 
 func TestOAuthRotationSurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "oauth.json")
-	c := oauthTokenCache{path: path}
-	_, err := c.token(context.Background(), "", "original", time.Time{}, func(context.Context, string) (oauthTokenResponse, error) {
-		return oauthTokenResponse{AccessToken: "a", RefreshToken: "rotated", ExpiresIn: 1}, nil
-	})
-	if err != nil {
+	c := oauthTokenCache{path: path, sourceRefresh: "original", access: "saved", refresh: "rotated", expiry: time.Now().Add(time.Hour)}
+	if err := c.persist(); err != nil {
 		t.Fatal(err)
 	}
 	restarted := oauthTokenCache{path: path}
-	_, err = restarted.token(context.Background(), "", "original", time.Time{}, func(_ context.Context, refresh string) (oauthTokenResponse, error) {
-		if refresh != "rotated" {
-			t.Fatal("rotation lost on restart")
-		}
-		return oauthTokenResponse{AccessToken: "b", ExpiresIn: 3600}, nil
-	})
-	if err != nil {
+	if got, err := restarted.token(context.Background(), "", "original", time.Time{}); err != nil || got != "saved" {
+		t.Fatal(got, err)
+	}
+	restarted.expiry = time.Now().Add(-time.Hour)
+	if _, err := restarted.token(context.Background(), "", "original", time.Time{}); err != errWaitingForToken {
 		t.Fatal(err)
+	}
+	if got, err := restarted.token(context.Background(), "new", "new-refresh", time.Now().Add(time.Hour)); err != nil || got != "new" {
+		t.Fatal(got, err)
 	}
 	info, _ := os.Stat(path)
 	if info.Mode().Perm() != 0600 {
