@@ -7,6 +7,16 @@ A lightweight macOS menu bar app showing live 5-hour and weekly usage limits
 (and reset times) for Claude Code, Codex, and Antigravity — reading each
 provider's own credentials locally, nothing ever leaves your Mac.
 
+- **Menu bar icon + popover** — click for the full breakdown, gear icon for
+  Settings.
+- **Desktop widgets** — separate from the popover; add any number of small,
+  draggable, always-on-screen widgets, each in its own style (linear bars,
+  circular rings, concentric 5h/weekly rings, per-agent breakdown, or a
+  single-agent focus view).
+- **Claude Code's own statusline** — once installed, Claude Code's native
+  statusline picks up Codex's and Antigravity's usage too (percentage and
+  reset time), so all three show up without leaving Claude Code.
+
 ## Install
 
 Via Homebrew:

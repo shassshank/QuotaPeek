@@ -16,6 +16,25 @@ Two pieces:
   any provider API directly — it only talks to the daemon over that local
   API.
 
+The menu bar app also drives an independent set of **desktop widgets**
+(`DesktopWidgetPanel.swift` / `WidgetPanelView.swift`) — small, draggable,
+always-visible panels separate from the popover. Any number can be shown at
+once, each with its own configuration: which provider/account it tracks,
+which window (5h, weekly, context, or the Claude/GPT sub-quota), and a
+display style (combined or per-agent, linear bars or circular rings,
+concentric 5h/weekly rings, or a single-agent focus view). Widgets sit at a
+configurable layer (desktop, normal, or floating) and remember their
+position across restarts.
+
+Separately, `Scripts/claude-statusline-hook.py` — beyond feeding Claude
+Code's own usage to the daemon — also reads the daemon's current Codex and
+Antigravity numbers back out and appends them as extra segments on Claude
+Code's native statusline (5h percentage, progress bar, reset time; for
+Antigravity, also the Claude/GPT sub-quota breakdown). This only flows one
+way: it's Claude Code's statusline that gains Codex/Antigravity info, not
+the reverse. It can be turned off via the `statusline_show_other_agents`
+daemon setting.
+
 Each provider can be collected two ways, selectable per-provider in the
 app's Settings window (gear icon in the popover):
 
