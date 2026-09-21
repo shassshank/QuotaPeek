@@ -10,6 +10,17 @@ import SwiftUI
 /// `.floating`: it stays behind normal app windows instead of covering them.
 /// `.stationary` keeps it pinned to wherever it was placed instead of chasing the user
 /// across Space switches/Exposé the way a floating panel would.
+///
+/// Only `.floating` widgets join every Space (that's the point of "Always on top").
+/// `.desktop` and `.normal` widgets deliberately omit `.canJoinAllSpaces` so they stay on
+/// whichever single Space/desktop they're currently showing on, like a normal app window —
+/// otherwise they'd follow the user to every desktop and render on top of full-screen apps'
+/// own Spaces too, which `.canJoinAllSpaces` does regardless of window level.
+///
+/// If that Space/desktop is later removed in Mission Control, macOS itself relocates the
+/// panel to the neighboring Space rather than destroying it — there's no public API to
+/// detect Space identity or removal, so the widget isn't auto-disabled in that case; it
+/// just resurfaces on the adjacent desktop, same as any other regular app window would.
 @MainActor
 final class DesktopWidgetPanel: NSPanel {
     private static let initialSize = NSSize(width: 260, height: 200)
@@ -30,7 +41,7 @@ final class DesktopWidgetPanel: NSPanel {
         becomesKeyOnlyIfNeeded = true
         hidesOnDeactivate = false
         isMovableByWindowBackground = true
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        collectionBehavior = Self.collectionBehavior(for: configuration.layer)
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
         isReleasedWhenClosed = false
@@ -87,6 +98,7 @@ final class DesktopWidgetPanel: NSPanel {
         if level != targetLevel {
             level = targetLevel
         }
+        collectionBehavior = Self.collectionBehavior(for: configuration.layer)
     }
 
     private static func windowLevel(for layer: WidgetLayerLevel) -> NSWindow.Level {
@@ -97,6 +109,15 @@ final class DesktopWidgetPanel: NSPanel {
             return .normal
         case .floating:
             return .floating
+        }
+    }
+
+    private static func collectionBehavior(for layer: WidgetLayerLevel) -> NSWindow.CollectionBehavior {
+        switch layer {
+        case .desktop, .normal:
+            return [.stationary, .ignoresCycle]
+        case .floating:
+            return [.canJoinAllSpaces, .stationary, .ignoresCycle]
         }
     }
 
