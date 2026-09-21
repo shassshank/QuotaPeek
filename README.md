@@ -95,8 +95,7 @@ files, and cleans up the `statusLine` entries it added. See
 ## Development
 
 - `Backend/README.md` — how to build/run/test the daemon standalone.
-- `API_CONTRACT.md` — the HTTP API contract between the daemon and the app;
-  the single source of truth for every endpoint and field name.
+- `API_CONTRACT.md` — the HTTP API contract between the daemon and the app.
 - `swift build` builds the menu bar app; `go build ./...` (from `Backend/`)
   builds the daemon. Running the daemon standalone (`go run .` from
   `Backend/`) is the fastest way to iterate on the app's UI against real
