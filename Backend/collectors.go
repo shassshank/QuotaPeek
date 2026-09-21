@@ -221,9 +221,12 @@ type antigravityCreds struct {
 }
 
 func (c *Collector) FetchAntigravity(ctx context.Context) (UsageData, error) {
-	if c.antigravityTokens.daemonOwned {
-		return c.fetchAntigravity(ctx)
-	}
+	// Daemon-owned accounts go through the same CLI-trigger self-heal as
+	// every other provider: `agy -p Hi` makes the CLI itself refresh and
+	// rewrite its Keychain entry, rather than the daemon replaying the OAuth
+	// refresh flow. Without this, an account whose Keychain self-heal in
+	// fetchAntigravity can't recover (e.g. an empty persisted email that
+	// still won't match after one read) had no other path back to health.
 	return c.fetchWithCLIRefresh(ctx, ProviderAntigravity, &c.antigravityTokens, func() (UsageData, error) {
 		return c.fetchAntigravity(ctx)
 	})
