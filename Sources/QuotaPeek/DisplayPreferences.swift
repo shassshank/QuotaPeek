@@ -59,6 +59,28 @@ enum WidgetMetricKind: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+/// Window stacking level for a desktop widget, selectable per-widget.
+enum WidgetLayerLevel: String, CaseIterable, Identifiable, Codable {
+    /// Just above the desktop icons layer, behind normal app windows - the
+    /// original/default desktop-widget behavior.
+    case desktop = "desktop"
+    /// A regular window level: mixes with other app windows in normal
+    /// front-to-back ordering instead of always sitting behind them.
+    case normal = "normal"
+    /// Always on top of other windows, including full-screen apps in other Spaces.
+    case floating = "floating"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .desktop: return "Desktop (behind app windows)"
+        case .normal: return "Normal (with other windows)"
+        case .floating: return "Always on top"
+        }
+    }
+}
+
 struct WidgetScope: Codable, Equatable {
     // nil includes all enabled accounts (including future accounts); an empty set includes none.
     var includedAccountIds: Set<String>?
@@ -119,6 +141,7 @@ struct WidgetConfiguration: Identifiable, Codable, Equatable {
     var isEnabled: Bool = false
     var style: DesktopWidgetStyle = .combinedLinear
     var scope: WidgetScope = .allAgents
+    var layer: WidgetLayerLevel = .desktop
     // Legacy global selection remains the fallback for accounts without an override.
     var visibleMetrics: Set<WidgetMetricKind> = Set(WidgetMetricKind.offerable)
     var accountMetrics: [String: Set<WidgetMetricKind>] = [:]
@@ -130,7 +153,7 @@ struct WidgetConfiguration: Identifiable, Codable, Equatable {
 
 extension WidgetConfiguration {
     private enum CodingKeys: String, CodingKey {
-        case id, name, isEnabled, style, scope, visibleMetrics, accountMetrics
+        case id, name, isEnabled, style, scope, layer, visibleMetrics, accountMetrics
     }
 
     init(from decoder: Decoder) throws {
@@ -140,6 +163,9 @@ extension WidgetConfiguration {
         isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
         style = try container.decode(DesktopWidgetStyle.self, forKey: .style)
         scope = try container.decode(WidgetScope.self, forKey: .scope)
+        // Older widgets predate per-widget layer levels; default to the
+        // original desktop-behind-windows behavior they always had.
+        layer = try container.decodeIfPresent(WidgetLayerLevel.self, forKey: .layer) ?? .desktop
         visibleMetrics = try container.decode(Set<WidgetMetricKind>.self, forKey: .visibleMetrics)
         // Older widgets have only the global visibleMetrics field.
         accountMetrics = try container.decodeIfPresent([String: Set<WidgetMetricKind>].self, forKey: .accountMetrics) ?? [:]

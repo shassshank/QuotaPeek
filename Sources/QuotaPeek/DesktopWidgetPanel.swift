@@ -26,7 +26,7 @@ final class DesktopWidgetPanel: NSPanel {
         )
 
         isFloatingPanel = false
-        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
+        level = Self.windowLevel(for: configuration.layer)
         becomesKeyOnlyIfNeeded = true
         hidesOnDeactivate = false
         isMovableByWindowBackground = true
@@ -82,6 +82,21 @@ final class DesktopWidgetPanel: NSPanel {
             hostingView.rootView = rootView
         } else {
             contentView = NSHostingView(rootView: rootView)
+        }
+        let targetLevel = Self.windowLevel(for: configuration.layer)
+        if level != targetLevel {
+            level = targetLevel
+        }
+    }
+
+    private static func windowLevel(for layer: WidgetLayerLevel) -> NSWindow.Level {
+        switch layer {
+        case .desktop:
+            return NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
+        case .normal:
+            return .normal
+        case .floating:
+            return .floating
         }
     }
 

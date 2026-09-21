@@ -459,7 +459,6 @@ func run(ctx context.Context) error {
 	if err := saveConfig(path, cfg); err != nil {
 		return err
 	}
-	checkStartupHooks(cfg)
 	store := NewStore(cfg)
 	if err := store.enablePersistence(filepath.Join(filepath.Dir(path), "samples.json")); err != nil {
 		log.Printf("sample restore failed: %v", err)
@@ -481,8 +480,30 @@ func run(ctx context.Context) error {
 	}
 	server.collector.codexTokens.path = filepath.Join(filepath.Dir(path), "oauth-codex.json")
 	server.collector.antigravityTokens.path = filepath.Join(filepath.Dir(path), "oauth-antigravity.json")
+	runSetupHealthCheck(cfg, store)
+	go scheduleSetupHealthChecks(ctx, store)
 	log.Println("quotapeekd listening on 127.0.0.1:47831")
 	return server.serve(ctx, listener)
+}
+
+// scheduleSetupHealthChecks re-runs the setup health check periodically for
+// as long as the daemon is alive, not just once at startup. An agent CLI can
+// update itself (rewriting its own settings.json, moving its binary) at any
+// point while the daemon keeps running under launchd's KeepAlive, so a
+// startup-only check could miss a breakage for as long as the daemon happens
+// to stay up. Re-reads the live config each tick since accounts can change.
+func scheduleSetupHealthChecks(ctx context.Context, store *Store) {
+	const interval = 30 * time.Minute
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runSetupHealthCheck(store.Config(), store)
+		}
+	}
 }
 
 // Stop scheduling immediately, then drain HTTP handlers and active polls together.

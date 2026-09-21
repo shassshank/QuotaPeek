@@ -149,12 +149,22 @@ struct WidgetPanelView: View {
         .padding(12)
         .frame(width: 260)
         .background(
+            // .allowsHitTesting(false): a Material fill compiles to a real
+            // NSVisualEffectView subview, which - unlike plain SwiftUI shapes -
+            // claims mouse events for its whole area. Left hit-testable, it sits
+            // between every click and the panel's contentView, so
+            // isMovableByWindowBackground (DesktopWidgetPanel) never sees a
+            // background hit and the widget can't be dragged. Disabling hit
+            // testing here lets clicks pass through to the window for dragging
+            // while real controls (e.g. the refresh button) above it in the
+            // view tree still get theirs first.
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(.ultraThinMaterial)
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
                 )
+                .allowsHitTesting(false)
         )
     }
 
