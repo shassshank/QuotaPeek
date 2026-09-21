@@ -488,5 +488,5 @@ if [[ -f "$0" ]]; then
 else
     SCRIPT_CMD="./install.sh"
 fi
-echo "Quitting the app also stops the background daemon; run 'launchctl load ~/Library/LaunchAgents/com.quotapeek.daemon.plist' (or '$SCRIPT_CMD --daemon-start') to bring it back without relaunching the app."
+echo "Quitting the app also stops the background daemon; relaunching the app brings it back automatically, or run 'launchctl load ~/Library/LaunchAgents/com.quotapeek.daemon.plist' (or '$SCRIPT_CMD --daemon-start') to bring it back without relaunching the app."
 echo "Use Settings (or 'launchctl [enable|disable] gui/\$(id -u)/com.quotapeek.app', or '$SCRIPT_CMD --app-login-off/--app-login-on') to manage app login preferences."

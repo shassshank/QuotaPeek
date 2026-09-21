@@ -40,6 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // delegate wasn't registered yet.
         _ = NotificationManager.shared
 
+        Self.ensureDaemonLoaded()
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.action = #selector(handleStatusItemClick)
@@ -345,6 +347,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitMenuAction() {
         AppDelegate.quitAndStopDaemon()
+    }
+
+    /// Shells out to (re)load the daemon LaunchAgent at app launch.
+    ///
+    /// `quitAndStopDaemon()` below deliberately unloads the daemon without `-w`
+    /// so Quit only stops it for the current session, not permanently - but
+    /// launchd doesn't reload an unloaded-without-`-w` job on its own until the
+    /// next login/boot. Without this, relaunching the app after using Quit (e.g.
+    /// double-clicking it in Applications rather than logging out and back in)
+    /// leaves the daemon gone: the UI comes back but every request to it fails
+    /// with "Service unreachable" and no accounts ever populate.
+    ///
+    /// `launchctl load` on an already-loaded job just errors harmlessly (exit
+    /// status non-zero, no effect on the running daemon), so this is safe to
+    /// call unconditionally on every launch. Fire-and-forget off the main
+    /// thread so a slow/hung launchctl can't delay the rest of startup.
+    static func ensureDaemonLoaded() {
+        let plistPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/com.quotapeek.daemon.plist")
+            .path
+        guard FileManager.default.fileExists(atPath: plistPath) else { return }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            process.arguments = ["load", plistPath]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                // Ignore - if this fails, the daemon was likely already
+                // running and store.start()'s polling will confirm reachability.
+            }
+        }
     }
 
     /// Shells out to unload the LaunchAgent daemon plist and terminates app (Task C8)
