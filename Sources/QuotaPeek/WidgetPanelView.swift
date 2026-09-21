@@ -1570,28 +1570,37 @@ private struct SingleAgentFocusWidgetView: View {
         let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
 
         return VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text("\(Int(displayVal))")
-                    .font(.system(size: 52, weight: .bold, design: .rounded))
-                    .foregroundStyle(color)
-
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("%")
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
+            HStack(alignment: .top, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text("\(Int(displayVal))")
+                        .font(.system(size: 52, weight: .bold, design: .rounded))
                         .foregroundStyle(color)
+                        .lineLimit(1)
+                        .fixedSize()
 
-                    Text(metric == .remaining ? "remaining" : "used")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("%")
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                            .foregroundStyle(color)
+
+                        Text(metric == .remaining ? "remaining" : "used")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
                 }
+                .layoutPriority(1)
 
-                Spacer()
+                Spacer(minLength: 4)
 
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(dominant.title.uppercased())
                         .font(.system(size: 9, weight: .bold, design: .rounded))
                         .foregroundStyle(.secondary)
                         .tracking(0.6)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
 
                     if let resetsAt = dominant.resetsAt {
                         HStack(spacing: 3) {
@@ -1599,10 +1608,13 @@ private struct SingleAgentFocusWidgetView: View {
                                 .font(.system(size: 9))
                             Text(WidgetMetrics.formatCountdown(resetsAt))
                                 .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
                         }
                         .foregroundStyle(.tertiary)
                     }
                 }
+                .fixedSize(horizontal: false, vertical: true)
             }
 
             // Supporting linear progress indicator
