@@ -1169,6 +1169,14 @@ private struct WidgetSettingsTab: View {
             }
             .pickerStyle(.menu)
 
+            Picker("Layer", selection: configuration.layer) {
+                ForEach(WidgetLayerLevel.allCases) { layer in
+                    Text(layer.displayName).tag(layer)
+                }
+            }
+            .pickerStyle(.menu)
+            .help("Where this widget sits relative to other windows. Each widget can have its own layer.")
+
             VStack(alignment: .leading, spacing: 6) {
                 Text("Included accounts")
                     .font(.subheadline)
