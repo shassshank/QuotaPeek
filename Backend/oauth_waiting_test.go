@@ -68,8 +68,9 @@ func TestCodexPullsFreshSource(t *testing.T) {
 
 func TestAntigravityOwnedAccountPullsMatchingSource(t *testing.T) {
 	c := NewCollector()
+	cliCalls := 0
 	c.runCLI = func(context.Context, string, ...string) error {
-		t.Fatal("daemon-owned account triggered CLI")
+		cliCalls++
 		return nil
 	}
 	c.antigravityTokens.daemonOwned = true
@@ -95,6 +96,9 @@ func TestAntigravityOwnedAccountPullsMatchingSource(t *testing.T) {
 	})}
 	if _, err := c.FetchAntigravity(context.Background()); err != errWaitingForToken {
 		t.Fatal(err)
+	}
+	if cliCalls != 1 {
+		t.Fatalf("expected one CLI trigger attempt on a stuck daemon-owned account, got %d", cliCalls)
 	}
 	email = "me@example.com"
 	if _, err := c.FetchAntigravity(context.Background()); err != nil {
