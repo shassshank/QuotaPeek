@@ -1,5 +1,8 @@
 # QuotaPeek
 
+[![Release](https://img.shields.io/github/v/release/shassshank/QuotaPeek)](https://github.com/shassshank/QuotaPeek/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A lightweight macOS menu bar app showing live 5-hour and weekly usage limits
 (and reset times) for Claude Code, Codex, and Antigravity.
 
