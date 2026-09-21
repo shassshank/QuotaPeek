@@ -238,7 +238,12 @@ func (c *Collector) fetchAntigravity(ctx context.Context) (UsageData, error) {
 		if err == nil && (creds.Token.AccessToken == "" || (!expiry.IsZero() && time.Until(expiry) <= time.Minute)) {
 			c.credCache.invalidate("antigravity")
 			fresh, readErr := c.loadAntigravityCredsCached(ctx)
-			if readErr == nil && creds.Email != "" && strings.EqualFold(creds.Email, fresh.Email) {
+			// An empty persisted email means bootstrap never learned an
+			// identity to protect (e.g. the CLI's Keychain entry doesn't
+			// carry one) - trust the current Keychain contents rather than
+			// refusing to self-heal forever. Once populated, a known email
+			// still guards against picking up a different signed-in account.
+			if readErr == nil && (creds.Email == "" || strings.EqualFold(creds.Email, fresh.Email)) {
 				creds = fresh
 			}
 		}
