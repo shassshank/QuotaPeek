@@ -1191,74 +1191,20 @@ private struct WidgetSettingsTab: View {
                         : []
                 )
                 ForEach(enabledAccounts) { account in
-                    DisclosureGroup("\(account.provider.displayName) — \(account.label)") {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Toggle("Include account", isOn: Binding(
-                                get: { configuration.wrappedValue.scope.includes(account.id) },
-                                set: { isIncluded in
-                                    configuration.wrappedValue.scope.setIncluded(
-                                        account.id,
-                                        isIncluded: isIncluded,
-                                        enabledAccountIds: allScopeIds
-                                    )
-                                }
-                            ))
-                            .toggleStyle(.checkbox)
-
-                            ForEach(WidgetMetricKind.offerable) { metric in
-                                Toggle(metric.displayName, isOn: Binding(
-                                    get: { configuration.wrappedValue.visibleMetrics(forAccountId: account.id).contains(metric) },
-                                    set: { isVisible in
-                                        var metrics = configuration.wrappedValue.visibleMetrics(forAccountId: account.id)
-                                        if isVisible {
-                                            metrics.insert(metric)
-                                        } else {
-                                            metrics.remove(metric)
-                                        }
-                                        configuration.wrappedValue.accountMetrics[account.id] = metrics
-                                    }
-                                ))
-                                .toggleStyle(.checkbox)
-                            }
-
-                            if account.provider == .antigravity && displayPrefs.showAntigravityModelBreakdown {
-                                let cgId = "\(account.id):claude_gpt"
-                                DisclosureGroup("Claude/GPT") {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Toggle("Include account", isOn: Binding(
-                                            get: { configuration.wrappedValue.scope.includes(cgId) },
-                                            set: { isIncluded in
-                                                configuration.wrappedValue.scope.setIncluded(
-                                                    cgId,
-                                                    isIncluded: isIncluded,
-                                                    enabledAccountIds: allScopeIds
-                                                )
-                                            }
-                                        ))
-                                        .toggleStyle(.checkbox)
-
-                                        ForEach(WidgetMetricKind.offerable) { metric in
-                                            Toggle(metric.displayName, isOn: Binding(
-                                                get: { configuration.wrappedValue.visibleMetrics(forAccountId: cgId).contains(metric) },
-                                                set: { isVisible in
-                                                    var metrics = configuration.wrappedValue.visibleMetrics(forAccountId: cgId)
-                                                    if isVisible {
-                                                        metrics.insert(metric)
-                                                    } else {
-                                                        metrics.remove(metric)
-                                                    }
-                                                    configuration.wrappedValue.accountMetrics[cgId] = metrics
-                                                }
-                                            ))
-                                            .toggleStyle(.checkbox)
-                                        }
-                                    }
-                                    .padding(.vertical, 4)
-                                    .padding(.leading, 8)
-                                }
-                            }
+                    WidgetAccountScopeRow(
+                        title: "\(account.provider.displayName) — \(account.label)",
+                        entryId: account.id,
+                        configuration: configuration,
+                        allScopeIds: allScopeIds
+                    ) {
+                        if account.provider == .antigravity && displayPrefs.showAntigravityModelBreakdown {
+                            WidgetAccountScopeRow(
+                                title: "Claude/GPT",
+                                entryId: "\(account.id):claude_gpt",
+                                configuration: configuration,
+                                allScopeIds: allScopeIds
+                            ) { EmptyView() }
                         }
-                        .padding(.vertical, 4)
                     }
                 }
                 Text(enabledAccounts.isEmpty
@@ -1270,6 +1216,101 @@ private struct WidgetSettingsTab: View {
 
         }
         .padding(.vertical, 4)
+    }
+}
+
+/// One account (or Antigravity Claude/GPT sub-entry) in a widget's scope list.
+/// The include switch sits on the header row so it's usable without expanding;
+/// the chevron reveals per-metric checkboxes at a fixed indent, so metric lists
+/// from every expanded row line up in the same column.
+private struct WidgetAccountScopeRow<Nested: View>: View {
+    let title: String
+    let entryId: String
+    @Binding var configuration: WidgetConfiguration
+    let allScopeIds: Set<String>
+    let nested: () -> Nested
+
+    @State private var isExpanded = false
+
+    init(
+        title: String,
+        entryId: String,
+        configuration: Binding<WidgetConfiguration>,
+        allScopeIds: Set<String>,
+        @ViewBuilder nested: @escaping () -> Nested
+    ) {
+        self.title = title
+        self.entryId = entryId
+        self._configuration = configuration
+        self.allScopeIds = allScopeIds
+        self.nested = nested
+    }
+
+    private static var chevronWidth: CGFloat { 14 }
+    private static var contentIndent: CGFloat { chevronWidth + 6 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                            .frame(width: Self.chevronWidth)
+                        Text(title)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 8)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(isExpanded ? "Collapse" : "Expand") \(title) metrics")
+
+                Toggle("Include \(title)", isOn: Binding(
+                    get: { configuration.scope.includes(entryId) },
+                    set: { isIncluded in
+                        configuration.scope.setIncluded(
+                            entryId,
+                            isIncluded: isIncluded,
+                            enabledAccountIds: allScopeIds
+                        )
+                    }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+            }
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(WidgetMetricKind.offerable) { metric in
+                        Toggle(metric.displayName, isOn: Binding(
+                            get: { configuration.visibleMetrics(forAccountId: entryId).contains(metric) },
+                            set: { isVisible in
+                                var metrics = configuration.visibleMetrics(forAccountId: entryId)
+                                if isVisible {
+                                    metrics.insert(metric)
+                                } else {
+                                    metrics.remove(metric)
+                                }
+                                configuration.accountMetrics[entryId] = metrics
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+                    }
+                    nested()
+                }
+                .padding(.leading, Self.contentIndent)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 2)
     }
 }
 
