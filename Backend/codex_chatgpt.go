@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -92,7 +93,11 @@ func (c *Collector) fetchCodexKeychain(ctx context.Context, home string) (data U
 		c.cacheCodexCredential(cacheKey, raw)
 		return c.fetchCodexUsage(ctx, raw, "keychain")
 	}
-	raw, err := os.ReadFile(filepath.Join(home, "auth.json"))
+	authPath := filepath.Join(home, "auth.json")
+	raw, err := os.ReadFile(authPath)
+	if errors.Is(err, fs.ErrPermission) {
+		return UsageData{}, accessError(authPath, "Codex login", err)
+	}
 	if err != nil {
 		return UsageData{}, errors.New("could not read Codex auth from Keychain or ~/.codex/auth.json")
 	}

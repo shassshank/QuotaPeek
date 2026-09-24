@@ -5,12 +5,11 @@ import (
 	"errors"
 	"io"
 	"log"
-	"os/exec"
 	"time"
 )
 
 func runCLI(ctx context.Context, bin string, args ...string) error {
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd := providerCommand(ctx, bin, args...)
 	cmd.Env = collectorEnv(ctx)
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	return cmd.Run()
@@ -25,7 +24,7 @@ func (c *Collector) triggerCLILogin(ctx context.Context, provider ProviderID) bo
 	case ProviderClaude:
 		bin = claudeBin()
 	case ProviderCodex:
-		bin, args = codexBin(), []string{"exec", "Hi"}
+		bin, args = codexBin(), []string{"exec", "--skip-git-repo-check", "Hi"}
 	case ProviderAntigravity:
 		var err error
 		bin, err = locateAntigravityBinary()

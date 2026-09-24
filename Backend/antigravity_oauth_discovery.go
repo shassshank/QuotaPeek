@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,6 +56,9 @@ func discoverAntigravityOAuthPairs() ([]oauthPair, error) {
 		return nil, err
 	}
 	data, err := os.ReadFile(bin)
+	if errors.Is(err, fs.ErrPermission) {
+		return nil, accessError(bin, "Antigravity CLI, scanned for its OAuth client", err)
+	}
 	if err != nil {
 		return nil, errors.New("could not read local antigravity CLI binary")
 	}

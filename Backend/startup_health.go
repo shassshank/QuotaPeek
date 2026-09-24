@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -72,7 +73,11 @@ func checkStartupHooks(cfg Config) []setupIssue {
 		}
 		if err := mergeStatusline(settings, desired); err != nil {
 			log.Printf("startup health: %s: %v", settings, err)
-			issues = append(issues, setupIssue{provider: providerID, message: fmt.Sprintf("couldn't repair %s: %v", settings, err)})
+			message := fmt.Sprintf("couldn't repair %s: %v", settings, err)
+			if errors.Is(err, fs.ErrPermission) {
+				message = accessError(settings, provider+" statusline hook settings", err).Error()
+			}
+			issues = append(issues, setupIssue{provider: providerID, message: message})
 		}
 	}
 	return issues
@@ -118,12 +123,30 @@ func checkBinResolvable(provider ProviderID, bin string) *setupIssue {
 	return nil
 }
 
+// checkRequiredAccess reports account config dirs macOS privacy protection
+// is blocking - e.g. a CLAUDE_CONFIG_DIR kept in ~/Documents that quotapeekd
+// was denied access to. These are the only user folders QuotaPeek needs.
+func checkRequiredAccess(cfg Config) []setupIssue {
+	var issues []setupIssue
+	for _, a := range cfg.Accounts {
+		if a.CredentialLocation.Kind != "config_dir" || a.CredentialLocation.ConfigDir == nil {
+			continue
+		}
+		purpose := fmt.Sprintf("%s config folder for account %q", a.Provider, a.Label)
+		if err := checkReadableDir(*a.CredentialLocation.ConfigDir, purpose); err != nil {
+			issues = append(issues, setupIssue{provider: ProviderID(a.ID), message: err.Error()})
+		}
+	}
+	return issues
+}
+
 // runSetupHealthCheck runs every setup health check, logs what it finds, and
 // records anything it couldn't fix itself as an account-visible error so a
 // broken update surfaces as a specific message in Settings rather than
 // silent, unexplained "no data" in the tray.
 func runSetupHealthCheck(cfg Config, store *Store) {
 	issues := append(checkStartupHooks(cfg), checkCLIBinaries(cfg)...)
+	issues = append(issues, checkRequiredAccess(cfg)...)
 	for _, issue := range issues {
 		log.Printf("setup health: %s", issue.message)
 		if store != nil {
