@@ -53,7 +53,7 @@ func TestCLIRefreshProviders(t *testing.T) {
 					triggers++
 					wantBin, wantArgs, envKey := "claude", "-p Hi", "CLAUDE_CONFIG_DIR"
 					if provider == ProviderCodex {
-						wantBin, wantArgs, envKey = "codex", "exec Hi", "CODEX_HOME"
+						wantBin, wantArgs, envKey = "codex", "exec --skip-git-repo-check Hi", "CODEX_HOME"
 					}
 					if provider == ProviderAntigravity {
 						wantBin, envKey = "agy", ""

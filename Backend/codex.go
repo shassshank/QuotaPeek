@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os/exec"
 	"time"
 )
 
@@ -36,8 +35,9 @@ func (c *Collector) FetchCodexAtCached(ctx context.Context, configDir string) (U
 func FetchCodexAt(ctx context.Context, configDir string) (UsageData, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, codexBin(), "app-server")
-	cmd.Env = collectorEnv(withConfigDir(ctx, "CODEX_HOME", configDir))
+	ctx = withConfigDir(ctx, "CODEX_HOME", configDir)
+	cmd := providerCommand(ctx, codexBin(), "app-server")
+	cmd.Env = collectorEnv(ctx)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return UsageData{}, err
