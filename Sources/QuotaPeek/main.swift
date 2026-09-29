@@ -316,6 +316,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pauseItem.target = self
             menu.addItem(pauseItem)
 
+            let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdatesMenuAction), keyEquivalent: "")
+            updateItem.target = self
+            menu.addItem(updateItem)
+
             menu.addItem(.separator())
 
             let quitItem = NSMenuItem(title: "Quit", action: #selector(quitMenuAction), keyEquivalent: "q")
@@ -343,6 +347,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func togglePauseMenuAction() {
         let target = !store.isCollectionPaused
         Task { _ = await store.setCollectionPaused(target) }
+    }
+
+    @objc private func checkForUpdatesMenuAction() {
+        UpdateChecker.checkNow()
     }
 
     @objc private func quitMenuAction() {
