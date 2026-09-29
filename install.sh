@@ -442,7 +442,7 @@ data["statusLine"] = desired
 fd, tmp = tempfile.mkstemp(prefix=".settings-", dir=os.path.dirname(path))
 try:
     with os.fdopen(fd, "w") as f:
-        json.dump(data, f, indent=2)
+        json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
         f.flush()
         os.fsync(f.fileno())
