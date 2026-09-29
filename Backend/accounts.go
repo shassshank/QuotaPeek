@@ -420,19 +420,29 @@ func (s *Server) ingestAccount(provider ProviderID, raw []byte) (ProviderID, boo
 		return "", false
 	}
 	// Antigravity accounts are daemon_token, not config_dir: the CLI has no
-	// profile concept the hook process could report, so it stamps the account
-	// id directly (falling back to the default account when it has none).
+	// profile concept the hook process could report, so the hook sends no
+	// account id. Match the default account, else the only Antigravity
+	// account - accounts added in Settings get random ids, so requiring the
+	// default id dropped every push for them.
 	if provider == ProviderAntigravity {
-		id := envelope.AccountID
-		if id == "" {
-			id = defaultAccountID(provider)
-		}
+		var candidates []AccountConfig
 		for _, a := range s.store.Config().Accounts {
-			if a.Provider == provider && a.ID == id {
+			if a.Provider != provider {
+				continue
+			}
+			if envelope.AccountID != "" && a.ID == envelope.AccountID || envelope.AccountID == "" && a.ID == defaultAccountID(provider) {
 				return ProviderID(a.ID), true
 			}
+			candidates = append(candidates, a)
 		}
-		s.store.AddError(provider, RouteInjection, "ingest dropped: no matching account")
+		if envelope.AccountID == "" && len(candidates) == 1 {
+			return ProviderID(candidates[0].ID), true
+		}
+		msg := "ingest dropped: no matching account"
+		if envelope.AccountID == "" && len(candidates) > 1 {
+			msg = "ingest dropped: several Antigravity accounts and the agy hook can't say which one is logged in"
+		}
+		s.store.AddError(provider, RouteInjection, msg)
 		return "", false
 	}
 	d := envelope.ConfigDir

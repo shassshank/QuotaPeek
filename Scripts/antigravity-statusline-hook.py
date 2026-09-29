@@ -215,7 +215,7 @@ def post_ingest(raw):
         payload = json.loads(raw)
         # Antigravity (the agy CLI) has no profile/config-dir concept to report,
         # unlike Claude/Codex. Leave accountId empty so the daemon matches this
-        # push to its default Antigravity account.
+        # push to its Antigravity account (the default one, else the only one).
         payload["accountId"] = ""
         raw = json.dumps(payload)
         token_path = os.path.expanduser("~/Library/Application Support/QuotaPeek/auth-token")
