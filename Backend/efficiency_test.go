@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -120,54 +119,5 @@ func TestAppPresenceRoutes(t *testing.T) {
 				t.Fatalf("%s authorized=%v presence updated=%v", path, authorized, updated)
 			}
 		}
-	}
-}
-
-func TestFetchCodexAtResponseAndExit(t *testing.T) {
-	for _, tc := range []struct{ name, response, wantErr string }{
-		{"success", `{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":12}}}}`, ""},
-		{"rpc_error", `{"id":2,"error":{"message":"failure"}}`, "codex RPC error"},
-		{"closed", "", "closed before rate-limit response"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			home := t.TempDir()
-			t.Setenv("HOME", home)
-			bin := filepath.Join(home, ".local", "bin")
-			if err := os.MkdirAll(bin, 0700); err != nil {
-				t.Fatal(err)
-			}
-			script := "#!/bin/sh\nread first\nread second\nprintf '%s\\n' '{\"id\":1,\"result\":{}}' '" + tc.response + "'\n"
-			if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(script), 0700); err != nil {
-				t.Fatal(err)
-			}
-			data, err := FetchCodexAt(context.Background(), home)
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("error = %v, want %s", err, tc.wantErr)
-				}
-			} else if err != nil || data.UsedPercent5H == nil || *data.UsedPercent5H != 12 {
-				t.Fatalf("data=%+v error=%v", data, err)
-			}
-		})
-	}
-}
-
-func TestFetchCodexAtDeadline(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	bin := filepath.Join(home, ".local", "bin")
-	if err := os.MkdirAll(bin, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nread first\nread second\nexec sleep 30\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	if _, err := FetchCodexAt(ctx, home); err == nil {
-		t.Fatal("expected deadline failure")
-	}
-	if ctx.Err() != context.DeadlineExceeded {
-		t.Fatalf("did not wait for deadline: %v", ctx.Err())
 	}
 }

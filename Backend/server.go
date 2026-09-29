@@ -154,7 +154,7 @@ func (s *Server) handleTestRoute(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, result)
 		return
 	}
-	if req.Route == RouteInjection && req.Provider != ProviderCodex {
+	if req.Route == RouteInjection {
 		result.OK = s.store.RouteFresh(key, req.Route, time.Now().Unix())
 		result.Message = "Push-only route: the daemon cannot trigger a push; no recent quota push has been received."
 		if result.OK {
@@ -264,9 +264,6 @@ func (s *Server) fetchAccount(ctx context.Context, a AccountConfig, route Route)
 	case ProviderAntigravity:
 		return c.FetchAntigravity(ctx)
 	case ProviderCodex:
-		if route == RouteInjection {
-			return c.FetchCodexAtCached(ctx, c.configDir)
-		}
 		return c.FetchCodexKeychain(ctx)
 	}
 	return UsageData{}, errUnknownProvider
@@ -286,7 +283,8 @@ func (s *Server) pollProvider(ctx context.Context, key ProviderID) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	for _, route := range providerConfig(s.store.Config(), a.Provider).RoutesEnabled {
-		if route == RouteInjection && a.Provider != ProviderCodex {
+		// Injection is push-only (statusline hooks); only keychain is polled.
+		if route == RouteInjection {
 			continue
 		}
 		func() {
@@ -379,8 +377,7 @@ func (p *Poller) Reschedule(cfg Config) {
 }
 
 func (p *Poller) startProvider(ctx context.Context, provider ProviderID, cfg ProviderConfig) {
-	shouldPoll := hasRoute(cfg.RoutesEnabled, RouteKeychain) || (provider == ProviderCodex || func() bool { a, ok := p.store.account(string(provider)); return ok && a.Provider == ProviderCodex }()) && hasRoute(cfg.RoutesEnabled, RouteInjection)
-	if !shouldPoll {
+	if !hasRoute(cfg.RoutesEnabled, RouteKeychain) {
 		return
 	}
 	interval := time.Duration(cfg.KeychainPollIntervalSec) * time.Second

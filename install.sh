@@ -365,16 +365,15 @@ PY
             continue
         fi
         body=""
-        # Antigravity's normal default is Keychain OAuth polling. Claude and
-        # Codex need "injection" instead: chooseSample (Backend/store.go)
-        # only surfaces a route's data if it's in routes_enabled, so without
-        # this the statusLine hook registered below by merge_statusline
-        # would push samples the daemon silently drops. Codex has no real
-        # Keychain route at all — its poller (Backend/server.go's
-        # pollProvider) only runs under "injection", where it spawns
-        # `codex app-server` itself; "keychain" alone gets no Codex data.
+        # Antigravity and Codex default to "keychain": the daemon polls their
+        # web usage endpoints with the CLI's own login, and only runs the CLI
+        # to refresh an expired login. Claude needs "injection" instead:
+        # chooseSample (Backend/store.go) only surfaces a route's data if
+        # it's in routes_enabled, so without this the statusLine hook
+        # registered below by merge_statusline would push samples the daemon
+        # silently drops.
         route="keychain"
-        if [[ "$provider" == "claude" || "$provider" == "codex" ]]; then
+        if [[ "$provider" == "claude" ]]; then
             route="injection"
         fi
         patch="$("$PYTHON3" - "$provider" "$interval" "$route" <<'PY'

@@ -434,9 +434,8 @@ private struct AccountsSettingsTab: View {
                 routeToggleRow(for: account, route: .keychain, label: "Keychain (poll CLI credentials)", binding: binding)
             }
 
-            if account.provider == .codex {
-                routeToggleRow(for: account, route: .injection, label: "Local RPC (poll `codex app-server`)", binding: binding)
-            } else {
+            // Codex has no push hook; it's polled only over the web.
+            if account.provider != .codex {
                 routeToggleRow(for: account, route: .injection, label: "Injection (real-time CLI hook push)", binding: binding)
             }
 
@@ -655,7 +654,7 @@ private struct AccountsSettingsTab: View {
             get: {
                 switch provider {
                 case .claude: return draftConfig.claude ?? ProviderConfig(routesEnabled: [.keychain], keychainPollIntervalSec: 60)
-                case .codex: return draftConfig.codex ?? ProviderConfig(routesEnabled: [.injection], keychainPollIntervalSec: 120)
+                case .codex: return draftConfig.codex ?? ProviderConfig(routesEnabled: [.keychain], keychainPollIntervalSec: 120)
                 case .antigravity: return draftConfig.antigravity ?? ProviderConfig(routesEnabled: [.keychain], keychainPollIntervalSec: 60)
                 }
             },

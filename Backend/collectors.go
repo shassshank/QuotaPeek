@@ -36,8 +36,7 @@ type Collector struct {
 	cachedAntigravityPair *oauthPair
 	cachedDiscovery       *antigravityDiscovery
 
-	credCache  keychainCache
-	codexCache codexSubprocessCache
+	credCache keychainCache
 
 	anthropicURL string
 	tokenURL     string
@@ -594,7 +593,6 @@ func (c *Collector) resetCredentials(id ProviderID) error {
 	switch id {
 	case ProviderCodex:
 		err = c.codexTokens.reset()
-		c.codexCache.invalidate()
 		c.credCache.invalidate("codex")
 	case ProviderAntigravity:
 		err = c.antigravityTokens.reset()
