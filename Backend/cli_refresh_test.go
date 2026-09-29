@@ -56,7 +56,7 @@ func TestCLIRefreshProviders(t *testing.T) {
 						wantBin, wantArgs, envKey = "codex", "exec --skip-git-repo-check Hi", "CODEX_HOME"
 					}
 					if provider == ProviderAntigravity {
-						wantBin, envKey = "agy", ""
+						wantBin, wantArgs, envKey = "agy", "--dangerously-skip-permissions -p Hi", ""
 					}
 					if bin != filepath.Join(binDir, wantBin) || strings.Join(args, " ") != wantArgs {
 						t.Fatalf("command %s %v", bin, args)
