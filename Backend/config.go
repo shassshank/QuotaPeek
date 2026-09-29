@@ -38,7 +38,25 @@ func loadConfig(path string) (Config, error) {
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return cfg, err
 	}
+	migrateCodexRoutes(&cfg.Codex)
 	return cfg, validateConfig(cfg)
+}
+
+// Codex has no push route. Its old "injection" route polled by spawning
+// `codex app-server` every interval; Codex is now polled only over the web
+// (the keychain route), and its CLI runs only to refresh an expired login.
+// Fold a stored or requested injection route into keychain.
+func migrateCodexRoutes(pc *ProviderConfig) {
+	routes := []Route{}
+	for _, r := range pc.RoutesEnabled {
+		if r == RouteInjection {
+			r = RouteKeychain
+		}
+		if !hasRoute(routes, r) {
+			routes = append(routes, r)
+		}
+	}
+	pc.RoutesEnabled = routes
 }
 
 func saveConfig(path string, cfg Config) error {
@@ -90,6 +108,7 @@ func mergePartialConfig(current Config, patch partialConfig) (Config, error) {
 	}
 	if patch.Codex != nil {
 		current.Codex = *patch.Codex
+		migrateCodexRoutes(&current.Codex)
 	}
 	if patch.Antigravity != nil {
 		current.Antigravity = *patch.Antigravity

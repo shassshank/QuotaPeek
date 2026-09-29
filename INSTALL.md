@@ -46,10 +46,9 @@ app's Settings window (gear icon in the popover):
   daemon in real time, via its documented `statusLine` hook (Claude Code and
   Antigravity both support one; the hook script piggybacks on it — see
   `Scripts/claude-statusline-hook.py` / `Scripts/antigravity-statusline-hook.py`).
-  Codex has no such hook, so its "Injection" route is instead a free local
-  JSON-RPC call (`account/rateLimits/read` via a freshly spawned
-  `codex app-server`) that the daemon runs itself on a timer — no OAuth
-  involved either way.
+  Codex has no such hook, so it has no Injection route: it's polled over the
+  web only (Keychain route), and the `codex` CLI runs only to refresh an
+  expired login.
 
 If both routes are enabled for a provider, the daemon prefers the freshest
 Injection sample and automatically falls back to the last Keychain poll once

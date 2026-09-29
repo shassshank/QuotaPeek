@@ -16,10 +16,11 @@ The daemon listens on `127.0.0.1:47831` and persists config at:
 
 There are no required flags. Claude and Antigravity keychain collectors read
 existing macOS Keychain entries via `/usr/bin/security`. Codex usage is
-polled by spawning `~/.local/bin/codex app-server`, falling back to `codex`
-on `PATH`. Credential reads are cached in memory (TTL-based, invalidated on
-expiry or an auth failure) so a normal poll cycle doesn't re-hit the
-Keychain or respawn `codex app-server` every tick.
+polled from ChatGPT's usage endpoint with Codex's own login (its Keychain
+item or `auth.json`). Credential reads are cached in memory (TTL-based,
+invalidated on expiry or an auth failure) so a normal poll cycle doesn't
+re-hit the Keychain every tick. Polls never run a provider CLI; one runs
+only to refresh a login whose token has expired.
 
 ### Antigravity credentials
 

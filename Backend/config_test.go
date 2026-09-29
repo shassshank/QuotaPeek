@@ -12,7 +12,7 @@ func TestConfigLoadSaveRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	cfg := Config{
 		Claude:      ProviderConfig{RoutesEnabled: []Route{RouteKeychain, RouteInjection}, KeychainPollIntervalSec: 61},
-		Codex:       ProviderConfig{RoutesEnabled: []Route{RouteInjection}, KeychainPollIntervalSec: 62},
+		Codex:       ProviderConfig{RoutesEnabled: []Route{RouteKeychain}, KeychainPollIntervalSec: 62},
 		Antigravity: ProviderConfig{RoutesEnabled: []Route{RouteKeychain}, KeychainPollIntervalSec: 63},
 	}
 	if err := saveConfig(path, cfg); err != nil {
@@ -24,6 +24,37 @@ func TestConfigLoadSaveRoundTrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, cfg) {
 		t.Fatalf("roundtrip = %#v, want %#v", got, cfg)
+	}
+}
+
+// Codex's old injection route spawned `codex app-server` every poll; a
+// stored or requested one must become the web-polled keychain route.
+func TestCodexInjectionRouteMigratesToKeychain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := defaultConfig()
+	cfg.Codex.RoutesEnabled = []Route{RouteInjection}
+	cfg.Claude.RoutesEnabled = []Route{RouteKeychain, RouteInjection}
+	if err := saveConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Codex.RoutesEnabled, []Route{RouteKeychain}) {
+		t.Fatalf("codex routes = %v, want [keychain]", got.Codex.RoutesEnabled)
+	}
+	if !reflect.DeepEqual(got.Claude.RoutesEnabled, []Route{RouteKeychain, RouteInjection}) {
+		t.Fatalf("claude's push route must be kept, got %v", got.Claude.RoutesEnabled)
+	}
+
+	var patch partialConfig
+	if err := json.Unmarshal([]byte(`{"codex":{"routes_enabled":["keychain","injection"],"keychain_poll_interval_sec":300}}`), &patch); err != nil {
+		t.Fatal(err)
+	}
+	merged, err := mergePartialConfig(defaultConfig(), patch)
+	if err != nil || !reflect.DeepEqual(merged.Codex.RoutesEnabled, []Route{RouteKeychain}) {
+		t.Fatalf("merged codex routes = %v (%v), want [keychain]", merged.Codex.RoutesEnabled, err)
 	}
 }
 
