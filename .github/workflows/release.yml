@@ -41,7 +41,10 @@ jobs:
         run: |
           swift build -c release --arch arm64 --arch x86_64
           mkdir -p .build/release
-          cp .build/apple/Products/Release/QuotaPeek .build/release/QuotaPeek
+          # The universal build's output dir differs across Swift versions,
+          # and newer ones already link .build/release to it.
+          BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/QuotaPeek"
+          [ "$BIN" -ef .build/release/QuotaPeek ] || cp "$BIN" .build/release/QuotaPeek
 
       - name: Assemble .app bundle and ad-hoc sign
         env:
@@ -91,8 +94,8 @@ jobs:
           TARBALL_SHA=$(grep 'quotapeek-macos\.tar\.gz' SHA256SUMS | awk '{print $1}')
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin master:refs/remotes/origin/master
-          git checkout -B master origin/master
+          git fetch origin main:refs/remotes/origin/main
+          git checkout -B main origin/main
           python3 -c "
           import sys, re
           version, sha = sys.argv[1], sys.argv[2]
@@ -107,8 +110,16 @@ jobs:
           git add Casks/quotapeek.rb
           if ! git diff --cached --quiet; then
             git commit -m "chore(cask): update quotapeek cask to ${{ steps.version.outputs.tag }}"
-            git push origin master
+            git push origin main
           fi
+
+      # The annotated tag's message is the release notes; checkout only
+      # fetched the commit, so pull the tag object itself to read it.
+      - name: Release notes from tag
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          git tag -l --format='%(contents)' "$TAG" > release-notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
@@ -117,7 +128,7 @@ jobs:
           name: QuotaPeek ${{ steps.version.outputs.tag }}
           draft: false
           prerelease: false
-          generate_release_notes: true
+          body_path: release-notes.md
           files: |
             quotapeek-macos.tar.gz
             .build/release/QuotaPeek-${{ steps.version.outputs.version }}.dmg
