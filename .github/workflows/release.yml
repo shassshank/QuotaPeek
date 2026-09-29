@@ -18,7 +18,9 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: Backend/go.mod
+          # Not go.mod's minimum: Go 1.22's linker omits LC_UUID, and current
+          # macOS dyld refuses to load a binary without it.
+          go-version: stable
 
       - name: Extract version from tag
         id: version
@@ -36,6 +38,10 @@ jobs:
           GOOS=darwin GOARCH=amd64 go build -o ../.build-go/quotapeekd-amd64 .
           cd ..
           lipo -create -output .build-go/quotapeekd .build-go/quotapeekd-arm64 .build-go/quotapeekd-amd64
+          for arch in arm64 x86_64; do
+            otool -arch "$arch" -l .build-go/quotapeekd | grep -q LC_UUID \
+              || { echo "quotapeekd ($arch) has no LC_UUID; dyld will refuse to load it" >&2; exit 1; }
+          done
 
       - name: Build Swift app
         run: |
