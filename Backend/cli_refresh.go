@@ -10,7 +10,7 @@ import (
 
 func runCLI(ctx context.Context, bin string, args ...string) error {
 	cmd := providerCommand(ctx, bin, args...)
-	cmd.Env = collectorEnv(ctx)
+	cmd.Env = providerEnv(ctx, cmd)
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	return cmd.Run()
 }
@@ -32,6 +32,9 @@ func (c *Collector) triggerCLILogin(ctx context.Context, provider ProviderID) bo
 			log.Printf("%s CLI session refresh unavailable: %v", provider, err)
 			return false
 		}
+		// The daemon has no terminal to answer agy's permission prompts in; the
+		// sandbox and empty workdir already bound what the "Hi" turn can reach.
+		args = []string{"--dangerously-skip-permissions", "-p", "Hi"}
 	}
 	if err := c.runCLI(ctx, bin, args...); err != nil {
 		log.Printf("%s CLI session refresh failed: %v", provider, err)

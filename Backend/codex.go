@@ -37,7 +37,7 @@ func FetchCodexAt(ctx context.Context, configDir string) (UsageData, error) {
 	defer cancel()
 	ctx = withConfigDir(ctx, "CODEX_HOME", configDir)
 	cmd := providerCommand(ctx, codexBin(), "app-server")
-	cmd.Env = collectorEnv(ctx)
+	cmd.Env = providerEnv(ctx, cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return UsageData{}, err

@@ -14,11 +14,44 @@ import (
 )
 
 // protectedFolder is a location macOS privacy protection (TCC) guards with a
-// per-app "would like to access files in your X folder" prompt. settingName is
-// the toggle's label under System Settings > Privacy & Security > Files &
-// Folders, or "" when only Full Disk Access covers it.
+// per-app prompt ("would like to access files in your X folder", "...your
+// photo library", "...Apple Music, your music and video activity, and your
+// media library", "...data from other apps"). settingName is the toggle's
+// label under System Settings > Privacy & Security > Files & Folders, or ""
+// when only Full Disk Access covers it.
 type protectedFolder struct {
 	path, settingName string
+}
+
+// homeDataVaults are the rest of the TCC-guarded locations under $HOME: media
+// libraries, other apps' data, and the Apple app stores behind the Contacts/
+// Calendars/Reminders/Mail/Messages/Safari prompts. QuotaPeek needs none.
+var homeDataVaults = []string{
+	"Pictures", "Music", "Movies", ".Trash",
+	"Library/CloudStorage",
+	"Library/Photos",
+	"Library/Containers",
+	"Library/Group Containers",
+	"Library/Daemon Containers",
+	"Library/Accounts",
+	"Library/Application Support/AddressBook",
+	"Library/Application Support/CallHistoryDB",
+	"Library/Application Support/CallHistoryTransactions",
+	"Library/Application Support/com.apple.TCC",
+	"Library/Application Support/FaceTime",
+	"Library/Application Support/Knowledge",
+	"Library/Application Support/MobileSync",
+	"Library/Biome",
+	"Library/Calendars",
+	"Library/Cookies",
+	"Library/HomeKit",
+	"Library/IdentityServices",
+	"Library/Mail",
+	"Library/Messages",
+	"Library/Metadata/CoreSpotlight",
+	"Library/Reminders",
+	"Library/Safari",
+	"Library/Suggestions",
 }
 
 func protectedFolders() []protectedFolder {
@@ -26,14 +59,17 @@ func protectedFolders() []protectedFolder {
 	if err != nil {
 		return nil
 	}
-	return []protectedFolder{
+	folders := []protectedFolder{
 		{filepath.Join(home, "Desktop"), "Desktop Folder"},
 		{filepath.Join(home, "Documents"), "Documents Folder"},
 		{filepath.Join(home, "Downloads"), "Downloads Folder"},
 		{filepath.Join(home, "Library", "Mobile Documents"), "iCloud Drive"},
-		{filepath.Join(home, "Library", "CloudStorage"), ""},
 		{"/Volumes", ""},
 	}
+	for _, rel := range homeDataVaults {
+		folders = append(folders, protectedFolder{filepath.Join(home, filepath.FromSlash(rel)), ""})
+	}
+	return folders
 }
 
 func protectedFolderFor(path string) (protectedFolder, bool) {
@@ -88,18 +124,47 @@ const sandboxExec = "/usr/bin/sandbox-exec"
 // folder" prompt. The sandbox denial happens before TCC is consulted, so no
 // prompt appears; the account's own config dir and the CLI's install dir stay
 // reachable because the refresh genuinely needs them.
+//
+// The CLI also runs from an empty working directory: launchd starts the
+// daemon in /, and `agy -p`/`claude -p` treat their cwd as a workspace to
+// index, which walked into ~/Pictures and ~/Music and raised photo library
+// and media library prompts.
 func providerCommand(ctx context.Context, bin string, args ...string) *exec.Cmd {
+	var cmd *exec.Cmd
 	if _, err := os.Stat(sandboxExec); err != nil {
-		return exec.CommandContext(ctx, bin, args...)
+		cmd = exec.CommandContext(ctx, bin, args...)
+	} else {
+		var allow []string
+		if resolved, err := exec.LookPath(bin); err == nil {
+			allow = append(allow, filepath.Dir(realPath(resolved)))
+		}
+		if pair, ok := ctx.Value(configEnvKey{}).([2]string); ok && pair[1] != "" {
+			allow = append(allow, realPath(pair[1]))
+		}
+		cmd = exec.CommandContext(ctx, sandboxExec, append([]string{"-p", sandboxProfile(allow), bin}, args...)...)
 	}
-	var allow []string
-	if resolved, err := exec.LookPath(bin); err == nil {
-		allow = append(allow, filepath.Dir(realPath(resolved)))
+	cmd.Dir = providerWorkDir()
+	return cmd
+}
+
+// providerEnv is the account-scoped environment for a providerCommand. agy
+// takes its workspace from $PWD rather than the real cwd, and an explicit Env
+// keeps the daemon's own PWD (/), so point PWD at the empty workdir too;
+// exec keeps the last of duplicate keys.
+func providerEnv(ctx context.Context, cmd *exec.Cmd) []string {
+	return append(collectorEnv(ctx), "PWD="+cmd.Dir)
+}
+
+// providerWorkDir is an empty directory QuotaPeek owns, so a CLI that scans
+// its workspace on start finds nothing to read.
+func providerWorkDir() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		dir := filepath.Join(home, "Library", "Application Support", "QuotaPeek", "cli-workdir")
+		if os.MkdirAll(dir, 0o700) == nil {
+			return dir
+		}
 	}
-	if pair, ok := ctx.Value(configEnvKey{}).([2]string); ok && pair[1] != "" {
-		allow = append(allow, realPath(pair[1]))
-	}
-	return exec.CommandContext(ctx, sandboxExec, append([]string{"-p", sandboxProfile(allow), bin}, args...)...)
+	return os.TempDir()
 }
 
 // Seatbelt matches resolved paths, and the last matching rule wins, so the
