@@ -15,7 +15,7 @@ cask "quotapeek" do
   # Once the checksums workflow publishes a release, download its tarball and run:
   #   shasum -a 256 quotapeek-macos.tar.gz
   # Use that digest (also in SHA256SUMS) for the version and URL below.
-  sha256 :no_check
+  sha256 "39fb08973fbbd2a97246ecfd99b23bbc3f49b52d4f2328345cc473470dd77ad2"
 
   url "https://github.com/shassshank/QuotaPeek/releases/download/v#{version}/quotapeek-macos.tar.gz"
   name "QuotaPeek"
