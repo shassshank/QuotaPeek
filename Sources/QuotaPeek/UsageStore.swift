@@ -183,42 +183,35 @@ final class UsageStore: ObservableObject {
     private func performFetch(_ kind: FetchKind) async {
         switch kind {
         case .reload:
-            switch await client.status() {
-            case .success(let response):
-                lastDaemonError = nil
-                if !isDaemonReachable {
-                    isDaemonReachable = true
-                }
-                if accounts != response.accounts {
-                    accounts = response.accounts
-                }
-                NotificationManager.shared.evaluate(accounts: accounts, config: config)
-            case .failure(let error):
-                lastDaemonError = error
-                if isDaemonReachable {
-                    isDaemonReachable = false
-                }
-            }
+            applyFetchResult(await client.status())
         case .refresh(let accountId):
             isRefreshing = true
-            switch await client.refresh(accountId: accountId) {
-            case .success(let response):
-                lastDaemonError = nil
-                if !isDaemonReachable {
-                    isDaemonReachable = true
-                }
-                if accounts != response.accounts {
-                    accounts = response.accounts
-                }
-                NotificationManager.shared.evaluate(accounts: accounts, config: config)
+            if applyFetchResult(await client.refresh(accountId: accountId)) {
                 await loadAllHistory()
-            case .failure(let error):
-                lastDaemonError = error
-                if isDaemonReachable {
-                    isDaemonReachable = false
-                }
             }
             isRefreshing = false
+        }
+    }
+
+    @discardableResult
+    private func applyFetchResult(_ result: Result<StatusResponse, DaemonError>) -> Bool {
+        switch result {
+        case .success(let response):
+            lastDaemonError = nil
+            if !isDaemonReachable {
+                isDaemonReachable = true
+            }
+            if accounts != response.accounts {
+                accounts = response.accounts
+            }
+            NotificationManager.shared.evaluate(accounts: accounts, config: config)
+            return true
+        case .failure(let error):
+            lastDaemonError = error
+            if isDaemonReachable {
+                isDaemonReachable = false
+            }
+            return false
         }
     }
 

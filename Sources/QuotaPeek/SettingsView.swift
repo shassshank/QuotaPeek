@@ -326,18 +326,8 @@ private struct AccountsSettingsTab: View {
             .font(.caption2.weight(.medium))
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
-            .background(stateColor(state).opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-            .foregroundStyle(stateColor(state))
-    }
-
-    private func stateColor(_ state: AccountTrustState) -> Color {
-        switch state {
-        case .fresh: return .green
-        case .stale: return .orange
-        case .restored: return .purple
-        case .error: return .red
-        case .unknown: return .gray
-        }
+            .background(state.color.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+            .foregroundStyle(state.color)
     }
 
     private func accountHeader(_ account: Account) -> some View {
@@ -417,11 +407,7 @@ private struct AccountsSettingsTab: View {
                         set: { isOn in
                             draftConfig.claudePollingMode = isOn ? "inference" : "disabled"
                             var routes = binding.wrappedValue.routesEnabled
-                            if isOn, !routes.contains(.keychain) {
-                                routes.append(.keychain)
-                            } else if !isOn {
-                                routes.removeAll { $0 == .keychain }
-                            }
+                            routes.setRouteEnabled(.keychain, enabled: isOn)
                             binding.wrappedValue.routesEnabled = routes
                             Task { _ = await store.saveConfig(mergedConfigPayload()) }
                         }
@@ -519,11 +505,7 @@ private struct AccountsSettingsTab: View {
             get: { binding.wrappedValue.routesEnabled.contains(route) },
             set: { isOn in
                 var routes = binding.wrappedValue.routesEnabled
-                if isOn, !routes.contains(route) {
-                    routes.append(route)
-                } else if !isOn {
-                    routes.removeAll { $0 == route }
-                }
+                routes.setRouteEnabled(route, enabled: isOn)
                 binding.wrappedValue.routesEnabled = routes
                 Task { _ = await store.saveConfig(mergedConfigPayload()) }
             }
@@ -634,7 +616,7 @@ private struct AccountsSettingsTab: View {
 
     private func initializeDraftConfig(_ config: DaemonConfig) {
         var normalized = config
-        var claude = config.claude ?? ProviderConfig(routesEnabled: [.keychain], keychainPollIntervalSec: 60)
+        var claude = config.providerConfigOrDefault(for: .claude)
         // Polling mode is authoritative: repair the route without enabling disabled inference.
         if config.claudePollingMode == "inference", !claude.routesEnabled.contains(.keychain) {
             claude.routesEnabled.append(.keychain)
@@ -651,13 +633,7 @@ private struct AccountsSettingsTab: View {
 
     private func configBinding(for provider: Provider) -> Binding<ProviderConfig> {
         Binding(
-            get: {
-                switch provider {
-                case .claude: return draftConfig.claude ?? ProviderConfig(routesEnabled: [.keychain], keychainPollIntervalSec: 60)
-                case .codex: return draftConfig.codex ?? ProviderConfig(routesEnabled: [.keychain], keychainPollIntervalSec: 120)
-                case .antigravity: return draftConfig.antigravity ?? ProviderConfig(routesEnabled: [.keychain], keychainPollIntervalSec: 60)
-                }
-            },
+            get: { draftConfig.providerConfigOrDefault(for: provider) },
             set: { newValue in
                 switch provider {
                 case .claude: draftConfig.claude = newValue
@@ -1366,12 +1342,7 @@ private struct ProviderHealthTab: View {
 
                 Spacer()
 
-                Text(account.state.displayName)
-                    .font(.caption2.weight(.medium))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(healthStateColor(account.state).opacity(0.15), in: Capsule())
-                    .foregroundStyle(healthStateColor(account.state))
+                CapsuleBadge(text: account.state.displayName, color: account.state.color)
             }
 
             Divider()
@@ -1393,7 +1364,7 @@ private struct ProviderHealthTab: View {
 
                 healthRow(
                     title: "Last Success",
-                    value: account.lastSuccessAt.map(relativeTimestamp) ?? "No recorded success",
+                    value: account.lastSuccessAt.map(RelativeDateFormatting.format) ?? "No recorded success",
                     icon: "checkmark.circle",
                     tint: account.lastSuccessAt != nil ? .green : .secondary
                 )
@@ -1401,7 +1372,7 @@ private struct ProviderHealthTab: View {
                 if let failureAt = account.lastFailureAt {
                     healthRow(
                         title: "Last Failure",
-                        value: relativeTimestamp(failureAt),
+                        value: RelativeDateFormatting.format(failureAt),
                         icon: "xmark.circle",
                         tint: .orange
                     )
@@ -1451,16 +1422,6 @@ private struct ProviderHealthTab: View {
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    private func healthStateColor(_ state: AccountTrustState) -> Color {
-        switch state {
-        case .fresh: return .green
-        case .stale: return .orange
-        case .restored: return .purple
-        case .error: return .red
-        case .unknown: return .gray
-        }
-    }
-
     private func healthRow(title: String, value: String, icon: String, tint: Color = .primary) -> some View {
         HStack {
             Image(systemName: icon)
@@ -1477,17 +1438,6 @@ private struct ProviderHealthTab: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-    }
-
-    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        return f
-    }()
-
-    private func relativeTimestamp(_ unixSeconds: Int64) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(unixSeconds))
-        return Self.relativeDateFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     private func performReset(for account: Account) {
@@ -1582,7 +1532,7 @@ private struct AdvancedSettingsTab: View {
                                 Text("(\(entry.route.rawValue))")
                                     .foregroundStyle(.secondary)
                                 Spacer()
-                                Text(relativeAge(entry.at))
+                                Text(RelativeDateFormatting.format(entry.at))
                                     .font(.caption2)
                                     .foregroundStyle(.tertiary)
                             }
@@ -1672,17 +1622,6 @@ private struct AdvancedSettingsTab: View {
                 }
             }
         }
-    }
-
-    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        return f
-    }()
-
-    private func relativeAge(_ unixSeconds: Int) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(unixSeconds))
-        return Self.relativeDateFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     private func revealInFinder(path: String) {

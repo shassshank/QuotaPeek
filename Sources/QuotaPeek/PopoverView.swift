@@ -232,7 +232,7 @@ private struct AccountCard: View {
             Spacer()
 
             if let asOf = account.asOf {
-                Text(syncAge(asOf))
+                Text(UsageFormatting.syncAge(asOf, detailed: true))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -312,17 +312,17 @@ private struct AccountCard: View {
         }
     }
 
-    private var restoredStateBody: some View {
+    private func quotaRowsBody(emptyText: String, isMuted: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if let data = account.data {
-                windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
-                windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
+                windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h, isMuted: isMuted)
+                windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly, isMuted: isMuted)
                 if account.provider == .antigravity && showAntigravityModelBreakdown {
-                    windowRow(label: "5h (C/G)", percent: data.usedPercent5hThirdParty, resetsAt: data.resetsAt5hThirdParty)
-                    windowRow(label: "Weekly (C/G)", percent: data.usedPercentWeeklyThirdParty, resetsAt: data.resetsAtWeeklyThirdParty)
+                    windowRow(label: "5h (C/G)", percent: data.usedPercent5hThirdParty, resetsAt: data.resetsAt5hThirdParty, isMuted: isMuted)
+                    windowRow(label: "Weekly (C/G)", percent: data.usedPercentWeeklyThirdParty, resetsAt: data.resetsAtWeeklyThirdParty, isMuted: isMuted)
                 }
             } else {
-                Text("No data restored")
+                Text(emptyText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -330,56 +330,23 @@ private struct AccountCard: View {
                 errorLine(error)
             }
         }
+    }
+
+    private var restoredStateBody: some View {
+        quotaRowsBody(emptyText: "No data restored")
     }
 
     private var staleStateBody: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let data = account.data {
-                windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h, isMuted: true)
-                windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly, isMuted: true)
-                if account.provider == .antigravity && showAntigravityModelBreakdown {
-                    windowRow(label: "5h (C/G)", percent: data.usedPercent5hThirdParty, resetsAt: data.resetsAt5hThirdParty, isMuted: true)
-                    windowRow(label: "Weekly (C/G)", percent: data.usedPercentWeeklyThirdParty, resetsAt: data.resetsAtWeeklyThirdParty, isMuted: true)
-                }
-            } else {
-                Text("Data is stale")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let error = account.displayLastError {
-                errorLine(error)
-            }
-        }
-        .opacity(0.85)
+        quotaRowsBody(emptyText: "Data is stale", isMuted: true)
+            .opacity(0.85)
     }
 
     private var freshStateBody: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let data = account.data {
-                windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
-                windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
-                if account.provider == .antigravity && showAntigravityModelBreakdown {
-                    windowRow(label: "5h (C/G)", percent: data.usedPercent5hThirdParty, resetsAt: data.resetsAt5hThirdParty)
-                    windowRow(label: "Weekly (C/G)", percent: data.usedPercentWeeklyThirdParty, resetsAt: data.resetsAtWeeklyThirdParty)
-                }
-            } else {
-                Text("No data yet")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let error = account.displayLastError {
-                errorLine(error)
-            }
-        }
+        quotaRowsBody(emptyText: "No data yet")
     }
 
     private func badge(text: String, color: Color) -> some View {
-        Text(text)
-            .font(.caption2.weight(.medium))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.15), in: Capsule())
-            .foregroundStyle(color)
+        CapsuleBadge(text: text, color: color)
     }
 
     private func errorLine(_ message: String) -> some View {
@@ -400,14 +367,7 @@ private struct AccountCard: View {
     @ViewBuilder
     private func windowRow(label: String, percent: Double?, resetsAt: Int?, isMuted: Bool = false) -> some View {
         if let percent {
-            let displayPercent: Double = {
-                switch metric {
-                case .used:
-                    return min(max(percent, 0), 100)
-                case .remaining:
-                    return min(max(100.0 - percent, 0), 100)
-                }
-            }()
+            let displayPercent = UsageFormatting.displayPercent(forUsedPercent: percent, metric: metric)
 
             let metricLabel = metric == .remaining ? "rem" : ""
             let percentDisplayString = metricLabel.isEmpty ? "\(Int(displayPercent))%" : "\(Int(displayPercent))% \(metricLabel)"
@@ -415,12 +375,12 @@ private struct AccountCard: View {
             let accessibilityText: String = {
                 var text = "\(provider.displayName) (\(account.label)) \(label): \(Int(displayPercent)) percent \(metric.displayName.lowercased())"
                 if let resetsAt {
-                    text += ", resets \(resetCountdown(resetsAt))"
+                    text += ", resets \(UsageFormatting.formatCountdown(resetsAt, inPrefix: true))"
                 }
                 return text
             }()
 
-            let barColor = isMuted ? colorForPercent(displayPercent, metric: metric).opacity(0.5) : colorForPercent(displayPercent, metric: metric)
+            let barColor = isMuted ? UsageFormatting.colorForPercent(displayPercent, metric: metric).opacity(0.5) : UsageFormatting.colorForPercent(displayPercent, metric: metric)
 
             HStack(spacing: 8) {
                 Text(label)
@@ -435,7 +395,7 @@ private struct AccountCard: View {
                     .frame(width: metric == .remaining ? 48 : 34, alignment: .trailing)
                     .foregroundStyle(isMuted ? Color.secondary : Color.primary)
                 if let resetsAt {
-                    Text(resetCountdown(resetsAt))
+                    Text(UsageFormatting.formatCountdown(resetsAt, inPrefix: true))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -443,54 +403,6 @@ private struct AccountCard: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityText)
         }
-    }
-
-    private func colorForPercent(_ percent: Double, metric: PercentageMetric) -> Color {
-        switch metric {
-        case .used:
-            switch percent {
-            case ..<60: return .green
-            case ..<85: return .yellow
-            default: return .red
-            }
-        case .remaining:
-            if percent > 40 {
-                return .green
-            } else if percent > 15 {
-                return .yellow
-            } else {
-                return .red
-            }
-        }
-    }
-
-    private func syncAge(_ unixSeconds: Int64) -> String {
-        let seconds = max(0, Int(Date().timeIntervalSince1970) - Int(unixSeconds))
-        if seconds < 60 {
-            return "\(seconds)s ago"
-        }
-        let minutes = seconds / 60
-        if minutes < 60 {
-            return "\(minutes)m\(seconds % 60)s ago"
-        }
-        let hours = minutes / 60
-        return "\(hours)h\(minutes % 60)m ago"
-    }
-
-    private static let countdownFormatter: DateComponentsFormatter = {
-        let f = DateComponentsFormatter()
-        f.allowedUnits = [.day, .hour, .minute]
-        f.unitsStyle = .abbreviated
-        f.maximumUnitCount = 2
-        return f
-    }()
-
-    private func resetCountdown(_ unixSeconds: Int) -> String {
-        let resetDate = Date(timeIntervalSince1970: TimeInterval(unixSeconds))
-        let interval = resetDate.timeIntervalSinceNow
-        if interval <= 0 { return "now" }
-        if interval < 60 { return "in <1m" }
-        return "in " + (Self.countdownFormatter.string(from: interval) ?? "")
     }
 }
 
