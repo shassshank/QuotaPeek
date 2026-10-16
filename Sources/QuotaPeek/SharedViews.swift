@@ -366,7 +366,7 @@ func noMetricsPlaceholder(font: Font, vPadding: CGFloat) -> some View {
         .padding(.vertical, vPadding)
 }
 
-func noRecentDataPlaceholder(font: Font, text: String = "No recent data") -> some View {
+func noRecentDataPlaceholder(font: Font, text: LocalizedStringKey = "No recent data") -> some View {
     Text(text)
         .font(font)
         .foregroundStyle(.secondary)
