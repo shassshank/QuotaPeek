@@ -256,12 +256,16 @@ final class UsageStore: ObservableObject {
 
     func loadConfig() async {
         if case .success(let cfg) = await client.config() {
-            config = cfg
-            if let paused = cfg.collectionPaused {
-                isCollectionPaused = paused
-            }
-            NotificationManager.shared.evaluate(accounts: accounts, config: cfg)
+            applyConfig(cfg)
         }
+    }
+
+    private func applyConfig(_ cfg: DaemonConfig) {
+        config = cfg
+        if let paused = cfg.collectionPaused {
+            isCollectionPaused = paused
+        }
+        NotificationManager.shared.evaluate(accounts: accounts, config: cfg)
     }
 
     /// Single-flight + "coalesce trailing" save: at most one `PUT /config` is
@@ -302,11 +306,7 @@ final class UsageStore: ObservableObject {
             switch await client.updateConfig(configToSave) {
             case .success(let cfg):
                 lastDaemonError = nil
-                config = cfg
-                if let paused = cfg.collectionPaused {
-                    isCollectionPaused = paused
-                }
-                NotificationManager.shared.evaluate(accounts: accounts, config: cfg)
+                applyConfig(cfg)
                 await reload()
                 success = true
             case .failure(let error):

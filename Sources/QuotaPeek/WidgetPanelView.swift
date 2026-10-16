@@ -28,18 +28,8 @@ struct WidgetPanelView: View {
 
         var result: [WidgetAccount] = []
         for account in scoped {
-            result.append(WidgetAccount(
-                id: account.id,
-                displayName: account.provider.displayName,
-                symbolName: account.provider.symbolName,
-                label: account.label,
-                state: account.state,
-                displayLastError: account.displayLastError,
-                asOf: account.asOf,
-                activeRoute: account.activeRoute,
-                isCodex: account.provider == .codex,
-                data: account.data
-            ))
+            result.append(WidgetAccount(account, id: account.id, displayName: account.provider.displayName,
+                                        symbolName: account.provider.symbolName, isCodex: account.provider == .codex, data: account.data))
 
             let cgAccountId = "\(account.id):claude_gpt"
             if account.provider == .antigravity,
@@ -58,18 +48,8 @@ struct WidgetPanelView: View {
                     resetsAtWeeklyThirdParty: nil,
                     contextWindowUsedPercent: nil
                 )
-                result.append(WidgetAccount(
-                    id: cgAccountId,
-                    displayName: "Claude/GPT",
-                    symbolName: "sparkles",
-                    label: account.label,
-                    state: account.state,
-                    displayLastError: account.displayLastError,
-                    asOf: account.asOf,
-                    activeRoute: account.activeRoute,
-                    isCodex: false,
-                    data: cgData
-                ))
+                result.append(WidgetAccount(account, id: cgAccountId, displayName: "Claude/GPT",
+                                            symbolName: "sparkles", isCodex: false, data: cgData))
             }
         }
         return result
@@ -272,16 +252,11 @@ private struct CombinedLinearAccountCard: View {
             accountHeader
 
             if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
-                Text("No metrics selected")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 2)
+                noMetricsPlaceholder(font: .caption2, vPadding: 2)
             } else {
                 switch account.state {
                 case .unknown:
-                    Text("No recent data")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    noRecentDataPlaceholder(font: .caption2)
                 case .error:
                     widgetCompactErrorRow(message: account.displayLastError ?? "Polling error")
                 case .restored, .stale, .fresh:
@@ -310,16 +285,7 @@ private struct CombinedLinearAccountCard: View {
     }
 
     private var accountHeader: some View {
-        HStack(spacing: 5) {
-            Image(systemName: account.symbolName)
-                .font(.caption.weight(.bold))
-            Text(account.displayName)
-                .font(.caption.weight(.semibold))
-
-            widgetAccountLabelBadge(account.label)
-
-            Spacer()
-
+        CompactIdentityRow(account: account, spacing: 5, nameFont: .caption.weight(.semibold)) {
             stateBadge
         }
     }
@@ -405,32 +371,18 @@ private struct CombinedCircularAccountCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 5) {
-                Image(systemName: account.symbolName)
-                    .font(.caption.weight(.bold))
-                Text(account.displayName)
-                    .font(.caption.weight(.semibold))
-
-                widgetAccountLabelBadge(account.label)
-
-                Spacer()
-
+            CompactIdentityRow(account: account, spacing: 5, nameFont: .caption.weight(.semibold)) {
                 if account.state != .fresh {
                     CapsuleBadge(text: account.state.displayName, color: account.state.color, font: .system(size: 8, weight: .semibold), hPadding: 4, vPadding: 1)
                 }
             }
 
             if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
-                Text("No metrics selected")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 2)
+                noMetricsPlaceholder(font: .caption2, vPadding: 2)
             } else {
                 switch account.state {
                 case .unknown:
-                    Text("No recent data")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    noRecentDataPlaceholder(font: .caption2)
                 case .error:
                     widgetCompactErrorRow(message: account.displayLastError ?? "Polling error")
                 case .restored, .stale, .fresh:
@@ -489,100 +441,76 @@ private struct CombinedCircularAccountCard: View {
 
 // MARK: - Style 3: Per-Agent Linear Widget View
 
-private struct PerAgentLinearWidgetView: View {
+private struct PerAgentLinearWidgetView: PagedWidgetView {
     let accounts: [WidgetAccount]
     @Binding var selectedIndex: Int
     let metric: PercentageMetric
     let configuration: WidgetConfiguration
 
-    private var activeAccount: WidgetAccount? {
-        guard !accounts.isEmpty else { return nil }
-        let clamped = min(max(selectedIndex, 0), accounts.count - 1)
-        return accounts[clamped]
-    }
-
-    private var visibleMetrics: Set<WidgetMetricKind> {
-        guard let account = activeAccount else { return [] }
-        return configuration.visibleMetrics(forAccountId: account.id)
-    }
-
     var body: some View {
-        VStack(spacing: 10) {
-            if accounts.count > 1 {
-                WidgetAccountSwitcher(count: accounts.count, selectedIndex: $selectedIndex)
-            }
+        PagedAccountCard(accounts: accounts, selectedIndex: $selectedIndex, activeAccount: activeAccount) { account in
+            VStack(alignment: .leading, spacing: 10) {
+                FocusAccountHeader(account: account)
 
-            if let account = activeAccount {
-                VStack(alignment: .leading, spacing: 10) {
-                    FocusAccountHeader(account: account)
-
-                    if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
-                        Text("No metrics selected")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 4)
-                    } else {
-                        switch account.state {
-                        case .unknown:
-                            Text("No recent data")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        case .error:
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "exclamationmark.circle.fill")
-                                        .foregroundStyle(.red)
-                                        .font(.caption)
-                                    Text(account.displayLastError ?? "Polling error")
-                                        .font(.caption)
-                                        .foregroundStyle(.primary)
-                                }
+                if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
+                    noMetricsPlaceholder(font: .caption, vPadding: 4)
+                } else {
+                    switch account.state {
+                    case .unknown:
+                        noRecentDataPlaceholder(font: .caption)
+                    case .error:
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .foregroundStyle(.red)
+                                    .font(.caption)
+                                Text(account.displayLastError ?? "Polling error")
+                                    .font(.caption)
+                                    .foregroundStyle(.primary)
                             }
-                            .padding(8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-                        case .restored, .stale, .fresh:
-                            if let data = account.data {
-                                let (primaryMetric, secondaryMetrics) = categorizeWidgetMetrics(data: data, visibleMetrics: visibleMetrics)
-                                if let primary = primaryMetric {
-                                    VStack(spacing: 6) {
-                                        primaryHeadlineBlock(
-                                            title: primary.title,
-                                            percent: primary.percent,
-                                            resetsAt: primary.resetsAt
-                                        )
+                        }
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                    case .restored, .stale, .fresh:
+                        if let data = account.data {
+                            let (primaryMetric, secondaryMetrics) = categorizeWidgetMetrics(data: data, visibleMetrics: visibleMetrics)
+                            if let primary = primaryMetric {
+                                VStack(spacing: 6) {
+                                    primaryHeadlineBlock(
+                                        title: primary.title,
+                                        percent: primary.percent,
+                                        resetsAt: primary.resetsAt
+                                    )
 
-                                        if !secondaryMetrics.isEmpty {
-                                            VStack(spacing: 6) {
-                                                ForEach(secondaryMetrics, id: \.kind) { sec in
-                                                    WidgetSecondaryMetricRow(
-                                                        label: sec.title,
-                                                        percent: sec.percent,
-                                                        resetsAt: sec.resetsAt,
-                                                        metric: metric,
-                                                        hasAccessibilityPercentLabel: true
-                                                    )
-                                                }
+                                    if !secondaryMetrics.isEmpty {
+                                        VStack(spacing: 6) {
+                                            ForEach(secondaryMetrics, id: \.kind) { sec in
+                                                WidgetSecondaryMetricRow(
+                                                    label: sec.title,
+                                                    percent: sec.percent,
+                                                    resetsAt: sec.resetsAt,
+                                                    metric: metric,
+                                                    hasAccessibilityPercentLabel: true
+                                                )
                                             }
-                                            .padding(.top, 2)
                                         }
+                                        .padding(.top, 2)
                                     }
-                                    .opacity(account.state == .restored || account.state == .stale ? 0.85 : 1.0)
-                                } else {
-                                    Text("No usage data")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
                                 }
+                                .opacity(account.state == .restored || account.state == .stale ? 0.85 : 1.0)
                             } else {
                                 Text("No usage data")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
+                        } else {
+                            Text("No usage data")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
-                .padding(10)
-                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
             }
         }
     }
@@ -618,86 +546,53 @@ private struct PerAgentLinearWidgetView: View {
 
 // MARK: - Style 4: Per-Agent Circular Widget View
 
-private struct PerAgentCircularWidgetView: View {
+private struct PerAgentCircularWidgetView: PagedWidgetView {
     let accounts: [WidgetAccount]
     @Binding var selectedIndex: Int
     let metric: PercentageMetric
     let configuration: WidgetConfiguration
 
-    private var activeAccount: WidgetAccount? {
-        guard !accounts.isEmpty else { return nil }
-        let clamped = min(max(selectedIndex, 0), accounts.count - 1)
-        return accounts[clamped]
-    }
-
-    private var visibleMetrics: Set<WidgetMetricKind> {
-        guard let account = activeAccount else { return [] }
-        return configuration.visibleMetrics(forAccountId: account.id)
-    }
-
     var body: some View {
-        VStack(spacing: 10) {
-            if accounts.count > 1 {
-                WidgetAccountSwitcher(count: accounts.count, selectedIndex: $selectedIndex)
-            }
-
-            if let account = activeAccount {
-                VStack(spacing: 10) {
-                    // Identity row
-                    HStack(spacing: 6) {
-                        Image(systemName: account.symbolName)
-                            .font(.caption.weight(.bold))
-                        Text(account.displayName)
-                            .font(.caption.weight(.bold))
-
-                        widgetAccountLabelBadge(account.label)
-
-                        Spacer()
-
-                        if account.state != .fresh {
-                            CapsuleBadge(text: account.state.displayName, color: .orange, font: .system(size: 8, weight: .semibold), hPadding: 5, vPadding: 1)
-                        }
+        PagedAccountCard(accounts: accounts, selectedIndex: $selectedIndex, activeAccount: activeAccount) { account in
+            VStack(spacing: 10) {
+                // Identity row
+                CompactIdentityRow(account: account) {
+                    if account.state != .fresh {
+                        CapsuleBadge(text: account.state.displayName, color: .orange, font: .system(size: 8, weight: .semibold), hPadding: 5, vPadding: 1)
                     }
+                }
 
-                    if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
-                        Text("No metrics selected")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 4)
-                    } else {
-                        switch account.state {
-                        case .unknown:
-                            Text("No recent data")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        case .error:
-                            widgetErrorBanner(message: account.displayLastError ?? "Polling error")
-                        case .restored, .stale, .fresh:
-                            if let data = account.data {
-                                let (primaryMetric, secondaryMetrics) = categorizeWidgetMetrics(data: data, visibleMetrics: visibleMetrics)
-                                if let primary = primaryMetric {
-                                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 8)], spacing: 12) {
-                                        primaryDial(title: primary.title, percent: primary.percent, resetsAt: primary.resetsAt)
-                                        ForEach(secondaryMetrics, id: \.kind) { secondary in
-                                            primaryDial(title: secondary.title, percent: secondary.percent, resetsAt: secondary.resetsAt)
-                                        }
+                if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
+                    noMetricsPlaceholder(font: .caption, vPadding: 4)
+                } else {
+                    switch account.state {
+                    case .unknown:
+                        noRecentDataPlaceholder(font: .caption)
+                    case .error:
+                        widgetErrorBanner(message: account.displayLastError ?? "Polling error")
+                    case .restored, .stale, .fresh:
+                        if let data = account.data {
+                            let (primaryMetric, secondaryMetrics) = categorizeWidgetMetrics(data: data, visibleMetrics: visibleMetrics)
+                            if let primary = primaryMetric {
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 8)], spacing: 12) {
+                                    primaryDial(title: primary.title, percent: primary.percent, resetsAt: primary.resetsAt)
+                                    ForEach(secondaryMetrics, id: \.kind) { secondary in
+                                        primaryDial(title: secondary.title, percent: secondary.percent, resetsAt: secondary.resetsAt)
                                     }
-                                    .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
-                                } else {
-                                    Text("No usage data")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
                                 }
+                                .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                             } else {
                                 Text("No usage data")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
+                        } else {
+                            Text("No usage data")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
-                .padding(10)
-                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
             }
         }
     }
@@ -839,16 +734,7 @@ private struct SingleAccountConcentricCard: View {
     var body: some View {
         VStack(spacing: 10) {
             // Identity Header
-            HStack(spacing: 6) {
-                Image(systemName: account.symbolName)
-                    .font(.caption.weight(.bold))
-                Text(account.displayName)
-                    .font(.caption.weight(.bold))
-
-                widgetAccountLabelBadge(account.label)
-
-                Spacer()
-
+            CompactIdentityRow(account: account) {
                 if account.state != .fresh {
                     CapsuleBadge(text: account.state.displayName, color: account.state.color, font: .system(size: 8, weight: .semibold), hPadding: 5, vPadding: 1)
                 } else {
@@ -857,16 +743,11 @@ private struct SingleAccountConcentricCard: View {
             }
 
             if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
-                Text("No metrics selected")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 6)
+                noMetricsPlaceholder(font: .caption, vPadding: 6)
             } else {
                 switch account.state {
                 case .unknown:
-                    Text("No recent data")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    noRecentDataPlaceholder(font: .caption)
                 case .error:
                     widgetErrorBanner(message: account.displayLastError ?? "Polling error")
                 case .restored, .stale, .fresh:
@@ -965,10 +846,7 @@ private struct MultiAccountConcentricView: View {
     var body: some View {
         VStack(spacing: 10) {
             if accounts.allSatisfy({ configuration.visibleMetrics(forAccountId: $0.id).isDisjoint(with: WidgetMetricKind.offerable) }) {
-                Text("No metrics selected")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 4)
+                noMetricsPlaceholder(font: .caption, vPadding: 4)
             } else {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
                     ForEach(accounts) { account in
@@ -1097,16 +975,11 @@ private struct SingleAgentFocusWidgetView: View {
                 FocusAccountHeader(account: account, iconFont: .title2.weight(.bold), nameFont: .headline.weight(.bold))
 
                 if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
-                    Text("No metrics selected")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 4)
+                    noMetricsPlaceholder(font: .caption, vPadding: 4)
                 } else {
                     switch account.state {
                     case .unknown:
-                        Text("No recent data")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        noRecentDataPlaceholder(font: .caption)
                     case .error:
                         widgetErrorBanner(message: account.displayLastError ?? "Polling error", expandWidth: true)
                     case .restored, .stale, .fresh:
