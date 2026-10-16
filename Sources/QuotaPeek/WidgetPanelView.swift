@@ -8,19 +8,6 @@ import SwiftUI
 /// 4. Per-agent, circular: Single-account dial ring with secondary window metrics, paginated when multi-account.
 /// 5. Concentric rings: Nested circular progress rings (outer: 5h, inner: weekly) with legend.
 /// 6. Single-agent focus: Minimal, unpaginated single-account glance card with a bold dominant metric.
-struct WidgetAccount: Identifiable, Equatable {
-    let id: String
-    let displayName: String
-    let symbolName: String
-    let label: String
-    let state: AccountTrustState
-    let displayLastError: String?
-    let asOf: Int64?
-    let activeRoute: Route
-    let isCodex: Bool
-    let data: ProviderData?
-}
-
 struct WidgetPanelView: View {
     @ObservedObject var store: UsageStore
     @ObservedObject var displayPrefs: DisplayPreferences
@@ -259,39 +246,6 @@ struct WidgetPanelView: View {
     }
 }
 
-// MARK: - Shared Route & Badge Helpers
-
-private func routePill(for account: WidgetAccount) -> some View {
-    let title: String
-    let color: Color
-    switch account.activeRoute {
-    case .injection:
-        if account.isCodex {
-            title = "RPC"
-            color = .blue
-        } else if account.state == .fresh {
-            title = "Live"
-            color = .green
-        } else {
-            title = "Injection"
-            color = .secondary
-        }
-    case .keychain:
-        title = "Polled"
-        color = .blue
-    default:
-        title = "Inactive"
-        color = .gray
-    }
-
-    return Text(title)
-        .font(.system(size: 9, weight: .semibold))
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(color.opacity(0.15), in: Capsule())
-        .foregroundStyle(color)
-}
-
 // MARK: - Style 1: Combined Linear Widget View
 
 private struct CombinedLinearWidgetView: View {
@@ -329,35 +283,20 @@ private struct CombinedLinearAccountCard: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 case .error:
-                    HStack(spacing: 4) {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.red)
-                            .font(.caption2)
-                        Text(account.displayLastError ?? "Polling error")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
+                    widgetCompactErrorRow(message: account.displayLastError ?? "Polling error")
                 case .restored, .stale, .fresh:
-                    if let data = account.data {
-                        let has5h = visibleMetrics.contains(.fiveHour) && data.usedPercent5h != nil
-                        let hasWk = visibleMetrics.contains(.weekly) && data.usedPercentWeekly != nil
-
-                        if !has5h && !hasWk {
-                            Text("No usage data")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            VStack(spacing: 4) {
-                                if has5h {
-                                    linearRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
-                                }
-                                if hasWk {
-                                    linearRow(label: "Wk", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
-                                }
+                    let has5h = visibleMetrics.contains(.fiveHour) && account.data?.usedPercent5h != nil
+                    let hasWk = visibleMetrics.contains(.weekly) && account.data?.usedPercentWeekly != nil
+                    if (has5h || hasWk), let data = account.data {
+                        VStack(spacing: 4) {
+                            if has5h {
+                                linearRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
                             }
-                            .opacity(account.state == .stale ? 0.75 : 1.0)
+                            if hasWk {
+                                linearRow(label: "Wk", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
+                            }
                         }
+                        .opacity(account.state == .stale ? 0.75 : 1.0)
                     } else {
                         Text("No usage data")
                             .font(.caption2)
@@ -377,14 +316,7 @@ private struct CombinedLinearAccountCard: View {
             Text(account.displayName)
                 .font(.caption.weight(.semibold))
 
-            if !account.label.isEmpty && account.label != "Default" {
-                Text(account.label)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-            }
+            widgetAccountLabelBadge(account.label)
 
             Spacer()
 
@@ -409,12 +341,7 @@ private struct CombinedLinearAccountCard: View {
     }
 
     private func miniBadge(text: String, color: Color) -> some View {
-        Text(text)
-            .font(.system(size: 8, weight: .semibold))
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(color.opacity(0.15), in: Capsule())
-            .foregroundStyle(color)
+        CapsuleBadge(text: text, color: color, font: .system(size: 8, weight: .semibold), hPadding: 4, vPadding: 1)
     }
 
     @ViewBuilder
@@ -426,8 +353,7 @@ private struct CombinedLinearAccountCard: View {
         accessibilityLabelText: String? = nil
     ) -> some View {
         if let percent {
-            let displayVal = UsageFormatting.displayPercent(forUsedPercent: percent, metric: metric)
-            let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
+            let (displayVal, color) = displayPercentAndColor(forUsedPercent: percent, metric: metric)
             let labelSuffix = metric == .remaining ? "r" : ""
 
             HStack(spacing: 6) {
@@ -485,24 +411,12 @@ private struct CombinedCircularAccountCard: View {
                 Text(account.displayName)
                     .font(.caption.weight(.semibold))
 
-                if !account.label.isEmpty && account.label != "Default" {
-                    Text(account.label)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-                }
+                widgetAccountLabelBadge(account.label)
 
                 Spacer()
 
                 if account.state != .fresh {
-                    Text(account.state.displayName)
-                        .font(.system(size: 8, weight: .semibold))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(account.state.color.opacity(0.15), in: Capsule())
-                        .foregroundStyle(account.state.color)
+                    CapsuleBadge(text: account.state.displayName, color: account.state.color, font: .system(size: 8, weight: .semibold), hPadding: 4, vPadding: 1)
                 }
             }
 
@@ -518,35 +432,20 @@ private struct CombinedCircularAccountCard: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 case .error:
-                    HStack(spacing: 4) {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.red)
-                            .font(.caption2)
-                        Text(account.displayLastError ?? "Polling error")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
+                    widgetCompactErrorRow(message: account.displayLastError ?? "Polling error")
                 case .restored, .stale, .fresh:
-                    if let data = account.data {
-                        let has5h = visibleMetrics.contains(.fiveHour) && data.usedPercent5h != nil
-                        let hasWk = visibleMetrics.contains(.weekly) && data.usedPercentWeekly != nil
-
-                        if !has5h && !hasWk {
-                            Text("No usage data")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 12)], spacing: 12) {
-                                if has5h, let percent = data.usedPercent5h {
-                                    circularMetricItem(label: "5h", percent: percent, resetsAt: data.resetsAt5h)
-                                }
-                                if hasWk, let percent = data.usedPercentWeekly {
-                                    circularMetricItem(label: "Weekly", percent: percent, resetsAt: data.resetsAtWeekly)
-                                }
+                    let has5h = visibleMetrics.contains(.fiveHour) && account.data?.usedPercent5h != nil
+                    let hasWk = visibleMetrics.contains(.weekly) && account.data?.usedPercentWeekly != nil
+                    if (has5h || hasWk), let data = account.data {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 12)], spacing: 12) {
+                            if has5h, let percent = data.usedPercent5h {
+                                circularMetricItem(label: "5h", percent: percent, resetsAt: data.resetsAt5h)
                             }
-                            .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
+                            if hasWk, let percent = data.usedPercentWeekly {
+                                circularMetricItem(label: "Weekly", percent: percent, resetsAt: data.resetsAtWeekly)
+                            }
                         }
+                        .opacity(account.state == .restored || account.state == .stale ? 0.75 : 1.0)
                     } else {
                         Text("No usage data")
                             .font(.caption2)
@@ -560,8 +459,7 @@ private struct CombinedCircularAccountCard: View {
     }
 
     private func circularMetricItem(label: String, percent: Double, resetsAt: Int?) -> some View {
-        let displayVal = UsageFormatting.displayPercent(forUsedPercent: percent, metric: metric)
-        let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
+        let (displayVal, color) = displayPercentAndColor(forUsedPercent: percent, metric: metric)
 
         return VStack(spacing: 3) {
             ZStack {
@@ -591,19 +489,6 @@ private struct CombinedCircularAccountCard: View {
 
 // MARK: - Style 3: Per-Agent Linear Widget View
 
-@ViewBuilder
-private func freshnessBadge(for account: WidgetAccount) -> some View {
-    if account.state == .restored || account.state == .stale {
-        let color: Color = account.state == .restored ? .purple : .orange
-        Text(account.state == .restored ? "Last known — stale since restart" : "Stale")
-            .font(.system(size: 8, weight: .semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-    }
-}
-
 private struct PerAgentLinearWidgetView: View {
     let accounts: [WidgetAccount]
     @Binding var selectedIndex: Int
@@ -624,44 +509,12 @@ private struct PerAgentLinearWidgetView: View {
     var body: some View {
         VStack(spacing: 10) {
             if accounts.count > 1 {
-                accountSwitcher
+                WidgetAccountSwitcher(count: accounts.count, selectedIndex: $selectedIndex)
             }
 
             if let account = activeAccount {
                 VStack(alignment: .leading, spacing: 10) {
-                    // Agent Identity
-                    HStack(spacing: 8) {
-                        Image(systemName: account.symbolName)
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(.primary)
-
-                        VStack(alignment: .leading, spacing: 1) {
-                            HStack(spacing: 5) {
-                                Text(account.displayName)
-                                    .font(.subheadline.weight(.bold))
-                                if !account.label.isEmpty && account.label != "Default" {
-                                    Text(account.label)
-                                        .font(.system(size: 9, weight: .medium))
-                                        .foregroundStyle(.secondary)
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 1)
-                                        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-                                }
-                            }
-
-                            freshnessBadge(for: account)
-
-                            if let asOf = account.asOf {
-                                Text(UsageFormatting.syncAge(asOf))
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
-
-                        Spacer()
-
-                        routePill(for: account)
-                    }
+                    FocusAccountHeader(account: account)
 
                     if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
                         Text("No metrics selected")
@@ -690,7 +543,7 @@ private struct PerAgentLinearWidgetView: View {
                             .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                         case .restored, .stale, .fresh:
                             if let data = account.data {
-                                let (primaryMetric, secondaryMetrics) = categorizeMetrics(data: data)
+                                let (primaryMetric, secondaryMetrics) = categorizeWidgetMetrics(data: data, visibleMetrics: visibleMetrics)
                                 if let primary = primaryMetric {
                                     VStack(spacing: 6) {
                                         primaryHeadlineBlock(
@@ -702,10 +555,12 @@ private struct PerAgentLinearWidgetView: View {
                                         if !secondaryMetrics.isEmpty {
                                             VStack(spacing: 6) {
                                                 ForEach(secondaryMetrics, id: \.kind) { sec in
-                                                    secondaryRow(
+                                                    WidgetSecondaryMetricRow(
                                                         label: sec.title,
                                                         percent: sec.percent,
-                                                        resetsAt: sec.resetsAt
+                                                        resetsAt: sec.resetsAt,
+                                                        metric: metric,
+                                                        hasAccessibilityPercentLabel: true
                                                     )
                                                 }
                                             }
@@ -732,62 +587,8 @@ private struct PerAgentLinearWidgetView: View {
         }
     }
 
-    private struct MetricItem {
-        let kind: WidgetMetricKind
-        let title: String
-        let percent: Double
-        let resetsAt: Int?
-    }
-
-    private func categorizeMetrics(data: ProviderData) -> (primary: MetricItem?, secondary: [MetricItem]) {
-        var items: [MetricItem] = []
-        if visibleMetrics.contains(.fiveHour), let p5h = data.usedPercent5h {
-            items.append(MetricItem(kind: .fiveHour, title: "5h Window", percent: p5h, resetsAt: data.resetsAt5h))
-        }
-        if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeekly {
-            items.append(MetricItem(kind: .weekly, title: "Weekly", percent: pWk, resetsAt: data.resetsAtWeekly))
-        }
-
-        guard let first = items.first else { return (nil, []) }
-        return (first, Array(items.dropFirst()))
-    }
-
-    private var accountSwitcher: some View {
-        HStack(spacing: 8) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    selectedIndex = (selectedIndex - 1 + accounts.count) % accounts.count
-                }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.caption2.weight(.bold))
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-
-            Text("\(min(selectedIndex + 1, accounts.count)) of \(accounts.count)")
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
-
-            Spacer()
-
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    selectedIndex = (selectedIndex + 1) % accounts.count
-                }
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.bold))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 4)
-    }
-
     private func primaryHeadlineBlock(title: String, percent: Double, resetsAt: Int?) -> some View {
-        let displayVal = UsageFormatting.displayPercent(forUsedPercent: percent, metric: metric)
-        let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
+        let (displayVal, color) = displayPercentAndColor(forUsedPercent: percent, metric: metric)
 
         return VStack(spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
@@ -813,33 +614,6 @@ private struct PerAgentLinearWidgetView: View {
         .padding(8)
         .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
-
-    private func secondaryRow(label: String, percent: Double, resetsAt: Int?, labelWidth: CGFloat = 48) -> some View {
-        let displayVal = UsageFormatting.displayPercent(forUsedPercent: percent, metric: metric)
-        let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
-
-        return HStack(spacing: 6) {
-            Text(label)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
-                .frame(width: labelWidth, alignment: .leading)
-
-            LinearProgressBar(percent: displayVal, color: color, height: 4)
-
-            Text("\(Int(displayVal))%")
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .frame(width: 30, alignment: .trailing)
-
-            if let resetsAt {
-                Text(UsageFormatting.formatCountdown(resetsAt))
-                    .font(.system(size: 8, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 36, alignment: .trailing)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label): \(Int(displayVal)) percent")
-    }
 }
 
 // MARK: - Style 4: Per-Agent Circular Widget View
@@ -864,7 +638,7 @@ private struct PerAgentCircularWidgetView: View {
     var body: some View {
         VStack(spacing: 10) {
             if accounts.count > 1 {
-                accountSwitcher
+                WidgetAccountSwitcher(count: accounts.count, selectedIndex: $selectedIndex)
             }
 
             if let account = activeAccount {
@@ -876,24 +650,12 @@ private struct PerAgentCircularWidgetView: View {
                         Text(account.displayName)
                             .font(.caption.weight(.bold))
 
-                        if !account.label.isEmpty && account.label != "Default" {
-                            Text(account.label)
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-                        }
+                        widgetAccountLabelBadge(account.label)
 
                         Spacer()
 
                         if account.state != .fresh {
-                            Text(account.state.displayName)
-                                .font(.system(size: 8, weight: .semibold))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Color.orange.opacity(0.15), in: Capsule())
-                                .foregroundStyle(.orange)
+                            CapsuleBadge(text: account.state.displayName, color: .orange, font: .system(size: 8, weight: .semibold), hPadding: 5, vPadding: 1)
                         }
                     }
 
@@ -909,19 +671,10 @@ private struct PerAgentCircularWidgetView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         case .error:
-                            HStack(spacing: 4) {
-                                Image(systemName: "exclamationmark.circle.fill")
-                                    .foregroundStyle(.red)
-                                    .font(.caption)
-                                Text(account.displayLastError ?? "Polling error")
-                                    .font(.caption)
-                                    .foregroundStyle(.primary)
-                            }
-                            .padding(8)
-                            .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                            widgetErrorBanner(message: account.displayLastError ?? "Polling error")
                         case .restored, .stale, .fresh:
                             if let data = account.data {
-                                let (primaryMetric, secondaryMetrics) = categorizeMetrics(data: data)
+                                let (primaryMetric, secondaryMetrics) = categorizeWidgetMetrics(data: data, visibleMetrics: visibleMetrics)
                                 if let primary = primaryMetric {
                                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 8)], spacing: 12) {
                                         primaryDial(title: primary.title, percent: primary.percent, resetsAt: primary.resetsAt)
@@ -949,62 +702,8 @@ private struct PerAgentCircularWidgetView: View {
         }
     }
 
-    private struct MetricItem {
-        let kind: WidgetMetricKind
-        let title: String
-        let percent: Double
-        let resetsAt: Int?
-    }
-
-    private func categorizeMetrics(data: ProviderData) -> (primary: MetricItem?, secondary: [MetricItem]) {
-        var items: [MetricItem] = []
-        if visibleMetrics.contains(.fiveHour), let p5h = data.usedPercent5h {
-            items.append(MetricItem(kind: .fiveHour, title: "5h Window", percent: p5h, resetsAt: data.resetsAt5h))
-        }
-        if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeekly {
-            items.append(MetricItem(kind: .weekly, title: "Weekly", percent: pWk, resetsAt: data.resetsAtWeekly))
-        }
-
-        guard let first = items.first else { return (nil, []) }
-        return (first, Array(items.dropFirst()))
-    }
-
-    private var accountSwitcher: some View {
-        HStack(spacing: 8) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    selectedIndex = (selectedIndex - 1 + accounts.count) % accounts.count
-                }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.caption2.weight(.bold))
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-
-            Text("\(min(selectedIndex + 1, accounts.count)) of \(accounts.count)")
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
-
-            Spacer()
-
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    selectedIndex = (selectedIndex + 1) % accounts.count
-                }
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.bold))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 4)
-    }
-
     private func primaryDial(title: String, percent: Double, resetsAt: Int?) -> some View {
-        let displayVal = UsageFormatting.displayPercent(forUsedPercent: percent, metric: metric)
-        let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
+        let (displayVal, color) = displayPercentAndColor(forUsedPercent: percent, metric: metric)
 
         return VStack(spacing: 4) {
             ZStack {
@@ -1082,8 +781,7 @@ private func extractRings(
 ) -> [RingData] {
     var rings: [RingData] = []
     if visibleMetrics.contains(.fiveHour), let p5h = data.usedPercent5h {
-        let displayVal = UsageFormatting.displayPercent(forUsedPercent: p5h, metric: metric)
-        let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
+        let (displayVal, color) = displayPercentAndColor(forUsedPercent: p5h, metric: metric)
         rings.append(RingData(
             id: .fiveHour,
             kind: .fiveHour,
@@ -1095,8 +793,7 @@ private func extractRings(
         ))
     }
     if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeekly {
-        let displayVal = UsageFormatting.displayPercent(forUsedPercent: pWk, metric: metric)
-        let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
+        let (displayVal, color) = displayPercentAndColor(forUsedPercent: pWk, metric: metric)
         rings.append(RingData(
             id: .weekly,
             kind: .weekly,
@@ -1148,24 +845,12 @@ private struct SingleAccountConcentricCard: View {
                 Text(account.displayName)
                     .font(.caption.weight(.bold))
 
-                if !account.label.isEmpty && account.label != "Default" {
-                    Text(account.label)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-                }
+                widgetAccountLabelBadge(account.label)
 
                 Spacer()
 
                 if account.state != .fresh {
-                    Text(account.state.displayName)
-                        .font(.system(size: 8, weight: .semibold))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(account.state.color.opacity(0.15), in: Capsule())
-                        .foregroundStyle(account.state.color)
+                    CapsuleBadge(text: account.state.displayName, color: account.state.color, font: .system(size: 8, weight: .semibold), hPadding: 5, vPadding: 1)
                 } else {
                     routePill(for: account)
                 }
@@ -1183,16 +868,7 @@ private struct SingleAccountConcentricCard: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 case .error:
-                    HStack(spacing: 4) {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.red)
-                            .font(.caption)
-                        Text(account.displayLastError ?? "Polling error")
-                            .font(.caption)
-                            .foregroundStyle(.primary)
-                    }
-                    .padding(8)
-                    .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                    widgetErrorBanner(message: account.displayLastError ?? "Polling error")
                 case .restored, .stale, .fresh:
                     if let data = account.data {
                         let rings = extractRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
@@ -1219,7 +895,7 @@ private struct SingleAccountConcentricCard: View {
                                 .accessibilityElement(children: .combine)
                                 .accessibilityLabel("\(account.displayName) concentric usage gauge")
 
-                                concentricLegend(title: nil, rings: rings)
+                                concentricLegend(rings: rings)
                             }
                             .opacity(account.state == .stale ? 0.75 : 1.0)
                         }
@@ -1235,42 +911,35 @@ private struct SingleAccountConcentricCard: View {
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private func concentricLegend(title: String?, rings: [RingData]) -> some View {
-        VStack(spacing: title != nil ? 3 : 0) {
-            if let title {
-                Text(title)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                .lineLimit(1)
-            }
-
-            HStack(spacing: title != nil ? 4 : 12) {
+    private func concentricLegend(rings: [RingData]) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
                 ForEach(rings) { ring in
                     VStack(spacing: 2) {
                         HStack(spacing: 4) {
                             Circle()
                                 .fill(ring.color)
-                                .frame(width: title != nil ? 5 : 6, height: title != nil ? 5 : 6)
+                                .frame(width: 6, height: 6)
                             Text(ring.label)
-                                .font(.system(size: title != nil ? 8.5 : 9, weight: .semibold))
+                                .font(.system(size: 9, weight: .semibold))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
                         }
 
                         Text("\(Int(ring.percent))%")
-                            .font(.system(size: title != nil ? 10 : 11, weight: .bold, design: .monospaced))
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
                             .foregroundStyle(.primary)
 
                         Text(ring.positionName)
-                            .font(.system(size: title != nil ? 7.5 : 8))
+                            .font(.system(size: 8))
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
 
                         if let resetsAt = ring.resetsAt {
                             Text(UsageFormatting.formatCountdown(resetsAt))
-                                .font(.system(size: title != nil ? 6.5 : 7, design: .monospaced))
+                                .font(.system(size: 7, design: .monospaced))
                                 .foregroundStyle(.tertiary)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
@@ -1280,7 +949,7 @@ private struct SingleAccountConcentricCard: View {
                 }
             }
         }
-        .padding(title != nil ? 6 : 8)
+        .padding(8)
         .frame(maxWidth: .infinity)
         .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
     }
@@ -1337,14 +1006,7 @@ private struct MultiAccountConcentricCell: View {
                 }
             }
 
-            if !account.label.isEmpty && account.label != "Default" {
-                Text(account.label)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-            }
+            widgetAccountLabelBadge(account.label)
 
             switch account.state {
             case .unknown:
@@ -1358,47 +1020,39 @@ private struct MultiAccountConcentricCell: View {
                     .font(.caption)
                     .frame(height: 58)
             case .restored, .stale, .fresh:
-                if let data = account.data {
-                    let rings = extractRings(from: data, visibleMetrics: visibleMetrics, metric: metric)
-
-                    if rings.isEmpty {
-                        Text("No data")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                            .frame(height: 58)
-                    } else {
-                        ZStack {
-                            ConcentricRingsGauge(
-                                rings: rings,
-                                baseSize: 58,
-                                ringWidth: 4,
-                                ringSpacing: 2.5
-                            )
-
-                            if let top = rings.first {
-                                Text("\(Int(top.percent))%")
-                                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                                    .foregroundStyle(.primary)
-                            }
-                        }
-                        .opacity(account.state == .stale ? 0.75 : 1.0)
-                        .accessibilityElement(children: .combine)
-                        .accessibilityLabel("\(account.displayName) concentric usage gauge")
-
-                        // Missing metrics differ per account, so label each card's actual rings.
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(rings) { ring in
-                                Text("\(ring.label) (\(ring.positionName.lowercased()))")
-                                    .font(.system(size: 8, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                } else {
+                let rings = account.data.map { extractRings(from: $0, visibleMetrics: visibleMetrics, metric: metric) } ?? []
+                if rings.isEmpty {
                     Text("No data")
                         .font(.system(size: 9))
                         .foregroundStyle(.secondary)
                         .frame(height: 58)
+                } else {
+                    ZStack {
+                        ConcentricRingsGauge(
+                            rings: rings,
+                            baseSize: 58,
+                            ringWidth: 4,
+                            ringSpacing: 2.5
+                        )
+
+                        if let top = rings.first {
+                            Text("\(Int(top.percent))%")
+                                .font(.system(size: 9, weight: .bold, design: .rounded))
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                    .opacity(account.state == .stale ? 0.75 : 1.0)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(account.displayName) concentric usage gauge")
+
+                    // Missing metrics differ per account, so label each card's actual rings.
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(rings) { ring in
+                            Text("\(ring.label) (\(ring.positionName.lowercased()))")
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
         }
@@ -1440,38 +1094,7 @@ private struct SingleAgentFocusWidgetView: View {
                 }
 
                 // Account Identity
-                HStack(spacing: 8) {
-                    Image(systemName: account.symbolName)
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(.primary)
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        HStack(spacing: 5) {
-                            Text(account.displayName)
-                                .font(.headline.weight(.bold))
-                            if !account.label.isEmpty && account.label != "Default" {
-                                Text(account.label)
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 1)
-                                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-                            }
-                        }
-
-                        freshnessBadge(for: account)
-
-                        if let asOf = account.asOf {
-                            Text(UsageFormatting.syncAge(asOf))
-                                .font(.system(size: 9))
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
-
-                    Spacer()
-
-                    routePill(for: account)
-                }
+                FocusAccountHeader(account: account, iconFont: .title2.weight(.bold), nameFont: .headline.weight(.bold))
 
                 if visibleMetrics.isDisjoint(with: WidgetMetricKind.offerable) {
                     Text("No metrics selected")
@@ -1485,17 +1108,7 @@ private struct SingleAgentFocusWidgetView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     case .error:
-                        HStack(spacing: 4) {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .foregroundStyle(.red)
-                                .font(.caption)
-                            Text(account.displayLastError ?? "Polling error")
-                                .font(.caption)
-                                .foregroundStyle(.primary)
-                        }
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                        widgetErrorBanner(message: account.displayLastError ?? "Polling error", expandWidth: true)
                     case .restored, .stale, .fresh:
                         if let data = account.data {
                             let (dominantMetric, secondaryMetrics) = pickDominantAndSecondary(data: data)
@@ -1525,26 +1138,19 @@ private struct SingleAgentFocusWidgetView: View {
         }
     }
 
-    private struct MetricCandidate {
-        let kind: WidgetMetricKind
-        let title: String
-        let percent: Double
-        let resetsAt: Int?
-    }
-
-    private func pickDominantAndSecondary(data: ProviderData) -> (dominant: MetricCandidate?, secondary: [MetricCandidate]) {
-        var candidates: [MetricCandidate] = []
+    private func pickDominantAndSecondary(data: ProviderData) -> (dominant: WidgetMetricItem?, secondary: [WidgetMetricItem]) {
+        var candidates: [WidgetMetricItem] = []
         if visibleMetrics.contains(.fiveHour), let p5h = data.usedPercent5h {
-            candidates.append(MetricCandidate(kind: .fiveHour, title: "5-Hour Window", percent: p5h, resetsAt: data.resetsAt5h))
+            candidates.append(WidgetMetricItem(kind: .fiveHour, title: "5-Hour Window", percent: p5h, resetsAt: data.resetsAt5h))
         }
         if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeekly {
-            candidates.append(MetricCandidate(kind: .weekly, title: "Weekly Window", percent: pWk, resetsAt: data.resetsAtWeekly))
+            candidates.append(WidgetMetricItem(kind: .weekly, title: "Weekly Window", percent: pWk, resetsAt: data.resetsAtWeekly))
         }
 
         guard !candidates.isEmpty else { return (nil, []) }
 
         // Pick 5h if visible and has data, otherwise pick highest visible metric
-        let dominant: MetricCandidate
+        let dominant: WidgetMetricItem
         if let fiveHour = candidates.first(where: { $0.kind == .fiveHour }) {
             dominant = fiveHour
         } else {
@@ -1555,9 +1161,8 @@ private struct SingleAgentFocusWidgetView: View {
         return (dominant, secondary)
     }
 
-    private func dominantFocusCard(dominant: MetricCandidate) -> some View {
-        let displayVal = UsageFormatting.displayPercent(forUsedPercent: dominant.percent, metric: metric)
-        let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
+    private func dominantFocusCard(dominant: WidgetMetricItem) -> some View {
+        let (displayVal, color) = displayPercentAndColor(forUsedPercent: dominant.percent, metric: metric)
 
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 4) {
@@ -1616,87 +1221,18 @@ private struct SingleAgentFocusWidgetView: View {
         .accessibilityLabel("\(dominant.title): \(Int(displayVal)) percent")
     }
 
-    private func secondaryMetricsList(metrics: [MetricCandidate]) -> some View {
+    private func secondaryMetricsList(metrics: [WidgetMetricItem]) -> some View {
         VStack(spacing: 5) {
             ForEach(metrics, id: \.kind) { item in
-                let displayVal = UsageFormatting.displayPercent(forUsedPercent: item.percent, metric: metric)
-                let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
-
-                HStack(spacing: 6) {
-                    Text(item.title.replacingOccurrences(of: " Window", with: ""))
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 48, alignment: .leading)
-
-                    LinearProgressBar(percent: displayVal, color: color, height: 3.5)
-
-                    Text("\(Int(displayVal))%")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.primary)
-                        .frame(width: 30, alignment: .trailing)
-
-                    if let resetsAt = item.resetsAt {
-                        Text(UsageFormatting.formatCountdown(resetsAt))
-                            .font(.system(size: 8, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                            .frame(width: 36, alignment: .trailing)
-                    }
-                }
+                WidgetSecondaryMetricRow(
+                    label: item.title.replacingOccurrences(of: " Window", with: ""),
+                    percent: item.percent,
+                    resetsAt: item.resetsAt,
+                    metric: metric,
+                    barHeight: 3.5
+                )
             }
         }
         .padding(.top, 2)
-    }
-}
-
-// MARK: - Reusable Visual Components
-
-/// A circular progress ring rendered using SwiftUI `Circle().trim`.
-private struct CircularRingProgress: View {
-    let percent: Double
-    let color: Color
-    var lineWidth: CGFloat = 5
-    var size: CGFloat = 46
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(color.opacity(0.16), lineWidth: lineWidth)
-
-            Circle()
-                .trim(from: 0, to: CGFloat(min(max(percent / 100.0, 0), 1)))
-                .stroke(
-                    color,
-                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                )
-                .rotationEffect(.degrees(-90))
-                .animation(.easeInOut(duration: 0.35), value: percent)
-        }
-        .frame(width: size, height: size)
-    }
-}
-
-/// A compact linear progress bar with rounded ends and animated fill.
-private struct LinearProgressBar: View {
-    let percent: Double
-    let color: Color
-    var height: CGFloat = 5
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.primary.opacity(0.08))
-                    .frame(height: height)
-
-                Capsule()
-                    .fill(color)
-                    .frame(
-                        width: max(0, min(geo.size.width, geo.size.width * CGFloat(min(max(percent, 0), 100) / 100.0))),
-                        height: height
-                    )
-                    .animation(.easeInOut(duration: 0.3), value: percent)
-            }
-        }
-        .frame(height: height)
     }
 }

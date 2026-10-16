@@ -312,17 +312,17 @@ private struct AccountCard: View {
         }
     }
 
-    private var restoredStateBody: some View {
+    private func quotaRowsBody(emptyText: String, isMuted: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if let data = account.data {
-                windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
-                windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
+                windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h, isMuted: isMuted)
+                windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly, isMuted: isMuted)
                 if account.provider == .antigravity && showAntigravityModelBreakdown {
-                    windowRow(label: "5h (C/G)", percent: data.usedPercent5hThirdParty, resetsAt: data.resetsAt5hThirdParty)
-                    windowRow(label: "Weekly (C/G)", percent: data.usedPercentWeeklyThirdParty, resetsAt: data.resetsAtWeeklyThirdParty)
+                    windowRow(label: "5h (C/G)", percent: data.usedPercent5hThirdParty, resetsAt: data.resetsAt5hThirdParty, isMuted: isMuted)
+                    windowRow(label: "Weekly (C/G)", percent: data.usedPercentWeeklyThirdParty, resetsAt: data.resetsAtWeeklyThirdParty, isMuted: isMuted)
                 }
             } else {
-                Text("No data restored")
+                Text(emptyText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -330,56 +330,23 @@ private struct AccountCard: View {
                 errorLine(error)
             }
         }
+    }
+
+    private var restoredStateBody: some View {
+        quotaRowsBody(emptyText: "No data restored")
     }
 
     private var staleStateBody: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let data = account.data {
-                windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h, isMuted: true)
-                windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly, isMuted: true)
-                if account.provider == .antigravity && showAntigravityModelBreakdown {
-                    windowRow(label: "5h (C/G)", percent: data.usedPercent5hThirdParty, resetsAt: data.resetsAt5hThirdParty, isMuted: true)
-                    windowRow(label: "Weekly (C/G)", percent: data.usedPercentWeeklyThirdParty, resetsAt: data.resetsAtWeeklyThirdParty, isMuted: true)
-                }
-            } else {
-                Text("Data is stale")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let error = account.displayLastError {
-                errorLine(error)
-            }
-        }
-        .opacity(0.85)
+        quotaRowsBody(emptyText: "Data is stale", isMuted: true)
+            .opacity(0.85)
     }
 
     private var freshStateBody: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let data = account.data {
-                windowRow(label: "5h", percent: data.usedPercent5h, resetsAt: data.resetsAt5h)
-                windowRow(label: "Weekly", percent: data.usedPercentWeekly, resetsAt: data.resetsAtWeekly)
-                if account.provider == .antigravity && showAntigravityModelBreakdown {
-                    windowRow(label: "5h (C/G)", percent: data.usedPercent5hThirdParty, resetsAt: data.resetsAt5hThirdParty)
-                    windowRow(label: "Weekly (C/G)", percent: data.usedPercentWeeklyThirdParty, resetsAt: data.resetsAtWeeklyThirdParty)
-                }
-            } else {
-                Text("No data yet")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let error = account.displayLastError {
-                errorLine(error)
-            }
-        }
+        quotaRowsBody(emptyText: "No data yet")
     }
 
     private func badge(text: String, color: Color) -> some View {
-        Text(text)
-            .font(.caption2.weight(.medium))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.15), in: Capsule())
-            .foregroundStyle(color)
+        CapsuleBadge(text: text, color: color)
     }
 
     private func errorLine(_ message: String) -> some View {
