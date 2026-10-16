@@ -801,22 +801,16 @@ private struct AddAccountSheet: View {
                 label: trimmedLabel,
                 credentialLocation: CredentialLocation(kind: "config_dir", configDir: expanded)
             )
-        } else if antigravityManualEntry {
-            req = CreateAccountRequest(
-                provider: .antigravity,
-                label: trimmedLabel,
-                credentialLocation: CredentialLocation(kind: "daemon_token"),
-                oauthBootstrap: OAuthBootstrap(
-                    refreshToken: antigravityRefreshToken.trimmingCharacters(in: .whitespacesAndNewlines),
-                    email: antigravityEmail.trimmingCharacters(in: .whitespacesAndNewlines)
-                )
-            )
         } else {
             req = CreateAccountRequest(
                 provider: .antigravity,
                 label: trimmedLabel,
                 credentialLocation: CredentialLocation(kind: "daemon_token"),
-                autoDetect: true
+                oauthBootstrap: antigravityManualEntry ? OAuthBootstrap(
+                    refreshToken: antigravityRefreshToken.trimmingCharacters(in: .whitespacesAndNewlines),
+                    email: antigravityEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+                ) : nil,
+                autoDetect: antigravityManualEntry ? nil : true
             )
         }
 

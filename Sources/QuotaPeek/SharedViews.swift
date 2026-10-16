@@ -86,6 +86,15 @@ struct WidgetAccount: Identifiable, Equatable {
     let data: ProviderData?
 }
 
+extension WidgetAccount {
+    /// Copies label, state, error, sync time and route from `account`.
+    init(_ account: Account, id: String, displayName: String, symbolName: String, isCodex: Bool, data: ProviderData?) {
+        self.init(id: id, displayName: displayName, symbolName: symbolName, label: account.label, state: account.state,
+                  displayLastError: account.displayLastError, asOf: account.asOf, activeRoute: account.activeRoute,
+                  isCodex: isCodex, data: data)
+    }
+}
+
 @ViewBuilder
 func widgetAccountLabelBadge(_ label: String) -> some View {
     if !label.isEmpty && label != "Default" {
@@ -351,3 +360,79 @@ extension DaemonConfig {
     }
 }
 
+
+func noMetricsPlaceholder(font: Font, vPadding: CGFloat) -> some View {
+    noRecentDataPlaceholder(font: font, text: "No metrics selected")
+        .padding(.vertical, vPadding)
+}
+
+func noRecentDataPlaceholder(font: Font, text: LocalizedStringKey = "No recent data") -> some View {
+    Text(text)
+        .font(font)
+        .foregroundStyle(.secondary)
+}
+
+/// Paginated per-agent widgets: resolves the selected account and its visible metrics.
+protocol PagedWidgetView: View {
+    var accounts: [WidgetAccount] { get }
+    var selectedIndex: Int { get }
+    var configuration: WidgetConfiguration { get }
+}
+
+extension PagedWidgetView {
+    var activeAccount: WidgetAccount? {
+        guard !accounts.isEmpty else { return nil }
+        let clamped = min(max(selectedIndex, 0), accounts.count - 1)
+        return accounts[clamped]
+    }
+
+    var visibleMetrics: Set<WidgetMetricKind> {
+        guard let account = activeAccount else { return [] }
+        return configuration.visibleMetrics(forAccountId: account.id)
+    }
+}
+
+/// Compact icon + name + label row shared by the combined, per-agent circular and concentric cards.
+struct CompactIdentityRow<Trailing: View>: View {
+    let account: WidgetAccount
+    var spacing: CGFloat = 6
+    var nameFont: Font = .caption.weight(.bold)
+    @ViewBuilder let trailing: Trailing
+
+    var body: some View {
+        HStack(spacing: spacing) {
+            Image(systemName: account.symbolName)
+                .font(.caption.weight(.bold))
+            Text(account.displayName)
+                .font(nameFont)
+
+            widgetAccountLabelBadge(account.label)
+
+            Spacer()
+
+            trailing
+        }
+    }
+}
+
+/// Account switcher plus the active account's card, shared by the paginated per-agent widgets.
+struct PagedAccountCard<Content: View>: View {
+    let accounts: [WidgetAccount]
+    @Binding var selectedIndex: Int
+    let activeAccount: WidgetAccount?
+    @ViewBuilder let content: (WidgetAccount) -> Content
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if accounts.count > 1 {
+                WidgetAccountSwitcher(count: accounts.count, selectedIndex: $selectedIndex)
+            }
+
+            if let account = activeAccount {
+                content(account)
+                    .padding(10)
+                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+    }
+}
