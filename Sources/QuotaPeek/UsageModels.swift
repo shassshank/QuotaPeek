@@ -65,8 +65,7 @@ struct CredentialLocation: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.kind = try container.decode(String.self, forKey: .kind)
-        self.configDir = (try? container.decodeIfPresent(String.self, forKey: .configDir))
-            ?? (try? container.decodeIfPresent(String.self, forKey: .configDirSnake))
+        self.configDir = container.firstPresent(String.self, .configDir, .configDirSnake)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -93,8 +92,7 @@ struct OAuthBootstrap: Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.refreshToken = (try? container.decode(String.self, forKey: .refreshToken))
-            ?? (try? container.decode(String.self, forKey: .refreshTokenSnake))
+        self.refreshToken = container.firstDecoded(String.self, .refreshToken, .refreshTokenSnake)
             ?? ""
         self.email = (try? container.decode(String.self, forKey: .email)) ?? ""
     }
@@ -147,8 +145,7 @@ struct CreateAccountRequest: Codable {
         self.label = try container.decode(String.self, forKey: .label)
         self.credentialLocation = try (container.decodeIfPresent(CredentialLocation.self, forKey: .credentialLocation)
             ?? container.decode(CredentialLocation.self, forKey: .credentialLocationSnake))
-        self.oauthBootstrap = (try? container.decodeIfPresent(OAuthBootstrap.self, forKey: .oauthBootstrap))
-            ?? (try? container.decodeIfPresent(OAuthBootstrap.self, forKey: .oauthBootstrapSnake))
+        self.oauthBootstrap = container.firstPresent(OAuthBootstrap.self, .oauthBootstrap, .oauthBootstrapSnake)
         self.autoDetect = try container.decodeIfPresent(Bool.self, forKey: .autoDetect)
     }
 
@@ -319,20 +316,15 @@ struct Account: Codable, Identifiable, Equatable {
 
         self.label = (try? container.decode(String.self, forKey: .label)) ?? "Default"
 
-        self.credentialLocation = (try? container.decodeIfPresent(CredentialLocation.self, forKey: .credentialLocation))
-            ?? (try? container.decodeIfPresent(CredentialLocation.self, forKey: .credentialLocationSnake))
+        self.credentialLocation = container.firstPresent(CredentialLocation.self, .credentialLocation, .credentialLocationSnake)
 
-        self.credentialSource = (try? container.decodeIfPresent(String.self, forKey: .credentialSource))
-            ?? (try? container.decodeIfPresent(String.self, forKey: .credentialSourceSnake))
+        self.credentialSource = container.firstPresent(String.self, .credentialSource, .credentialSourceSnake)
 
-        self.effectiveAccount = (try? container.decodeIfPresent(String.self, forKey: .effectiveAccount))
-            ?? (try? container.decodeIfPresent(String.self, forKey: .effectiveAccountSnake))
+        self.effectiveAccount = container.firstPresent(String.self, .effectiveAccount, .effectiveAccountSnake)
 
-        self.lastSuccessAt = (try? container.decodeIfPresent(Int64.self, forKey: .lastSuccessAt))
-            ?? (try? container.decodeIfPresent(Int64.self, forKey: .lastSuccessAtSnake))
+        self.lastSuccessAt = container.firstPresent(Int64.self, .lastSuccessAt, .lastSuccessAtSnake)
 
-        self.lastFailureAt = (try? container.decodeIfPresent(Int64.self, forKey: .lastFailureAt))
-            ?? (try? container.decodeIfPresent(Int64.self, forKey: .lastFailureAtSnake))
+        self.lastFailureAt = container.firstPresent(Int64.self, .lastFailureAt, .lastFailureAtSnake)
 
         // Decode last_error: can be a String or a ProviderError object
         if let errObj = try? container.decodeIfPresent(ProviderError.self, forKey: .lastErrorSnake) {
@@ -352,12 +344,10 @@ struct Account: Codable, Identifiable, Equatable {
             self.lastErrorObject = nil
         }
 
-        self.routesEnabled = (try? container.decode([Route].self, forKey: .routesEnabled))
-            ?? (try? container.decode([Route].self, forKey: .routesEnabledCamel))
+        self.routesEnabled = container.firstDecoded([Route].self, .routesEnabled, .routesEnabledCamel)
             ?? []
 
-        self.activeRoute = (try? container.decode(Route.self, forKey: .activeRoute))
-            ?? (try? container.decode(Route.self, forKey: .activeRouteCamel))
+        self.activeRoute = container.firstDecoded(Route.self, .activeRoute, .activeRouteCamel)
             ?? .none
 
         self.data = try? container.decodeIfPresent(ProviderData.self, forKey: .data)
@@ -374,8 +364,7 @@ struct Account: Codable, Identifiable, Equatable {
             self.asOf = nil
         }
 
-        self.restoredFromDisk = (try? container.decodeIfPresent(Bool.self, forKey: .restoredFromDisk))
-            ?? (try? container.decodeIfPresent(Bool.self, forKey: .restoredFromDiskSnake))
+        self.restoredFromDisk = container.firstPresent(Bool.self, .restoredFromDisk, .restoredFromDiskSnake)
             ?? false
 
         if let st = try? container.decodeIfPresent(AccountTrustState.self, forKey: .state) {
@@ -422,13 +411,7 @@ struct StatusResponse: Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        if let accs = try? container.decode([Account].self, forKey: .accounts) {
-            self.accounts = accs
-        } else if let provs = try? container.decode([Account].self, forKey: .providers) {
-            self.accounts = provs
-        } else {
-            self.accounts = []
-        }
+        self.accounts = container.firstDecoded([Account].self, .accounts, .providers) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -451,11 +434,6 @@ struct AccountsResponse: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.accounts = (try? container.decode([Account].self, forKey: .accounts)) ?? []
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(accounts, forKey: .accounts)
     }
 }
 
@@ -481,14 +459,11 @@ struct ProviderConfig: Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.routesEnabled = (try? container.decode([Route].self, forKey: .routesEnabled))
-            ?? (try? container.decode([Route].self, forKey: .routesEnabledCamel))
+        self.routesEnabled = container.firstDecoded([Route].self, .routesEnabled, .routesEnabledCamel)
             ?? []
-        self.keychainPollIntervalSec = (try? container.decode(Int.self, forKey: .keychainPollIntervalSec))
-            ?? (try? container.decode(Int.self, forKey: .keychainPollIntervalSecCamel))
+        self.keychainPollIntervalSec = container.firstDecoded(Int.self, .keychainPollIntervalSec, .keychainPollIntervalSecCamel)
             ?? 60
-        self.notifyThresholdPercent = (try? container.decodeIfPresent(Int.self, forKey: .notifyThresholdPercent))
-            ?? (try? container.decodeIfPresent(Int.self, forKey: .notifyThresholdPercentCamel))
+        self.notifyThresholdPercent = container.firstPresent(Int.self, .notifyThresholdPercent, .notifyThresholdPercentCamel)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -542,17 +517,13 @@ struct DaemonConfig: Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.claudePollingMode = (try? container.decodeIfPresent(String.self, forKey: .claudePollingMode))
-            ?? (try? container.decodeIfPresent(String.self, forKey: .claudePollingModeCamel))
+        self.claudePollingMode = container.firstPresent(String.self, .claudePollingMode, .claudePollingModeCamel)
         self.claude = try? container.decodeIfPresent(ProviderConfig.self, forKey: .claude)
         self.codex = try? container.decodeIfPresent(ProviderConfig.self, forKey: .codex)
         self.antigravity = try? container.decodeIfPresent(ProviderConfig.self, forKey: .antigravity)
-        self.staleAfterSeconds = (try? container.decodeIfPresent(Int.self, forKey: .staleAfterSecondsSnake))
-            ?? (try? container.decodeIfPresent(Int.self, forKey: .staleAfterSecondsCamel))
-        self.collectionPaused = (try? container.decodeIfPresent(Bool.self, forKey: .collectionPausedSnake))
-            ?? (try? container.decodeIfPresent(Bool.self, forKey: .collectionPausedCamel))
-        self.statuslineShowOtherAgents = (try? container.decodeIfPresent(Bool.self, forKey: .statuslineShowOtherAgentsSnake))
-            ?? (try? container.decodeIfPresent(Bool.self, forKey: .statuslineShowOtherAgentsCamel))
+        self.staleAfterSeconds = container.firstPresent(Int.self, .staleAfterSecondsSnake, .staleAfterSecondsCamel)
+        self.collectionPaused = container.firstPresent(Bool.self, .collectionPausedSnake, .collectionPausedCamel)
+        self.statuslineShowOtherAgents = container.firstPresent(Bool.self, .statuslineShowOtherAgentsSnake, .statuslineShowOtherAgentsCamel)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -667,31 +638,17 @@ struct HistoryPoint: Codable, Identifiable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
-        if let atVal = try? container.decode(Int64.self, forKey: .at) {
-            self.at = atVal
-        } else if let atVal = try? container.decode(Int64.self, forKey: .timestamp) {
-            self.at = atVal
-        } else if let atVal = try? container.decode(Int64.self, forKey: .time) {
-            self.at = atVal
+        if let at = container.firstDecoded(Int64.self, .at, .timestamp, .time) {
+            self.at = at
         } else if let atDouble = try? container.decode(Double.self, forKey: .at) {
             self.at = Int64(atDouble)
         } else {
             self.at = 0
         }
 
-        if let val = try? container.decode(Double.self, forKey: .usedPercentCamel) {
-            self.usedPercent = val
-        } else if let val = try? container.decode(Double.self, forKey: .usedPercentSnake) {
-            self.usedPercent = val
-        } else if let val = try? container.decode(Double.self, forKey: .usedPercentage) {
-            self.usedPercent = val
-        } else if let val = try? container.decode(Double.self, forKey: .usage) {
-            self.usedPercent = val
-        } else if let val = try? container.decode(Double.self, forKey: .percent) {
-            self.usedPercent = val
-        } else {
-            self.usedPercent = 0.0
-        }
+        self.usedPercent = container.firstDecoded(Double.self, .usedPercentCamel, .usedPercentSnake,
+                                                   .usedPercentage, .usage, .percent)
+            ?? 0.0
     }
 
     func encode(to encoder: Encoder) throws {
@@ -716,14 +673,27 @@ struct HistoryResponse: Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.points = (try? container.decode([HistoryPoint].self, forKey: .points))
-            ?? (try? container.decode([HistoryPoint].self, forKey: .data))
-            ?? (try? container.decode([HistoryPoint].self, forKey: .history))
+        self.points = container.firstDecoded([HistoryPoint].self, .points, .data, .history)
             ?? []
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(points, forKey: .points)
+    }
+}
+
+private extension KeyedDecodingContainer {
+    // Preserve alias priority and swallow each key's decoding error independently.
+    func firstPresent<T: Decodable>(_ type: T.Type, _ first: Key, _ second: Key) -> T? {
+        (try? decodeIfPresent(type, forKey: first))
+            ?? (try? decodeIfPresent(type, forKey: second))
+    }
+
+    func firstDecoded<T: Decodable>(_ type: T.Type, _ keys: Key...) -> T? {
+        for key in keys {
+            if let value = try? decode(type, forKey: key) { return value }
+        }
+        return nil
     }
 }

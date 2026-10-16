@@ -164,84 +164,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let targetState: StatusItemRenderState
 
-        if isWarning {
-            let label = "QuotaPeek: Service warning"
-            let value = "Service unreachable or provider error"
-
+        func renderState(icon: StatusItemRenderState.ImageKind, label: String, value: String) -> StatusItemRenderState {
+            let imageKind: StatusItemRenderState.ImageKind
             switch mode {
             case .iconOnly:
-                targetState = StatusItemRenderState(
-                    imageKind: .warning,
-                    title: "",
-                    imagePosition: .imageLeft,
-                    accessibilityLabel: label,
-                    accessibilityValue: value
-                )
+                imageKind = icon
             case .coloredDots:
                 let dotColors = enabledAccounts.isEmpty
                     ? [.gray]
                     : enabledAccounts.map { displayPrefs.dotColor(for: $0, isDaemonReachable: store.isDaemonReachable) }
-                targetState = StatusItemRenderState(
-                    imageKind: .dots(dotColors),
-                    title: "",
-                    imagePosition: .imageLeft,
-                    accessibilityLabel: label,
-                    accessibilityValue: value
-                )
+                imageKind = .dots(dotColors)
             }
+            return StatusItemRenderState(
+                imageKind: imageKind,
+                title: "",
+                imagePosition: .imageLeft,
+                accessibilityLabel: label,
+                accessibilityValue: value
+            )
+        }
+
+        if isWarning {
+            targetState = renderState(icon: .warning, label: "QuotaPeek: Service warning",
+                                      value: "Service unreachable or provider error")
         } else if let maxUsage = store.highestUsagePercent {
             let displayVal = displayPrefs.displayPercent(forUsedPercent: maxUsage)
             let accessibilityDesc = "QuotaPeek: \(Int(displayVal))% \(metric.displayName.lowercased())"
-            let label = "QuotaPeek"
-            let value = accessibilityDesc
-
-            switch mode {
-            case .iconOnly:
-                targetState = StatusItemRenderState(
-                    imageKind: .gauge(accessibilityDesc: accessibilityDesc),
-                    title: "",
-                    imagePosition: .imageLeft,
-                    accessibilityLabel: label,
-                    accessibilityValue: value
-                )
-            case .coloredDots:
-                let dotColors = enabledAccounts.isEmpty
-                    ? [.gray]
-                    : enabledAccounts.map { displayPrefs.dotColor(for: $0, isDaemonReachable: store.isDaemonReachable) }
-                targetState = StatusItemRenderState(
-                    imageKind: .dots(dotColors),
-                    title: "",
-                    imagePosition: .imageLeft,
-                    accessibilityLabel: label,
-                    accessibilityValue: value
-                )
-            }
+            targetState = renderState(icon: .gauge(accessibilityDesc: accessibilityDesc),
+                                      label: "QuotaPeek", value: accessibilityDesc)
         } else {
             let accessibilityDesc = "QuotaPeek: No recent data"
-            let label = "QuotaPeek"
-            let value = accessibilityDesc
-
-            switch mode {
-            case .iconOnly:
-                targetState = StatusItemRenderState(
-                    imageKind: .noData(accessibilityDesc: accessibilityDesc),
-                    title: "",
-                    imagePosition: .imageLeft,
-                    accessibilityLabel: label,
-                    accessibilityValue: value
-                )
-            case .coloredDots:
-                let dotColors = enabledAccounts.isEmpty
-                    ? [.gray]
-                    : enabledAccounts.map { displayPrefs.dotColor(for: $0, isDaemonReachable: store.isDaemonReachable) }
-                targetState = StatusItemRenderState(
-                    imageKind: .dots(dotColors),
-                    title: "",
-                    imagePosition: .imageLeft,
-                    accessibilityLabel: label,
-                    accessibilityValue: value
-                )
-            }
+            targetState = renderState(icon: .noData(accessibilityDesc: accessibilityDesc),
+                                      label: "QuotaPeek", value: accessibilityDesc)
         }
 
         if targetState == lastRenderState {
