@@ -326,18 +326,8 @@ private struct AccountsSettingsTab: View {
             .font(.caption2.weight(.medium))
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
-            .background(stateColor(state).opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-            .foregroundStyle(stateColor(state))
-    }
-
-    private func stateColor(_ state: AccountTrustState) -> Color {
-        switch state {
-        case .fresh: return .green
-        case .stale: return .orange
-        case .restored: return .purple
-        case .error: return .red
-        case .unknown: return .gray
-        }
+            .background(state.color.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+            .foregroundStyle(state.color)
     }
 
     private func accountHeader(_ account: Account) -> some View {
@@ -1370,8 +1360,8 @@ private struct ProviderHealthTab: View {
                     .font(.caption2.weight(.medium))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(healthStateColor(account.state).opacity(0.15), in: Capsule())
-                    .foregroundStyle(healthStateColor(account.state))
+                    .background(account.state.color.opacity(0.15), in: Capsule())
+                    .foregroundStyle(account.state.color)
             }
 
             Divider()
@@ -1449,16 +1439,6 @@ private struct ProviderHealthTab: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    private func healthStateColor(_ state: AccountTrustState) -> Color {
-        switch state {
-        case .fresh: return .green
-        case .stale: return .orange
-        case .restored: return .purple
-        case .error: return .red
-        case .unknown: return .gray
-        }
     }
 
     private func healthRow(title: String, value: String, icon: String, tint: Color = .primary) -> some View {

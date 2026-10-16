@@ -232,7 +232,7 @@ private struct AccountCard: View {
             Spacer()
 
             if let asOf = account.asOf {
-                Text(syncAge(asOf))
+                Text(UsageFormatting.syncAge(asOf, detailed: true))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -400,14 +400,7 @@ private struct AccountCard: View {
     @ViewBuilder
     private func windowRow(label: String, percent: Double?, resetsAt: Int?, isMuted: Bool = false) -> some View {
         if let percent {
-            let displayPercent: Double = {
-                switch metric {
-                case .used:
-                    return min(max(percent, 0), 100)
-                case .remaining:
-                    return min(max(100.0 - percent, 0), 100)
-                }
-            }()
+            let displayPercent = UsageFormatting.displayPercent(forUsedPercent: percent, metric: metric)
 
             let metricLabel = metric == .remaining ? "rem" : ""
             let percentDisplayString = metricLabel.isEmpty ? "\(Int(displayPercent))%" : "\(Int(displayPercent))% \(metricLabel)"
@@ -415,12 +408,12 @@ private struct AccountCard: View {
             let accessibilityText: String = {
                 var text = "\(provider.displayName) (\(account.label)) \(label): \(Int(displayPercent)) percent \(metric.displayName.lowercased())"
                 if let resetsAt {
-                    text += ", resets \(resetCountdown(resetsAt))"
+                    text += ", resets \(UsageFormatting.formatCountdown(resetsAt, inPrefix: true))"
                 }
                 return text
             }()
 
-            let barColor = isMuted ? colorForPercent(displayPercent, metric: metric).opacity(0.5) : colorForPercent(displayPercent, metric: metric)
+            let barColor = isMuted ? UsageFormatting.colorForPercent(displayPercent, metric: metric).opacity(0.5) : UsageFormatting.colorForPercent(displayPercent, metric: metric)
 
             HStack(spacing: 8) {
                 Text(label)
@@ -435,7 +428,7 @@ private struct AccountCard: View {
                     .frame(width: metric == .remaining ? 48 : 34, alignment: .trailing)
                     .foregroundStyle(isMuted ? Color.secondary : Color.primary)
                 if let resetsAt {
-                    Text(resetCountdown(resetsAt))
+                    Text(UsageFormatting.formatCountdown(resetsAt, inPrefix: true))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -443,54 +436,6 @@ private struct AccountCard: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityText)
         }
-    }
-
-    private func colorForPercent(_ percent: Double, metric: PercentageMetric) -> Color {
-        switch metric {
-        case .used:
-            switch percent {
-            case ..<60: return .green
-            case ..<85: return .yellow
-            default: return .red
-            }
-        case .remaining:
-            if percent > 40 {
-                return .green
-            } else if percent > 15 {
-                return .yellow
-            } else {
-                return .red
-            }
-        }
-    }
-
-    private func syncAge(_ unixSeconds: Int64) -> String {
-        let seconds = max(0, Int(Date().timeIntervalSince1970) - Int(unixSeconds))
-        if seconds < 60 {
-            return "\(seconds)s ago"
-        }
-        let minutes = seconds / 60
-        if minutes < 60 {
-            return "\(minutes)m\(seconds % 60)s ago"
-        }
-        let hours = minutes / 60
-        return "\(hours)h\(minutes % 60)m ago"
-    }
-
-    private static let countdownFormatter: DateComponentsFormatter = {
-        let f = DateComponentsFormatter()
-        f.allowedUnits = [.day, .hour, .minute]
-        f.unitsStyle = .abbreviated
-        f.maximumUnitCount = 2
-        return f
-    }()
-
-    private func resetCountdown(_ unixSeconds: Int) -> String {
-        let resetDate = Date(timeIntervalSince1970: TimeInterval(unixSeconds))
-        let interval = resetDate.timeIntervalSinceNow
-        if interval <= 0 { return "now" }
-        if interval < 60 { return "in <1m" }
-        return "in " + (Self.countdownFormatter.string(from: interval) ?? "")
     }
 }
 

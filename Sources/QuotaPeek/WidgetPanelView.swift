@@ -292,16 +292,6 @@ private func routePill(for account: WidgetAccount) -> some View {
         .foregroundStyle(color)
 }
 
-private func statusColor(for state: AccountTrustState) -> Color {
-    switch state {
-    case .fresh: return .green
-    case .stale: return .orange
-    case .restored: return .purple
-    case .error: return .red
-    case .unknown: return .gray
-    }
-}
-
 // MARK: - Style 1: Combined Linear Widget View
 
 private struct CombinedLinearWidgetView: View {
@@ -436,8 +426,8 @@ private struct CombinedLinearAccountCard: View {
         accessibilityLabelText: String? = nil
     ) -> some View {
         if let percent {
-            let displayVal = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
-            let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+            let displayVal = UsageFormatting.displayPercent(forUsedPercent: percent, metric: metric)
+            let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
             let labelSuffix = metric == .remaining ? "r" : ""
 
             HStack(spacing: 6) {
@@ -454,7 +444,7 @@ private struct CombinedLinearAccountCard: View {
                     .frame(width: 32, alignment: .trailing)
 
                 if let resetsAt {
-                    Text(WidgetMetrics.formatCountdown(resetsAt))
+                    Text(UsageFormatting.formatCountdown(resetsAt))
                         .font(.system(size: 8, design: .monospaced))
                         .foregroundStyle(.tertiary)
                         .frame(width: 38, alignment: .trailing)
@@ -511,8 +501,8 @@ private struct CombinedCircularAccountCard: View {
                         .font(.system(size: 8, weight: .semibold))
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
-                        .background(statusColor(for: account.state).opacity(0.15), in: Capsule())
-                        .foregroundStyle(statusColor(for: account.state))
+                        .background(account.state.color.opacity(0.15), in: Capsule())
+                        .foregroundStyle(account.state.color)
                 }
             }
 
@@ -570,8 +560,8 @@ private struct CombinedCircularAccountCard: View {
     }
 
     private func circularMetricItem(label: String, percent: Double, resetsAt: Int?) -> some View {
-        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
-        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+        let displayVal = UsageFormatting.displayPercent(forUsedPercent: percent, metric: metric)
+        let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
 
         return VStack(spacing: 3) {
             ZStack {
@@ -589,7 +579,7 @@ private struct CombinedCircularAccountCard: View {
                 .foregroundStyle(.secondary)
 
             if let resetsAt {
-                Text(WidgetMetrics.formatCountdown(resetsAt))
+                Text(UsageFormatting.formatCountdown(resetsAt))
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(.tertiary)
             }
@@ -662,7 +652,7 @@ private struct PerAgentLinearWidgetView: View {
                             freshnessBadge(for: account)
 
                             if let asOf = account.asOf {
-                                Text(WidgetMetrics.syncAge(asOf))
+                                Text(UsageFormatting.syncAge(asOf))
                                     .font(.system(size: 9))
                                     .foregroundStyle(.tertiary)
                             }
@@ -796,8 +786,8 @@ private struct PerAgentLinearWidgetView: View {
     }
 
     private func primaryHeadlineBlock(title: String, percent: Double, resetsAt: Int?) -> some View {
-        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
-        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+        let displayVal = UsageFormatting.displayPercent(forUsedPercent: percent, metric: metric)
+        let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
 
         return VStack(spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
@@ -808,7 +798,7 @@ private struct PerAgentLinearWidgetView: View {
                 Spacer()
 
                 if let resetsAt {
-                    Text("Resets in \(WidgetMetrics.formatCountdown(resetsAt))")
+                    Text("Resets in \(UsageFormatting.formatCountdown(resetsAt))")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
@@ -825,8 +815,8 @@ private struct PerAgentLinearWidgetView: View {
     }
 
     private func secondaryRow(label: String, percent: Double, resetsAt: Int?, labelWidth: CGFloat = 48) -> some View {
-        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
-        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+        let displayVal = UsageFormatting.displayPercent(forUsedPercent: percent, metric: metric)
+        let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
 
         return HStack(spacing: 6) {
             Text(label)
@@ -841,7 +831,7 @@ private struct PerAgentLinearWidgetView: View {
                 .frame(width: 30, alignment: .trailing)
 
             if let resetsAt {
-                Text(WidgetMetrics.formatCountdown(resetsAt))
+                Text(UsageFormatting.formatCountdown(resetsAt))
                     .font(.system(size: 8, design: .monospaced))
                     .foregroundStyle(.tertiary)
                     .frame(width: 36, alignment: .trailing)
@@ -1013,8 +1003,8 @@ private struct PerAgentCircularWidgetView: View {
     }
 
     private func primaryDial(title: String, percent: Double, resetsAt: Int?) -> some View {
-        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: percent, metric: metric)
-        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+        let displayVal = UsageFormatting.displayPercent(forUsedPercent: percent, metric: metric)
+        let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
 
         return VStack(spacing: 4) {
             ZStack {
@@ -1038,7 +1028,7 @@ private struct PerAgentCircularWidgetView: View {
                     .foregroundStyle(.secondary)
 
                 if let resetsAt {
-                    Text(WidgetMetrics.formatCountdown(resetsAt))
+                    Text(UsageFormatting.formatCountdown(resetsAt))
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundStyle(.tertiary)
                 }
@@ -1092,8 +1082,8 @@ private func extractRings(
 ) -> [RingData] {
     var rings: [RingData] = []
     if visibleMetrics.contains(.fiveHour), let p5h = data.usedPercent5h {
-        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: p5h, metric: metric)
-        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+        let displayVal = UsageFormatting.displayPercent(forUsedPercent: p5h, metric: metric)
+        let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
         rings.append(RingData(
             id: .fiveHour,
             kind: .fiveHour,
@@ -1105,8 +1095,8 @@ private func extractRings(
         ))
     }
     if visibleMetrics.contains(.weekly), let pWk = data.usedPercentWeekly {
-        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: pWk, metric: metric)
-        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+        let displayVal = UsageFormatting.displayPercent(forUsedPercent: pWk, metric: metric)
+        let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
         rings.append(RingData(
             id: .weekly,
             kind: .weekly,
@@ -1174,8 +1164,8 @@ private struct SingleAccountConcentricCard: View {
                         .font(.system(size: 8, weight: .semibold))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(statusColor(for: account.state).opacity(0.15), in: Capsule())
-                        .foregroundStyle(statusColor(for: account.state))
+                        .background(account.state.color.opacity(0.15), in: Capsule())
+                        .foregroundStyle(account.state.color)
                 } else {
                     routePill(for: account)
                 }
@@ -1279,7 +1269,7 @@ private struct SingleAccountConcentricCard: View {
                             .minimumScaleFactor(0.8)
 
                         if let resetsAt = ring.resetsAt {
-                            Text(WidgetMetrics.formatCountdown(resetsAt))
+                            Text(UsageFormatting.formatCountdown(resetsAt))
                                 .font(.system(size: title != nil ? 6.5 : 7, design: .monospaced))
                                 .foregroundStyle(.tertiary)
                                 .lineLimit(1)
@@ -1342,7 +1332,7 @@ private struct MultiAccountConcentricCell: View {
                 Spacer()
                 if account.state != .fresh {
                     Circle()
-                        .fill(statusColor(for: account.state))
+                        .fill(account.state.color)
                         .frame(width: 5, height: 5)
                 }
             }
@@ -1472,7 +1462,7 @@ private struct SingleAgentFocusWidgetView: View {
                         freshnessBadge(for: account)
 
                         if let asOf = account.asOf {
-                            Text(WidgetMetrics.syncAge(asOf))
+                            Text(UsageFormatting.syncAge(asOf))
                                 .font(.system(size: 9))
                                 .foregroundStyle(.tertiary)
                         }
@@ -1566,8 +1556,8 @@ private struct SingleAgentFocusWidgetView: View {
     }
 
     private func dominantFocusCard(dominant: MetricCandidate) -> some View {
-        let displayVal = WidgetMetrics.displayPercent(forUsedPercent: dominant.percent, metric: metric)
-        let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+        let displayVal = UsageFormatting.displayPercent(forUsedPercent: dominant.percent, metric: metric)
+        let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
 
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 4) {
@@ -1606,7 +1596,7 @@ private struct SingleAgentFocusWidgetView: View {
                         HStack(spacing: 3) {
                             Image(systemName: "clock")
                                 .font(.system(size: 9))
-                            Text(WidgetMetrics.formatCountdown(resetsAt))
+                            Text(UsageFormatting.formatCountdown(resetsAt))
                                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.75)
@@ -1629,8 +1619,8 @@ private struct SingleAgentFocusWidgetView: View {
     private func secondaryMetricsList(metrics: [MetricCandidate]) -> some View {
         VStack(spacing: 5) {
             ForEach(metrics, id: \.kind) { item in
-                let displayVal = WidgetMetrics.displayPercent(forUsedPercent: item.percent, metric: metric)
-                let color = WidgetMetrics.colorForPercent(displayVal, metric: metric)
+                let displayVal = UsageFormatting.displayPercent(forUsedPercent: item.percent, metric: metric)
+                let color = UsageFormatting.colorForPercent(displayVal, metric: metric)
 
                 HStack(spacing: 6) {
                     Text(item.title.replacingOccurrences(of: " Window", with: ""))
@@ -1646,7 +1636,7 @@ private struct SingleAgentFocusWidgetView: View {
                         .frame(width: 30, alignment: .trailing)
 
                     if let resetsAt = item.resetsAt {
-                        Text(WidgetMetrics.formatCountdown(resetsAt))
+                        Text(UsageFormatting.formatCountdown(resetsAt))
                             .font(.system(size: 8, design: .monospaced))
                             .foregroundStyle(.tertiary)
                             .frame(width: 36, alignment: .trailing)
@@ -1708,66 +1698,5 @@ private struct LinearProgressBar: View {
             }
         }
         .frame(height: height)
-    }
-}
-
-// MARK: - Metric and Formatting Helpers
-
-private enum WidgetMetrics {
-    static func displayPercent(forUsedPercent used: Double, metric: PercentageMetric) -> Double {
-        switch metric {
-        case .used:
-            return min(max(used, 0), 100)
-        case .remaining:
-            return min(max(100.0 - used, 0), 100)
-        }
-    }
-
-    static func colorForPercent(_ percent: Double, metric: PercentageMetric) -> Color {
-        switch metric {
-        case .used:
-            switch percent {
-            case ..<60: return .green
-            case ..<85: return .yellow
-            default: return .red
-            }
-        case .remaining:
-            if percent > 40 {
-                return .green
-            } else if percent > 15 {
-                return .yellow
-            } else {
-                return .red
-            }
-        }
-    }
-
-    private static let countdownFormatter: DateComponentsFormatter = {
-        let f = DateComponentsFormatter()
-        f.allowedUnits = [.day, .hour, .minute]
-        f.unitsStyle = .abbreviated
-        f.maximumUnitCount = 2
-        return f
-    }()
-
-    static func formatCountdown(_ unixSeconds: Int) -> String {
-        let resetDate = Date(timeIntervalSince1970: TimeInterval(unixSeconds))
-        let interval = resetDate.timeIntervalSinceNow
-        if interval <= 0 { return "now" }
-        if interval < 60 { return "<1m" }
-        return (countdownFormatter.string(from: interval) ?? "")
-    }
-
-    static func syncAge(_ unixSeconds: Int64) -> String {
-        let seconds = max(0, Int(Date().timeIntervalSince1970) - Int(unixSeconds))
-        if seconds < 60 {
-            return "\(seconds)s ago"
-        }
-        let minutes = seconds / 60
-        if minutes < 60 {
-            return "\(minutes)m ago"
-        }
-        let hours = minutes / 60
-        return "\(hours)h ago"
     }
 }

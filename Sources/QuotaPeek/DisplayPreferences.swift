@@ -339,12 +339,7 @@ final class DisplayPreferences: ObservableObject {
 
     /// Returns the adjusted percentage value according to the current metric preference.
     func displayPercent(forUsedPercent used: Double) -> Double {
-        switch percentageMetric {
-        case .used:
-            return min(max(used, 0), 100)
-        case .remaining:
-            return min(max(100.0 - used, 0), 100)
-        }
+        UsageFormatting.displayPercent(forUsedPercent: used, metric: percentageMetric)
     }
 
     enum DotColor: Equatable {
