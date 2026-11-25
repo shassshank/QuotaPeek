@@ -99,7 +99,12 @@ cp "$MENU_BAR_ICON_1X" "$MENU_BAR_ICON_2X" "$MENU_BAR_ICON_3X" "$APP_BUNDLE/Cont
 # Embed the WidgetKit extension (built by SwiftPM as a plain executable).
 WIDGET_APPEX="$APP_BUNDLE/Contents/PlugIns/QuotaPeekWidget.appex"
 mkdir -p "$WIDGET_APPEX/Contents/MacOS"
-cp "$WIDGET_BINARY" "$WIDGET_APPEX/Contents/MacOS/QuotaPeekWidget"
+# Stamp the extension as requiring macOS 14 (desktop widgets, content
+# margins and containerBackground all start there). WidgetKit keys its
+# modern layout on the binary's minimum OS: built for 13 it renders the
+# widget edge to edge with no system margins.
+xcrun vtool -set-build-version macos 14.0 "$(xcrun --sdk macosx --show-sdk-version)" -replace \
+    -output "$WIDGET_APPEX/Contents/MacOS/QuotaPeekWidget" "$WIDGET_BINARY"
 cp "$WIDGET_INFO_PLIST" "$WIDGET_APPEX/Contents/Info.plist"
 
 # Generate Info.plists with stamped version/build numbers
@@ -119,6 +124,26 @@ t = re.sub(
 with open(p, "w", encoding="utf-8") as f:
     f.write(t)
 ' "$plist" "$VERSION" "$BUILD_NUMBER"
+done
+
+# Record the SDK/toolchain the way Xcode does. WidgetKit gates modern
+# behaviour on these keys: without them it treats the extension as built
+# with an old SDK and draws it edge to edge on black, without the system
+# content margins or the standard widget background.
+SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+SDK_BUILD="$(xcrun --sdk macosx --show-sdk-build-version)"
+XCODE_VERSION="$(xcodebuild -version 2>/dev/null | awk 'NR==1 {print $2}')"
+XCODE_BUILD="$(xcodebuild -version 2>/dev/null | awk 'NR==2 {print $3}')"
+# "27.2" -> "2720", "16" -> "1600" (Xcode's DTXcode format).
+DT_XCODE="$(awk -v v="$XCODE_VERSION" 'BEGIN { n = split(v, p, "."); printf "%d%d%d", p[1], (n > 1 ? p[2] : 0), (n > 2 ? p[3] : 0) }')"
+for plist in "$APP_BUNDLE/Contents/Info.plist" "$WIDGET_APPEX/Contents/Info.plist"; do
+    for kv in "DTPlatformName:macosx" "DTPlatformVersion:$SDK_VERSION" "DTPlatformBuild:$SDK_BUILD" \
+              "DTSDKName:macosx$SDK_VERSION" "DTSDKBuild:$SDK_BUILD" "DTXcode:$DT_XCODE" \
+              "DTXcodeBuild:$XCODE_BUILD" "DTCompiler:com.apple.compilers.llvm.clang.1_0"; do
+        key="${kv%%:*}"; value="${kv#*:}"
+        /usr/libexec/PlistBuddy -c "Delete :$key" "$plist" >/dev/null 2>&1 || true
+        /usr/libexec/PlistBuddy -c "Add :$key string $value" "$plist"
+    done
 done
 
 # Create a minimal PkgInfo (standard for macOS .app bundles)
