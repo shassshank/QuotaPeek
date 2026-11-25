@@ -239,14 +239,14 @@ private struct CombinedCircularStyle: View {
     @ViewBuilder
     private var smallBody: some View {
         if content.rows.count == 1, let only = content.rows.first {
-            ringCell(only, ringSize: 74, lineWidth: 8, symbolSize: 22, pctSize: 18, nameSize: 12, showSecondary: true)
+            ringCell(only, ringSize: 60, lineWidth: 7, symbolSize: 20, pctSize: 17, nameSize: 12, showSecondary: true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             let shown = Array(content.rows.prefix(4))
-            VStack(spacing: 4) {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
+            VStack(spacing: 0) {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 4) {
                     ForEach(shown) { row in
-                        ringCell(row, ringSize: 32, lineWidth: 4, symbolSize: 12, pctSize: 11, nameSize: 11, showSecondary: false)
+                        ringCell(row, ringSize: 28, lineWidth: 3.5, symbolSize: 11, pctSize: 11, nameSize: 11, showSecondary: false)
                     }
                 }
                 Spacer(minLength: 0)
@@ -258,14 +258,14 @@ private struct CombinedCircularStyle: View {
         let shown = Array(content.rows.prefix(4))
         let hidden = max(0, content.rows.count - shown.count)
         return VStack(spacing: 0) {
-            Spacer(minLength: 4)
+            Spacer(minLength: 2)
             HStack(spacing: 8) {
                 ForEach(shown) { row in
-                    ringCell(row, ringSize: 52, lineWidth: 5.5, symbolSize: 17, pctSize: 15, nameSize: 11, showSecondary: true)
+                    ringCell(row, ringSize: 44, lineWidth: 5, symbolSize: 15, pctSize: 14, nameSize: 11, showSecondary: true)
                         .frame(maxWidth: .infinity)
                 }
             }
-            Spacer(minLength: 6)
+            Spacer(minLength: 2)
             WidgetFooterBar(
                 leading: content.staleSyncNote(now: now) ?? "5h \(content.metricWord)",
                 trailing: hidden > 0 ? "+\(hidden) more" : nil
@@ -280,18 +280,18 @@ private struct CombinedCircularStyle: View {
         let hidden = max(0, content.rows.count - shown.count)
         let columns = useGrid3 ? 3 : 2
         return VStack(spacing: 0) {
-            Spacer(minLength: 4)
+            Spacer(minLength: 2)
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: useGrid3 ? 8 : 16), count: columns),
-                      spacing: useGrid3 ? 12 : 16) {
+                      spacing: useGrid3 ? 10 : 12) {
                 ForEach(shown) { row in
                     if useGrid3 {
-                        ringCell(row, ringSize: 54, lineWidth: 5.5, symbolSize: 18, pctSize: 14, nameSize: 11, showSecondary: false)
+                        ringCell(row, ringSize: 52, lineWidth: 5.5, symbolSize: 17, pctSize: 14, nameSize: 11, showSecondary: false)
                     } else {
-                        ringCell(row, ringSize: 80, lineWidth: 8, symbolSize: 23, pctSize: 20, nameSize: 13, showSecondary: true)
+                        ringCell(row, ringSize: 68, lineWidth: 7.5, symbolSize: 20, pctSize: 18, nameSize: 13, showSecondary: true)
                     }
                 }
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: 4)
             WidgetFooterBar(
                 leading: content.staleSyncNote(now: now) ?? "Ring: 5h \(content.metricWord)",
                 trailing: hidden > 0 ? "+\(hidden) more" : nil
@@ -306,7 +306,7 @@ private struct CombinedCircularStyle: View {
         let secondary = values.dropFirst().first
         let isValid = primary != nil && row.state != .error && row.state != .unknown
 
-        return VStack(spacing: ringSize > 40 ? 4 : 2) {
+        return VStack(spacing: ringSize > 40 ? 3 : 1) {
             ZStack {
                 if let primary, isValid {
                     let (pct, color) = primary.display(content.metric)
@@ -380,7 +380,7 @@ private struct PerAgentLinearStyle: View {
 
     private func smallBody(_ row: DisplayedAccount) -> some View {
         let values = content.metricValues(for: row)
-        return VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: 2) {
             AccountIdentityHeader(row: row, fontSize: 13, showLabel: false, compactState: true, now: now)
             if values.isEmpty || row.state == .error || row.state == .unknown {
                 Spacer(minLength: 0)
@@ -393,7 +393,7 @@ private struct PerAgentLinearStyle: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
                 Text(primary.percentString(content.metric))
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(.primary)
                     .lineLimit(1)
@@ -896,13 +896,13 @@ private struct SingleAgentFocusStyle: View {
     }
 
     private func smallBody(_ row: DisplayedAccount, dominant: MetricValue?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             AccountIdentityHeader(row: row, fontSize: 13, showLabel: false, compactState: true, now: now)
             Spacer(minLength: 0)
             if let dominant, row.state != .error, row.state != .unknown {
                 let (pct, color) = dominant.display(content.metric)
                 Text(dominant.percentString(content.metric))
-                    .font(.system(size: 44, weight: .bold, design: .rounded))
+                    .font(.system(size: 38, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(.primary)
                     .lineLimit(1)
@@ -930,7 +930,7 @@ private struct SingleAgentFocusStyle: View {
 
     private func mediumBody(_ row: DisplayedAccount, values: [MetricValue], dominant: MetricValue?) -> some View {
         let secondary = dominant.flatMap { dom in values.first { $0.kind != dom.kind } }
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 4) {
             AccountIdentityHeader(row: row, fontSize: 14, showLabel: true, compactState: false)
             Spacer(minLength: 0)
             if let dominant, row.state != .error, row.state != .unknown {
@@ -938,7 +938,7 @@ private struct SingleAgentFocusStyle: View {
                 HStack(alignment: .bottom, spacing: 14) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(dominant.percentString(content.metric))
-                            .font(.system(size: 46, weight: .bold, design: .rounded))
+                            .font(.system(size: 40, weight: .bold, design: .rounded))
                             .monospacedDigit()
                             .foregroundStyle(.primary)
                             .lineLimit(1)
@@ -1082,7 +1082,9 @@ extension View {
     @ViewBuilder
     func quotaWidgetBackground() -> some View {
         if #available(macOS 14.0, *) {
-            containerBackground(for: .widget) { Color.clear }
+            // The system's standard widget fill (as in Xcode's widget
+            // template); Color.clear renders as a flat black panel.
+            containerBackground(.fill.tertiary, for: .widget)
         } else {
             padding()
         }
