@@ -84,9 +84,10 @@ private struct CombinedLinearStyle: View {
 
     var body: some View {
         let shown = Array(content.rows.prefix(capacity))
-        VStack(alignment: .leading, spacing: 6) {
+        let isLarge = family == .systemLarge
+        VStack(alignment: .leading, spacing: isLarge ? 8 : 6) {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .top), count: columns),
-                      alignment: .leading, spacing: 6) {
+                      alignment: .leading, spacing: isLarge ? 8 : 6) {
                 ForEach(shown) { row in card(row) }
             }
             Spacer(minLength: 0)
@@ -96,18 +97,20 @@ private struct CombinedLinearStyle: View {
 
     private func card(_ row: DisplayedAccount) -> some View {
         let values = content.metricValues(for: row)
-        return VStack(alignment: .leading, spacing: 4) {
+        let isLarge = family == .systemLarge
+        return VStack(alignment: .leading, spacing: isLarge ? 5 : 4) {
             IdentityRow(row: row, showLabel: family != .systemSmall)
             if values.isEmpty || row.state == .error || row.state == .unknown {
                 RowPlaceholder(row: row, hasMetricsSelected: !content.metrics(for: row).isEmpty)
             } else {
                 ForEach(values) { value in
                     MetricRow(value: value, metric: content.metric, now: now,
-                              showCountdown: family != .systemSmall && columns == 1 || family == .systemLarge)
+                              barHeight: isLarge ? 5 : 4,
+                              showCountdown: family != .systemSmall && columns == 1 || isLarge)
                 }
             }
         }
-        .padding(6)
+        .padding(isLarge ? 8 : 6)
         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
         .opacity(row.state == .stale ? 0.75 : 1)
     }
@@ -123,7 +126,11 @@ private struct CombinedCircularStyle: View {
         switch family {
         case .systemSmall: return (2, 2, 46)
         case .systemMedium: return (4, 1, 58)
-        default: return (3, 3, 62)
+        default:
+            if content.rows.count <= 4 {
+                return (2, 2, 92)
+            }
+            return (3, 3, 66)
         }
     }
 
@@ -131,7 +138,9 @@ private struct CombinedCircularStyle: View {
         let l = layout
         let shown = Array(content.rows.prefix(l.columns * l.rows))
         VStack(spacing: 4) {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: l.columns), spacing: 8) {
+            if family == .systemLarge { Spacer(minLength: 0) }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: l.columns),
+                      spacing: family == .systemLarge ? 14 : 8) {
                 ForEach(shown) { row in cell(row, size: l.size) }
             }
             Spacer(minLength: 0)
@@ -177,14 +186,20 @@ private struct PerAgentLinearStyle: View {
     /// Settings); medium and large also list the rest compactly.
     var body: some View {
         if let row = content.rows.first {
-            VStack(alignment: .leading, spacing: 8) {
+            let isLarge = family == .systemLarge
+            VStack(alignment: .leading, spacing: isLarge ? 10 : 8) {
                 focusCard(row)
-                if family == .systemLarge {
-                    ForEach(content.rows.dropFirst().prefix(3)) { other in
-                        CompactLine(row: other, content: content)
+                if isLarge {
+                    let others = Array(content.rows.dropFirst().prefix(5))
+                    if !others.isEmpty {
+                        VStack(spacing: 6) {
+                            ForEach(others) { other in
+                                CompactLine(row: other, content: content, verticalPadding: 6)
+                            }
+                        }
                     }
                     Spacer(minLength: 0)
-                    OverflowNote(hidden: max(0, content.rows.count - 4))
+                    OverflowNote(hidden: max(0, content.rows.count - 6))
                 }
             }
         }
@@ -207,26 +222,27 @@ private struct PerAgentLinearStyle: View {
                 }
             }
         }
-        .padding(family == .systemSmall ? 0 : 8)
+        .padding(family == .systemSmall ? 0 : (family == .systemLarge ? 10 : 8))
         .background(family == .systemSmall ? Color.clear : Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func bigMetric(_ value: MetricValue) -> some View {
         let (pct, color) = value.display(content.metric)
+        let fontSize: CGFloat = family == .systemSmall ? 30 : (family == .systemLarge ? 32 : 26)
         return VStack(alignment: .leading, spacing: 3) {
             Text(value.title)
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(.secondary)
             Text(value.percentText(content.metric))
-                .font(.system(size: family == .systemSmall ? 30 : 26, weight: .bold, design: .rounded))
+                .font(.system(size: fontSize, weight: .bold, design: .rounded))
                 .foregroundStyle(color)
                 .minimumScaleFactor(0.6)
                 .lineLimit(1)
-            LinearProgressBar(percent: pct, color: color, height: 5)
+            LinearProgressBar(percent: pct, color: color, height: family == .systemLarge ? 6 : 5)
             if let reset = value.resetsAt {
                 Text("resets \(UsageFormatting.formatCountdown(reset, inPrefix: true, now: now))")
                     .font(.system(size: 8))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -237,6 +253,7 @@ private struct PerAgentLinearStyle: View {
 private struct CompactLine: View {
     let row: DisplayedAccount
     let content: QuotaWidgetContent
+    var verticalPadding: CGFloat = 4
 
     var body: some View {
         let values = content.metricValues(for: row)
@@ -252,8 +269,8 @@ private struct CompactLine: View {
             }
             StateBadge(state: row.state)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .padding(.vertical, verticalPadding)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
     }
 }
@@ -280,20 +297,29 @@ private struct PerAgentCircularStyle: View {
                         Spacer()
                     }
                 } else {
+                    let isLarge = family == .systemLarge
                     HStack(spacing: 14) {
-                        LabeledRing(value: values[0], metric: content.metric, size: 84, lineWidth: 9)
-                        VStack(alignment: .leading, spacing: 6) {
+                        LabeledRing(value: values[0], metric: content.metric,
+                                    size: isLarge ? 100 : 84, lineWidth: isLarge ? 10 : 9)
+                        VStack(alignment: .leading, spacing: isLarge ? 8 : 6) {
                             ForEach(values) { value in
-                                MetricRow(value: value, metric: content.metric, now: now)
+                                MetricRow(value: value, metric: content.metric, now: now, barHeight: isLarge ? 5 : 4)
                             }
                         }
                     }
-                    if family == .systemLarge {
-                        ForEach(content.rows.dropFirst().prefix(4)) { other in
-                            CompactLine(row: other, content: content)
+                    .padding(isLarge ? 10 : 0)
+                    .background(isLarge ? Color.primary.opacity(0.05) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
+                    if isLarge {
+                        let others = Array(content.rows.dropFirst().prefix(5))
+                        if !others.isEmpty {
+                            VStack(spacing: 6) {
+                                ForEach(others) { other in
+                                    CompactLine(row: other, content: content, verticalPadding: 6)
+                                }
+                            }
                         }
                         Spacer(minLength: 0)
-                        OverflowNote(hidden: max(0, content.rows.count - 5))
+                        OverflowNote(hidden: max(0, content.rows.count - 6))
                     }
                 }
             }
@@ -310,7 +336,7 @@ private struct ConcentricRingsStyle: View {
 
     private var layout: (columns: Int, count: Int, size: CGFloat) {
         switch family {
-        case .systemSmall: return (1, 1, 92)
+        case .systemSmall: return (1, 1, 88)
         case .systemMedium: return (3, 3, 74)
         default: return (2, 4, 96)
         }
@@ -324,10 +350,17 @@ private struct ConcentricRingsStyle: View {
                 ForEach(shown) { row in cell(row, size: l.size) }
             }
             Spacer(minLength: 0)
-            HStack(spacing: 10) {
-                legend("Outer", "5h")
-                legend("Inner", "Weekly")
-                Spacer()
+            HStack(spacing: family == .systemSmall ? 6 : 10) {
+                if family == .systemSmall {
+                    Text("◯ 5h  ◉ Wk")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    legend("Outer", "5h")
+                    legend("Inner", "Weekly")
+                }
+                Spacer(minLength: 4)
                 OverflowNote(hidden: content.rows.count - shown.count)
             }
         }
@@ -336,7 +369,7 @@ private struct ConcentricRingsStyle: View {
     private func legend(_ ring: String, _ window: String) -> some View {
         Text("\(ring): \(window)")
             .font(.system(size: 8))
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(.secondary)
     }
 
     private func cell(_ row: DisplayedAccount, size: CGFloat) -> some View {
@@ -393,27 +426,38 @@ private struct SingleAgentFocusStyle: View {
             let values = content.metricValues(for: row)
             // The dominant metric is whichever is closest to running out.
             let dominant = values.max { $0.used < $1.used }
-            VStack(alignment: .leading, spacing: 4) {
+            let isLarge = family == .systemLarge
+            VStack(alignment: .leading, spacing: isLarge ? 8 : 4) {
                 HStack(spacing: 5) {
                     Image(systemName: row.symbolName).font(.system(size: 13, weight: .bold))
                     Text(row.displayName).font(.system(size: 13, weight: .bold)).lineLimit(1)
                     Spacer()
                     StateBadge(state: row.state)
                 }
-                Spacer(minLength: 0)
+                if !isLarge { Spacer(minLength: 0) }
                 if let dominant, row.state != .error, row.state != .unknown {
                     let (pct, color) = dominant.display(content.metric)
                     Text(dominant.percentText(content.metric))
-                        .font(.system(size: family == .systemSmall ? 46 : 56, weight: .heavy, design: .rounded))
+                        .font(.system(size: family == .systemSmall ? 46 : (isLarge ? 72 : 56), weight: .heavy, design: .rounded))
                         .foregroundStyle(color)
                         .minimumScaleFactor(0.5)
                         .lineLimit(1)
+                        .padding(.top, isLarge ? 12 : 0)
                     Text(dominant.title + (dominant.resetsAt.map { " · resets \(UsageFormatting.formatCountdown($0, inPrefix: true, now: now))" } ?? ""))
-                        .font(.system(size: 9))
+                        .font(.system(size: isLarge ? 11 : 9))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    LinearProgressBar(percent: pct, color: color, height: 6)
-                    if family != .systemSmall {
+                    LinearProgressBar(percent: pct, color: color, height: isLarge ? 8 : 6)
+                    if isLarge {
+                        Spacer(minLength: 0)
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(values) { value in
+                                MetricRow(value: value, metric: content.metric, now: now, barHeight: 5)
+                            }
+                        }
+                        .padding(10)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+                    } else if family != .systemSmall {
                         ForEach(values.filter { $0.kind != dominant.kind }) { other in
                             MetricRow(value: other, metric: content.metric, now: now)
                         }
@@ -421,7 +465,7 @@ private struct SingleAgentFocusStyle: View {
                 } else {
                     RowPlaceholder(row: row, hasMetricsSelected: !content.metrics(for: row).isEmpty)
                 }
-                Spacer(minLength: 0)
+                if !isLarge { Spacer(minLength: 0) }
             }
             .opacity(row.state == .stale ? 0.75 : 1)
         }

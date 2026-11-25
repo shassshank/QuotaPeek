@@ -102,7 +102,7 @@ struct MetricRow: View {
             if showCountdown, let reset = value.resetsAt {
                 Text(UsageFormatting.formatCountdown(reset, now: now))
                     .font(.system(size: 8, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .frame(width: 38, alignment: .trailing)
                     .lineLimit(1)
             }
@@ -189,7 +189,9 @@ struct OverflowNote: View {
         if hidden > 0 {
             Text("+\(hidden) more")
                 .font(.system(size: 8, weight: .medium))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
     }
 }

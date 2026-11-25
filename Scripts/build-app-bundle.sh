@@ -6,9 +6,11 @@
 #
 # Prerequisites:
 #   - .build/release/QuotaPeek   (swift build -c release output)
+#   - .build/release/QuotaPeekWidget  (same build; embedded as PlugIns/QuotaPeekWidget.appex)
 #   - .build-go/quotapeekd             (go build output)
 #   - Info.plist                      (repo root)
 #   - QuotaPeek.entitlements      (repo root)
+#   - Resources/QuotaPeekWidget-Info.plist, QuotaPeekWidget.entitlements
 #   - Resources/AppIcon.icns          (repo root)
 #
 # Output:
@@ -53,10 +55,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 SWIFT_BINARY="$REPO_DIR/.build/release/QuotaPeek"
+WIDGET_BINARY="$REPO_DIR/.build/release/QuotaPeekWidget"
 if [[ ! -f "$SWIFT_BINARY" && -f "$REPO_DIR/.build/apple/Products/Release/QuotaPeek" ]]; then
     # `swift build --arch ... --arch ...` (universal binary) outputs here instead.
     SWIFT_BINARY="$REPO_DIR/.build/apple/Products/Release/QuotaPeek"
+    WIDGET_BINARY="$REPO_DIR/.build/apple/Products/Release/QuotaPeekWidget"
 fi
+WIDGET_INFO_PLIST="$REPO_DIR/Resources/QuotaPeekWidget-Info.plist"
+WIDGET_ENTITLEMENTS="$REPO_DIR/QuotaPeekWidget.entitlements"
 GO_BINARY="$REPO_DIR/.build-go/quotapeekd"
 APP_BUNDLE="$REPO_DIR/.build/release/QuotaPeek.app"
 INFO_PLIST="$REPO_DIR/Info.plist"
@@ -67,7 +73,8 @@ MENU_BAR_ICON_2X="$REPO_DIR/Resources/MenuBarIcon@2x.png"
 MENU_BAR_ICON_3X="$REPO_DIR/Resources/MenuBarIcon@3x.png"
 
 # Verify prerequisites
-for f in "$SWIFT_BINARY" "$GO_BINARY" "$INFO_PLIST" "$ENTITLEMENTS" "$APP_ICON" \
+for f in "$SWIFT_BINARY" "$WIDGET_BINARY" "$GO_BINARY" "$INFO_PLIST" "$ENTITLEMENTS" \
+         "$WIDGET_INFO_PLIST" "$WIDGET_ENTITLEMENTS" "$APP_ICON" \
          "$MENU_BAR_ICON_1X" "$MENU_BAR_ICON_2X" "$MENU_BAR_ICON_3X"; do
     if [[ ! -f "$f" ]]; then
         echo "ERROR: Required file not found: $f" >&2
@@ -89,8 +96,15 @@ cp "$SWIFT_BINARY" "$APP_BUNDLE/Contents/MacOS/QuotaPeek"
 cp "$APP_ICON" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 cp "$MENU_BAR_ICON_1X" "$MENU_BAR_ICON_2X" "$MENU_BAR_ICON_3X" "$APP_BUNDLE/Contents/Resources/"
 
-# Generate Info.plist with stamped version/build numbers
+# Embed the WidgetKit extension (built by SwiftPM as a plain executable).
+WIDGET_APPEX="$APP_BUNDLE/Contents/PlugIns/QuotaPeekWidget.appex"
+mkdir -p "$WIDGET_APPEX/Contents/MacOS"
+cp "$WIDGET_BINARY" "$WIDGET_APPEX/Contents/MacOS/QuotaPeekWidget"
+cp "$WIDGET_INFO_PLIST" "$WIDGET_APPEX/Contents/Info.plist"
+
+# Generate Info.plists with stamped version/build numbers
 cp "$INFO_PLIST" "$APP_BUNDLE/Contents/Info.plist"
+for plist in "$APP_BUNDLE/Contents/Info.plist" "$WIDGET_APPEX/Contents/Info.plist"; do
 "${PYTHON3:-python3}" -c '
 import sys, re
 p, ver, bld = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -104,7 +118,8 @@ t = re.sub(
     lambda m: m.group(1) + ver + m.group(2), t)
 with open(p, "w", encoding="utf-8") as f:
     f.write(t)
-' "$APP_BUNDLE/Contents/Info.plist" "$VERSION" "$BUILD_NUMBER"
+' "$plist" "$VERSION" "$BUILD_NUMBER"
+done
 
 # Create a minimal PkgInfo (standard for macOS .app bundles)
 echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
@@ -115,8 +130,13 @@ echo "==> Ad-hoc code signing"
 codesign --sign - --force "$GO_BINARY"
 echo "  signed $GO_BINARY"
 
-# Sign the .app bundle (--deep signs nested code/frameworks too)
-codesign --sign - --deep --force --entitlements "$ENTITLEMENTS" "$APP_BUNDLE"
+# Sign the widget extension first with its own (sandbox) entitlements, then
+# the app around it. Never --deep here: it would re-sign the extension with
+# the app's entitlements, dropping the sandbox WidgetKit requires.
+codesign --sign - --force --entitlements "$WIDGET_ENTITLEMENTS" "$WIDGET_APPEX"
+echo "  signed $WIDGET_APPEX"
+codesign --sign - --force --entitlements "$ENTITLEMENTS" "$APP_BUNDLE"
 echo "  signed $APP_BUNDLE"
+codesign --verify --deep --strict "$APP_BUNDLE"
 
 echo "==> Bundle ready at $APP_BUNDLE"

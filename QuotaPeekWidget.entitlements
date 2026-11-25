@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Widget extensions must be sandboxed. -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <!-- Read-only access to the one folder holding snapshot.json, which the
+         app writes. A home-relative path exception avoids needing an App
+         Group, which requires a Team ID that ad-hoc signing doesn't have. -->
+    <key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+    <array>
+        <string>/Library/Application Support/QuotaPeek/</string>
+    </array>
+</dict>
+</plist>
