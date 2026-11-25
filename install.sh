@@ -1,31 +1,30 @@
 #!/bin/bash
 # Installs QuotaPeek:
-#   - installs the menu bar app (a thin UI shell that only talks to the
-#     daemon's local HTTP API - it never touches Keychain or any provider
-#     API directly) as a normal .app bundle in /Applications (or
-#     ~/Applications if /Applications isn't writable)
-#   - copies the daemon (Backend/) and the statusLine hook scripts into
+#   - installs the menu bar app (which also contains the macOS widget) in
+#     /Applications (or ~/Applications if /Applications isn't writable)
+#   - copies the statusLine hook scripts into
 #     ~/Library/Application Support/QuotaPeek/bin
-#   - installs LaunchAgents so the daemon and the app start at login
-#   - optionally auto-detects installed AI CLIs (Claude, Codex, Antigravity)
-#     and registers them as accounts, with consent asked up front
+#   - installs a LaunchAgent so the app starts at login
 #   - registers the statusLine hook in ~/.claude/settings.json and
 #     ~/.gemini/antigravity-cli/settings.json (merged in, existing settings
-#     preserved) - this is what powers the "Injection" route
-#   - the hook scripts read their own auth token from the auth-token file
-#     at run time, so they're copied to BIN_DIR as-is
+#     preserved); the hooks send each reading to the running app
+#   - removes the background daemon that versions before 2.0 installed
+#
+# There is no background service: the app reads the agents' hooks and
+# Codex's session logs itself, and on first launch adds an account for each
+# agent it finds.
 #
 # Three ways to get the files installed, auto-detected:
-#   - Local checkout (this script sitting next to Backend/ and Package.swift):
-#     builds the Go daemon and Swift app from source.
+#   - Local checkout (this script sitting next to Package.swift): builds the
+#     Swift app from source.
 #   - Piped via curl, or run with --remote: downloads a prebuilt release
 #     tarball from GitHub instead of building anything locally.
 #     curl -fsSL https://raw.githubusercontent.com/shassshank/QuotaPeek/master/install.sh | bash
 #   - Run with --from-dir <dir>: same as --remote's file-placement step, but
-#     sourced from an already-local directory (containing quotapeekd, the
-#     hook scripts, QuotaPeek.app, and the LaunchAgent templates) instead of
-#     downloading a tarball. This is what the "Install QuotaPeek.command"
-#     bundled inside the release DMG runs, pointed at its own directory.
+#     sourced from an already-local directory (containing QuotaPeek.app, the
+#     hook scripts and the LaunchAgent template) instead of downloading a
+#     tarball. This is what the "Install QuotaPeek.command" bundled inside
+#     the release DMG runs, pointed at its own directory.
 #
 #     Files delivered via `curl` (or any programmatic download) do NOT
 #     receive the com.apple.quarantine extended attribute that macOS
@@ -71,12 +70,6 @@ case "${1:-}" in
     --app-login-off)
         exec launchctl disable "gui/$(id -u)/com.quotapeek.app"
         ;;
-    --daemon-start)
-        exec launchctl load -w "$LAUNCH_AGENTS/com.quotapeek.daemon.plist"
-        ;;
-    --daemon-stop)
-        exec launchctl unload -w "$LAUNCH_AGENTS/com.quotapeek.daemon.plist"
-        ;;
     "") ;;
     --remote) MODE="remote" ;;
     --local) MODE="local" ;;
@@ -85,13 +78,13 @@ case "${1:-}" in
     *) echo "Unknown option: $1" >&2; exit 2 ;;
 esac
 
-# A local checkout is this script sitting next to Backend/ and Package.swift.
+# A local checkout is this script sitting next to Package.swift.
 # Piped via `curl | bash`, BASH_SOURCE[0] isn't a real file on disk, so this
 # naturally falls through to remote mode.
 REPO_DIR=""
 if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
     candidate="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if [[ -f "$candidate/Backend/go.mod" && -f "$candidate/Package.swift" ]]; then
+    if [[ -f "$candidate/Package.swift" && -f "$candidate/Scripts/build-app-bundle.sh" ]]; then
         REPO_DIR="$candidate"
     fi
 fi
@@ -105,32 +98,28 @@ if [[ "$MODE" == "local" && -z "$REPO_DIR" ]]; then
     exit 1
 fi
 
-if [[ "$MODE" == "fromdir" && ! -f "$FROM_DIR/quotapeekd" ]]; then
-    echo "ERROR: --from-dir $FROM_DIR does not look like an extracted QuotaPeek release (no quotapeekd found)" >&2
+if [[ "$MODE" == "fromdir" && ! -d "$FROM_DIR/QuotaPeek.app" ]]; then
+    echo "ERROR: --from-dir $FROM_DIR does not look like an extracted QuotaPeek release (no QuotaPeek.app found)" >&2
     exit 1
 fi
 
-# Check before starting the daemon: its first startup creates config.json.
-DETECT_ACCOUNTS=false
-if [ ! -e "$APP_SUPPORT/config.json" ]; then
-    echo "Accounts are optional. Detection uses installed CLIs and existing login credentials."
-    REPLY=""
-    # Piped via `curl | bash`, stdin is the script itself, not a terminal, so
-    # a plain `read` gets immediate EOF and silently skips this prompt. Read
-    # from the controlling terminal directly instead, when there is one.
-    if [ -r /dev/tty ]; then
-        read -r -p "No existing configuration found. Auto-detect installed AI CLIs (Claude, Codex, Antigravity) and add them as accounts? [y/N] " REPLY < /dev/tty || true
+# Versions before 2.0 ran a separate daemon; the app does its job now.
+# Stop it and remove its LaunchAgent, binary and token caches. config.json
+# is kept: the app reads the same file.
+retire_legacy_daemon() {
+    local plist="$LAUNCH_AGENTS/com.quotapeek.daemon.plist"
+    if [[ -f "$plist" ]] || launchctl print "gui/$(id -u)/com.quotapeek.daemon" >/dev/null 2>&1; then
+        echo "==> Removing the old background daemon"
+        launchctl bootout "gui/$(id -u)/com.quotapeek.daemon" >/dev/null 2>&1 || true
+        rm -f "$plist"
     fi
-    case "$REPLY" in
-        y|Y) DETECT_ACCOUNTS=true ;;
-    esac
-fi
+    rm -f "$BIN_DIR/quotapeekd" "$APP_SUPPORT/auth-token" "$APP_SUPPORT/samples.json" \
+        "$APP_SUPPORT/daemon.log" "$APP_SUPPORT/daemon.log.1" "$APP_SUPPORT/antigravity-oauth-cache.json" \
+        "$APP_SUPPORT"/oauth-*.json
+    rm -rf "$APP_SUPPORT/cli-workdir"
+}
 
 if [[ "$MODE" == "local" ]]; then
-    echo "==> Building Go daemon"
-    cd "$REPO_DIR/Backend"
-    go build -o "$REPO_DIR/.build-go/quotapeekd" .
-
     echo "==> Building Swift menu bar app"
     cd "$REPO_DIR"
     swift build -c release
@@ -140,7 +129,6 @@ if [[ "$MODE" == "local" ]]; then
 
     echo "==> Installing to $BIN_DIR"
     mkdir -p "$BIN_DIR"
-    cp "$REPO_DIR/.build-go/quotapeekd" "$BIN_DIR/quotapeekd"
     rm -rf "$BIN_DIR/QuotaPeek.app" # migrate away from the old (pre-/Applications) install location
     echo "==> Installing app bundle to $APP_BUNDLE_DEST"
     rm -rf "$APP_BUNDLE_DEST"
@@ -151,7 +139,7 @@ if [[ "$MODE" == "local" ]]; then
     cp "$REPO_DIR/Scripts/uninstall.sh" "$BIN_DIR/uninstall.sh"
     cp "$REPO_DIR/Scripts/run-with-log-rotation.sh" "$BIN_DIR/run-with-log-rotation.sh"
     chmod +x "$BIN_DIR/uninstall.sh" "$BIN_DIR/run-with-log-rotation.sh"
-    chmod +x "$BIN_DIR"/*.py "$BIN_DIR/quotapeekd"
+    chmod +x "$BIN_DIR"/*.py
 
     TEMPLATE_DIR="$REPO_DIR/LaunchAgents"
 elif [[ "$MODE" == "fromdir" ]]; then
@@ -234,18 +222,19 @@ if [[ "$MODE" == "remote" || "$MODE" == "fromdir" ]]; then
         rm -rf "$APP_BUNDLE_DEST"
         cp -R "$SOURCE_DIR/QuotaPeek.app" "$APP_BUNDLE_DEST"
     fi
-    cp "$SOURCE_DIR/quotapeekd" "$BIN_DIR/quotapeekd"
     cp "$SOURCE_DIR/claude-statusline-hook.py" "$BIN_DIR/"
     cp "$SOURCE_DIR/antigravity-statusline-hook.py" "$BIN_DIR/"
     cp "$SOURCE_DIR/quotapeek_hook.py" "$BIN_DIR/"
     cp "$SOURCE_DIR/run-with-log-rotation.sh" "$BIN_DIR/"
     cp "$SOURCE_DIR/uninstall.sh" "$BIN_DIR/"
-    chmod +x "$BIN_DIR"/*.py "$BIN_DIR/quotapeekd" "$BIN_DIR/run-with-log-rotation.sh" "$BIN_DIR/uninstall.sh"
+    chmod +x "$BIN_DIR"/*.py "$BIN_DIR/run-with-log-rotation.sh" "$BIN_DIR/uninstall.sh"
 fi
 
-echo "==> Installing LaunchAgents"
+retire_legacy_daemon
+
+echo "==> Installing LaunchAgent"
 mkdir -p "$LAUNCH_AGENTS"
-for name in com.quotapeek.daemon com.quotapeek.app; do
+for name in com.quotapeek.app; do
     template="$TEMPLATE_DIR/$name.plist.template"
     dest="$LAUNCH_AGENTS/$name.plist"
     if [[ ! -f "$template" ]]; then
@@ -284,119 +273,6 @@ has_cli() {
         [ -e "/opt/homebrew/bin/$cmd" ] || \
         [ -e "/usr/local/bin/$cmd" ]
 }
-
-# POST /accounts creates credentials/account metadata; PUT /config enables routes.
-setup_detected_accounts() {
-    local token="" ready=false provider body patch config_dir interval
-    local deadline=$((SECONDS + 5))
-    while [ "$SECONDS" -lt "$deadline" ]; do
-        if [ -s "$APP_SUPPORT/auth-token" ]; then
-            token="$(cat "$APP_SUPPORT/auth-token")"
-            if curl --silent --fail --max-time 0.2 \
-                -H "X-Auth-Token: $token" http://127.0.0.1:47831/config >/dev/null; then
-                ready=true
-                break
-            fi
-        fi
-        sleep 0.1
-    done
-    if [ "$ready" != true ]; then
-        echo "  Daemon not ready; add accounts later in Settings > Add Account."
-        return
-    fi
-    for provider in claude codex antigravity; do
-        config_dir=""
-        interval=300
-        case "$provider" in
-            claude|codex)
-                if ! has_cli "$provider"; then
-                    echo "  $provider not detected."
-                    continue
-                fi
-                if [ "$provider" = claude ]; then
-                    config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-                else
-                    config_dir="${CODEX_HOME:-$HOME/.codex}"
-                fi
-                ;;
-            antigravity)
-                if ! security find-generic-password -s gemini -a antigravity >/dev/null 2>&1; then
-                    echo "  antigravity not detected."
-                    continue
-                fi
-                interval=300
-                ;;
-        esac
-        # JSON encoding handles spaces/quotes in paths. Antigravity's existing
-        # credential format matches loadAntigravityCreds in Backend/collectors.go.
-        # Keep OAuth credentials out of command arguments and diagnostic output.
-        if ! body="$("$PYTHON3" - "$provider" "$config_dir" <<'PY'
-import base64, json, os, subprocess, sys
-provider, config_dir = sys.argv[1:]
-try:
-    body = {"provider": provider, "label": "Default"}
-    if provider == "antigravity":
-        raw = subprocess.run(
-            ["security", "find-generic-password", "-s", "gemini", "-a", "antigravity", "-w"],
-            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        ).stdout.decode().strip()
-        prefix = "go-keyring-base64:"
-        if not raw.startswith(prefix):
-            raise ValueError("credential encoding")
-        creds = json.loads(base64.b64decode(raw[len(prefix):], validate=True))
-        refresh = creds["token"]["refresh_token"]
-        if not isinstance(refresh, str) or not refresh.strip():
-            raise ValueError("missing refresh token")
-        email = creds.get("email", "")
-        body["credentialLocation"] = {"kind": "daemon_token"}
-        body["oauthBootstrap"] = {"refreshToken": refresh, "email": email if isinstance(email, str) else ""}
-    else:
-        body["credentialLocation"] = {"kind": "config_dir", "configDir": os.path.abspath(config_dir)}
-    print(json.dumps(body))
-except Exception:
-    sys.exit(1)
-PY
-)"; then
-            echo "  Could not read $provider credentials; add it later in Settings."
-            continue
-        fi
-        if ! printf '%s' "$body" | curl --silent --show-error --fail --max-time 5 \
-            -H "X-Auth-Token: $token" -H "Content-Type: application/json" \
-            --data-binary @- http://127.0.0.1:47831/accounts >/dev/null; then
-            echo "  Could not add $provider; retry in Settings > Add Account."
-            continue
-        fi
-        body=""
-        # Antigravity and Codex default to "keychain": the daemon polls their
-        # web usage endpoints with the CLI's own login, and only runs the CLI
-        # to refresh an expired login. Claude needs "injection" instead:
-        # chooseSample (Backend/store.go) only surfaces a route's data if
-        # it's in routes_enabled, so without this the statusLine hook
-        # registered below by merge_statusline would push samples the daemon
-        # silently drops.
-        route="keychain"
-        if [[ "$provider" == "claude" ]]; then
-            route="injection"
-        fi
-        patch="$("$PYTHON3" - "$provider" "$interval" "$route" <<'PY'
-import json, sys
-provider, interval, route = sys.argv[1], int(sys.argv[2]), sys.argv[3]
-print(json.dumps({provider: {"routes_enabled": [route], "keychain_poll_interval_sec": interval}}))
-PY
-)"
-        if printf '%s' "$patch" | curl --silent --show-error --fail --max-time 5 \
-            -X PUT -H "X-Auth-Token: $token" -H "Content-Type: application/json" \
-            --data-binary @- http://127.0.0.1:47831/config >/dev/null; then
-            echo "  Added $provider account with the $route route enabled."
-        else
-            echo "  Added $provider account; enable its route in Settings."
-        fi
-    done
-}
-
-if [ "$DETECT_ACCOUNTS" = true ]; then
-    setup_detected_accounts
-fi
 
 merge_statusline() {
     local settings_file="$1"
@@ -454,7 +330,7 @@ finally:
 PY
 }
 
-echo "==> Registering statusLine hooks (Injection route)"
+echo "==> Registering statusLine hooks"
 # BIN_DIR lives under ~/Library/Application Support, which has a space in it -
 # the command string must quote each path so a naive whitespace-splitting
 # executor (not just a real shell) doesn't tear "Application Support" in two.
@@ -474,20 +350,11 @@ fi
 
 echo ""
 echo "Installed. The menu bar icon should appear now (top menu bar)."
-echo "Accounts are no longer auto-configured by default. Add detected accounts using"
-echo "the fresh-install prompt, or later via Settings > Add Account."
-echo ""
-echo "StatusLine hooks are registered. Open Settings (gear icon in the popover) to"
-echo "add accounts and choose their collection routes, including passive Claude injection."
-echo ""
-echo "Claude inference polling remains off by default. For an added Claude account,"
-echo "enable Injection in Settings and run Claude Code for passive updates."
-echo "Enabling inference polling in Settings sends a real"
-echo "one-token inference request every 60s (~1,440/day) to read live rate-limit headers."
+echo "QuotaPeek adds an account for each agent it finds; manage them in Settings > Accounts."
+echo "The macOS widget is in the widget gallery: right-click the desktop > Edit Widgets > QuotaPeek."
 if [[ -f "$0" ]]; then
     SCRIPT_CMD="$0"
 else
     SCRIPT_CMD="./install.sh"
 fi
-echo "Quitting the app also stops the background daemon; relaunching the app brings it back automatically, or run 'launchctl load ~/Library/LaunchAgents/com.quotapeek.daemon.plist' (or '$SCRIPT_CMD --daemon-start') to bring it back without relaunching the app."
 echo "Use Settings (or 'launchctl [enable|disable] gui/\$(id -u)/com.quotapeek.app', or '$SCRIPT_CMD --app-login-off/--app-login-on') to manage app login preferences."

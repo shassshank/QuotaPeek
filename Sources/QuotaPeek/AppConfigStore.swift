@@ -1,4 +1,5 @@
 import Foundation
+import QuotaPeekCore
 
 /// Loads and saves `config.json` in the support folder. The file is small and
 /// only written when the user changes a setting, so plain synchronous I/O on
@@ -16,7 +17,7 @@ struct AppConfigStore {
     /// than overwritten.
     func load() -> AppConfig {
         guard let data = try? Data(contentsOf: url) else {
-            let config = AppConfig()
+            let config = AppConfig(accounts: Self.detectedAccounts())
             try? save(config)
             return config
         }
@@ -46,6 +47,22 @@ struct AppConfigStore {
                                                 attributes: [.posixPermissions: 0o700])
         try data.write(to: url, options: .atomic)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    /// First run: one "Default" account per agent whose config folder exists
+    /// (no credentials are read). If none is found, all three, so the user
+    /// sees what QuotaPeek can show.
+    static func detectedAccounts() -> [AccountConfig] {
+        let fm = FileManager.default
+        let found = Provider.allCases.filter { provider in
+            let path: String
+            switch provider {
+            case .claude, .codex: path = LocalQuotaParser.canonicalConfigDir(nil, provider: provider)
+            case .antigravity: path = NSHomeDirectory() + "/.gemini/antigravity-cli"
+            }
+            return fm.fileExists(atPath: path)
+        }
+        return (found.isEmpty ? Provider.allCases : found).map(AccountConfig.makeDefault)
     }
 
     private static func fileVersion(of data: Data) -> Int? {

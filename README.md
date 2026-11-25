@@ -9,8 +9,10 @@ provider's own credentials locally, nothing ever leaves your Mac.
 
 - **Menu bar icon + popover** — click for the full breakdown, gear icon for
   Settings.
-- **Desktop widgets** — separate from the popover; add any number of small,
-  draggable, always-on-screen widgets, each in its own style (linear bars,
+- **macOS widgets** — native WidgetKit widgets for the desktop and
+  Notification Center, in six styles and three sizes.
+- **Desktop panels** — separate from the popover; add any number of small,
+  draggable, always-on-screen panels, each in its own style (linear bars,
   circular rings, concentric 5h/weekly rings, per-agent breakdown, or a
   single-agent focus view).
 - **Claude Code's own statusline** — once installed, Claude Code's native
@@ -32,13 +34,15 @@ Or without Homebrew, via curl (downloads a prebuilt release):
 curl -fsSL https://raw.githubusercontent.com/shassshank/QuotaPeek/main/install.sh | bash
 ```
 
-Either way installs the menu bar app plus its background daemon, sets both
-to start at login, and wires up the statusLine hooks Claude Code and
-Antigravity use to push live usage data. Safe to re-run.
+Either way installs the menu bar app, sets it to start at login, and wires
+up the statusLine hooks Claude Code and Antigravity use to send live usage.
+There is no background service. Safe to re-run.
 
-The first time the daemon runs, macOS will ask whether it may read the
-"Claude Code-credentials" and "gemini" Keychain items — choose "Always
-Allow" so it doesn't ask again.
+When local data is stale and QuotaPeek is on screen, it may ask the web
+using the CLI's own saved login; the first time, macOS asks whether
+`security` may read the "Claude Code-credentials" (or Codex) Keychain item.
+Choose "Always Allow" so it doesn't ask again, or turn the web fallback off
+per provider in Settings → Accounts.
 
 ## Uninstall
 
@@ -54,8 +58,5 @@ Or, if installed via the curl script:
 
 ## More
 
-For architecture details, manual/source installation, and building the
-daemon and app yourself, see [INSTALL.md](INSTALL.md).
-
-- `API_CONTRACT.md` — the HTTP API contract between the daemon and the app.
-- `Backend/README.md` — how to build/run/test the daemon standalone.
+For architecture details, manual/source installation, and building the app
+yourself, see [INSTALL.md](INSTALL.md).

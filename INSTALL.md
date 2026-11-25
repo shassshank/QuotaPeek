@@ -5,71 +5,57 @@ architecture. For the quick version, see [README.md](README.md).
 
 ## Architecture
 
-Two pieces:
+One app, no background service. Every number comes from the agents
+themselves:
 
-- **`Backend/` — `quotapeekd`**, a small Go daemon that owns everything:
-  credential access, provider polling, config, and error state. It listens
-  on `127.0.0.1:47831` (loopback only — nothing here ever leaves the Mac) and
-  serves a small HTTP API described in full in `API_CONTRACT.md`.
-- **`Sources/QuotaPeek/` — the menu bar app**, a thin Swift/SwiftUI shell
-  (status bar icon, popover, Settings window). It never touches Keychain or
-  any provider API directly — it only talks to the daemon over that local
-  API.
+- **Claude Code and Antigravity** run a `statusLine` hook on every render
+  (`Scripts/claude-statusline-hook.py`, `Scripts/antigravity-statusline-hook.py`,
+  sharing `Scripts/quotapeek_hook.py`). The hook sends the reading to the app
+  as one fire-and-forget datagram on a Unix socket in
+  `~/Library/Application Support/QuotaPeek/` and never waits for it. If the
+  app isn't running the reading is simply dropped; the agent is unaffected.
+- **Codex** writes its rate limits into its own session logs
+  (`~/.codex/sessions/**/rollout-*.jsonl`); the app watches them with
+  FSEvents.
+- **Web fallback** (Claude and Codex): when an account's local data is older
+  than 15 minutes and QuotaPeek is on screen, the app asks the provider's
+  usage endpoint with the CLI's saved login (read-only through `security`;
+  it never refreshes or stores tokens), at most every 10 minutes. Refresh
+  Now asks right away. Each provider's live and web sources can be turned
+  on or off in Settings → Accounts.
 
-The menu bar app also drives an independent set of **desktop widgets**
-(`DesktopWidgetPanel.swift` / `WidgetPanelView.swift`) — small, draggable,
-always-visible panels separate from the popover. Any number can be shown at
-once, each with its own configuration: which provider/account it tracks,
-which window (5h, weekly, context, or the Claude/GPT sub-quota), and a
-display style (combined or per-agent, linear bars or circular rings,
-concentric 5h/weekly rings, or a single-agent focus view). Widgets sit at a
-configurable layer (desktop, normal, or floating) and remember their
-position across restarts.
+The app keeps only the latest reading per account in memory. It publishes
+them to `snapshot.json` (removed when the app quits), which the Claude Code
+hook reads to append Codex and Antigravity to Claude Code's own statusline
+(turn this off in Settings → General) and the macOS widget reads to render.
 
-Separately, `Scripts/claude-statusline-hook.py` — beyond feeding Claude
-Code's own usage to the daemon — also reads the daemon's current Codex and
-Antigravity numbers back out and appends them as extra segments on Claude
-Code's native statusline (5h percentage, progress bar, reset time; for
-Antigravity, also the Claude/GPT sub-quota breakdown). This only flows one
-way: it's Claude Code's statusline that gains Codex/Antigravity info, not
-the reverse. It can be turned off via the `statusline_show_other_agents`
-daemon setting.
+Accounts and settings live in `config.json` in the same folder; problems are
+written to the unified log (subsystem `com.quotapeek`) and to a small capped
+`errors.log`, shown in Settings → Advanced → Recent errors. Secrets are
+redacted before anything is written.
 
-Each provider can be collected two ways, selectable per-provider in the
-app's Settings window (gear icon in the popover):
+Besides the popover, the app drives **desktop panels**
+(`DesktopWidgetPanel.swift` / `WidgetPanelView.swift`): small, draggable,
+always-visible panels, each with its own account, metric and style. The
+**macOS widget** (`Sources/QuotaPeekWidget`, `Sources/QuotaPeekWidgetUI`) is
+a WidgetKit extension inside the app bundle with the same styles.
 
-- **Keychain** — the daemon reads the OAuth credential the provider's own
-  CLI already stored in the macOS Keychain, and polls that provider's API
-  directly on a timer. This is how Antigravity works by default (Claude also
-  supports Keychain polling, but inference polling is off by default).
-- **Injection** — the provider's own CLI pushes live usage data to the
-  daemon in real time, via its documented `statusLine` hook (Claude Code and
-  Antigravity both support one; the hook script piggybacks on it — see
-  `Scripts/claude-statusline-hook.py` / `Scripts/antigravity-statusline-hook.py`).
-  Codex has no such hook, so it has no Injection route: it's polled over the
-  web only (Keychain route), and the `codex` CLI runs only to refresh an
-  expired login.
+Each provider supports multiple accounts (e.g. two Claude subscriptions in
+different config folders), managed in Settings → Accounts. Antigravity's hook
+can't tell logins apart, so only one Antigravity account is tracked.
 
-If both routes are enabled for a provider, the daemon prefers the freshest
-Injection sample and automatically falls back to the last Keychain poll once
-Injection data goes stale (e.g. Claude Code hasn't rendered a status line
-recently) — this is real fallback, not an either/or choice.
+### Upgrading from 1.x
 
-The daemon never silently drops a failure: every collector error is recorded
-with the redacted message (tokens/secrets/full response bodies are always
-stripped or truncated before anything is stored) and surfaced in the app's
-Settings → Advanced tab, under Recent errors.
-
-Each provider also supports multiple accounts (e.g. two Claude subscriptions),
-managed from the Settings → Accounts tab — add, rename, or remove accounts and
-reset an individual account's stored credentials without touching the others.
-See `API_CONTRACT.md` for the full accounts API.
+Versions before 2.0 ran a separate Go daemon (`quotapeekd`). The first launch
+of 2.x (and `install.sh` or the Homebrew cask) stops it and removes its
+LaunchAgent, binary and token caches. `config.json` is kept, so accounts and
+settings carry over.
 
 ## Install manually
 
 ### From source
 
-Requires local `go` and `swift` toolchains.
+Requires a Swift toolchain (Xcode 16 or later for the widget).
 
 ```
 ./install.sh
@@ -84,22 +70,16 @@ curl -fsSL https://raw.githubusercontent.com/shassshank/QuotaPeek/main/install.s
 ```
 
 `install.sh` auto-detects which of these it's doing — building from source
-when run next to `Backend/` and `Package.swift`, downloading the release
-otherwise. Pin a version with `-s -- --version vX.Y.Z`, or force either mode
-explicitly with `--local` / `--remote`.
+when run next to `Package.swift`, downloading the release otherwise. Pin a
+version with `-s -- --version vX.Y.Z`, or force either mode explicitly with
+`--local` / `--remote`.
 
-Either way, it installs the Swift app as a normal `.app` bundle in
-`/Applications` (falling back to `~/Applications`), and installs the daemon
-plus the two statusLine hook scripts to
-`~/Library/Application Support/QuotaPeek/bin`. It also installs
-LaunchAgents so the daemon and the app start at login, and merges a
-`statusLine` entry into `~/.claude/settings.json` and
-`~/.gemini/antigravity-cli/settings.json` (existing settings preserved) so
-the Injection route works out of the box.
-
-The first time the daemon runs, macOS will show its own permission dialog
-asking whether it may read the "Claude Code-credentials" and "gemini"
-Keychain items — choose "Always Allow" so it doesn't ask again.
+Either way, it installs the app as a normal `.app` bundle in `/Applications`
+(falling back to `~/Applications`), installs the statusLine hook scripts to
+`~/Library/Application Support/QuotaPeek/bin`, installs a LaunchAgent so the
+app starts at login, and merges a `statusLine` entry into
+`~/.claude/settings.json` and `~/.gemini/antigravity-cli/settings.json`
+(existing settings preserved, backed up if they were someone else's).
 
 Safe to re-run.
 
@@ -109,15 +89,14 @@ Safe to re-run.
 ~/Library/Application\ Support/QuotaPeek/bin/uninstall.sh
 ```
 
-This stops and removes the LaunchAgents, deletes the app bundle and support
-files, and cleans up the `statusLine` entries it added. See
-`Scripts/README.md` for what it does in detail.
+This removes the LaunchAgent, deletes the app bundle and support files, and
+cleans up the `statusLine` entries it added. See `Scripts/README.md` for what
+it does in detail.
 
 ## Development
 
-- `Backend/README.md` — how to build/run/test the daemon standalone.
-- `API_CONTRACT.md` — the HTTP API contract between the daemon and the app.
-- `swift build` builds the menu bar app; `go build ./...` (from `Backend/`)
-  builds the daemon. Running the daemon standalone (`go run .` from
-  `Backend/`) is the fastest way to iterate on the app's UI against real
-  data without a full `swift build -c release` + reinstall cycle.
+- `swift build` builds the app and the widget; `swift test` runs the tests
+  (set `QP_LIVE=1` for the ones that read your real Codex logs and web usage,
+  `QP_PREVIEW_DIR=<dir>` to render every widget style to PNGs).
+- `python3 -m unittest discover -s Tests/hooks` tests the hook scripts.
+- `./install.sh --local` builds a release bundle and installs it.

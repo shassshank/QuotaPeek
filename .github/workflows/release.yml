@@ -15,13 +15,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          # Not go.mod's minimum: Go 1.22's linker omits LC_UUID, and current
-          # macOS dyld refuses to load a binary without it.
-          go-version: stable
-
       - name: Extract version from tag
         id: version
         run: |
@@ -30,52 +23,40 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Build Go daemon
+      - name: Run tests
         run: |
-          mkdir -p .build-go
-          cd Backend
-          GOOS=darwin GOARCH=arm64 go build -o ../.build-go/quotapeekd-arm64 .
-          GOOS=darwin GOARCH=amd64 go build -o ../.build-go/quotapeekd-amd64 .
-          cd ..
-          lipo -create -output .build-go/quotapeekd .build-go/quotapeekd-arm64 .build-go/quotapeekd-amd64
-          for arch in arm64 x86_64; do
-            otool -arch "$arch" -l .build-go/quotapeekd | grep -q LC_UUID \
-              || { echo "quotapeekd ($arch) has no LC_UUID; dyld will refuse to load it" >&2; exit 1; }
-          done
+          swift test
+          python3 -m unittest discover -s Tests/hooks
 
       - name: Build Swift app
-        run: |
-          swift build -c release --arch arm64 --arch x86_64
-          mkdir -p .build/release
-          # The universal build's output dir differs across Swift versions,
-          # and newer ones already link .build/release to it.
-          BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/QuotaPeek"
-          [ "$BIN" -ef .build/release/QuotaPeek ] || cp "$BIN" .build/release/QuotaPeek
+        run: swift build -c release --arch arm64 --arch x86_64
 
       - name: Assemble .app bundle and ad-hoc sign
         env:
           VERSION: ${{ steps.version.outputs.version }}
           BUILD_NUMBER: ${{ github.run_number }}
         run: |
-          bash Scripts/build-app-bundle.sh \
+          # The universal build's output dir differs across Swift versions;
+          # the app and widget binaries are both taken from it.
+          BIN_DIR="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)" \
+            bash Scripts/build-app-bundle.sh \
             --version "$VERSION" \
             --build "$BUILD_NUMBER"
+          test -x .build/release/QuotaPeek.app/Contents/PlugIns/QuotaPeekWidget.appex/Contents/MacOS/QuotaPeekWidget
 
       - name: Package release tarball
         run: |
           STAGING="$(mktemp -d)"
           # App bundle
           cp -R .build/release/QuotaPeek.app "$STAGING/"
-          # Daemon binary
-          cp .build-go/quotapeekd "$STAGING/"
-          # Hook scripts
+          # Hook scripts and the module they share
           cp Scripts/claude-statusline-hook.py "$STAGING/"
           cp Scripts/antigravity-statusline-hook.py "$STAGING/"
+          cp Scripts/quotapeek_hook.py "$STAGING/"
           # Utility scripts
           cp Scripts/run-with-log-rotation.sh "$STAGING/"
           cp Scripts/uninstall.sh "$STAGING/"
-          # LaunchAgent templates (install.sh --remote needs these)
-          cp LaunchAgents/com.quotapeek.daemon.plist.template "$STAGING/"
+          # LaunchAgent template (install.sh --remote needs it)
           cp LaunchAgents/com.quotapeek.app.plist.template "$STAGING/"
           # Create tarball
           tar czf quotapeek-macos.tar.gz -C "$STAGING" .

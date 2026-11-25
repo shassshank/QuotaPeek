@@ -10,10 +10,10 @@ Build, install, and distribution scripts for QuotaPeek.
 brew tap shassshank/quotapeek
 brew install --cask quotapeek
 
-# Uninstall (removes app and LaunchAgents; keeps config/tokens/logs):
+# Uninstall (removes the app and its LaunchAgent; keeps config and logs):
 brew uninstall --cask quotapeek
 
-# Full removal (also removes config, tokens, logs, and statusLine hooks):
+# Full removal (also removes config, logs, and statusLine hooks):
 brew uninstall --zap --cask quotapeek
 ```
 
@@ -31,12 +31,12 @@ before extraction; installation aborts if it's missing or doesn't match.
 ### 3. DMG install
 
 Download `QuotaPeek-X.Y.Z.dmg` from the GitHub Releases page, open it, then
-double-click **Install QuotaPeek.command** — it installs the app, daemon,
-statusLine hooks, and LaunchAgents in one step (the same file-placement
+double-click **Install QuotaPeek.command** — it installs the app, the
+statusLine hooks and the login item in one step (the same file-placement
 logic as the curl installer, just run against the files already bundled in
-the DMG instead of a download). Just dragging `QuotaPeek.app` to
-`/Applications` is not enough on its own: the app only talks to the daemon
-over its local HTTP API and doesn't set the daemon up itself.
+the DMG instead of a download). Dragging `QuotaPeek.app` to `/Applications`
+also works, but then Claude Code and Antigravity have no hook to report
+through; Codex works either way.
 
 > **Note:** Since the app and installer are ad-hoc signed (not notarized),
 > the first launch of a browser-downloaded `.dmg`'s contents requires:
@@ -46,7 +46,7 @@ over its local HTTP API and doesn't set the daemon up itself.
 
 ### 4. Build from source (`install.sh`)
 
-Requires local `go` and `swift` toolchains:
+Requires a local Swift toolchain:
 
 ```bash
 ./install.sh
@@ -61,9 +61,11 @@ downloads the prebuilt release tarball instead. See the header comment in
 
 | Script | Purpose |
 |--------|---------|
-| `build-app-bundle.sh` | Assembles the Swift binary into a `.app` bundle and ad-hoc codesigns |
+| `build-app-bundle.sh` | Assembles the app and the widget extension into a `.app` bundle and ad-hoc codesigns |
 | `build-dmg.sh` | Creates a `.dmg` disk image from the `.app` bundle |
 | `run-with-log-rotation.sh` | LaunchAgent log rotation wrapper (rotates at 5 MB) |
-| `uninstall.sh` | Complete uninstaller (LaunchAgents + app files + statusLine hooks) |
+| `uninstall.sh` | Complete uninstaller (LaunchAgent + app files + statusLine hooks) |
 | `claude-statusline-hook.py` | StatusLine hook script for Claude Code |
 | `antigravity-statusline-hook.py` | StatusLine hook script for Antigravity |
+| `quotapeek_hook.py` | Module both hooks share: sends readings to the app, reads `snapshot.json` |
+| `measure.sh` | Memory and hook-latency measurement of an installed build |

@@ -6,8 +6,8 @@
 # The Swift UI's Settings "Uninstall" button shells out to exactly that path.
 #
 # Actions (in this order — see note below on why):
-#   1. Stop and remove daemon LaunchAgent (launchctl unload -w, then delete
-#      the plist) and force-kill fallback (pkill) before deleting app support.
+#   1. Stop and remove the pre-2.0 daemon LaunchAgent if one is left over
+#      (launchctl unload -w, delete the plist, pkill fallback).
 #   2. Reverse the statusLine hook injection in settings files:
 #      - ~/.claude/settings.json
 #      - ~/.gemini/antigravity-cli/settings.json
@@ -134,7 +134,7 @@ PY
 reverse_statusline "$HOME/.claude/settings.json"
 reverse_statusline "$HOME/.gemini/antigravity-cli/settings.json"
 
-echo "==> Stopping and removing daemon LaunchAgent"
+echo "==> Removing the pre-2.0 background daemon, if present"
 daemon_plist="$LAUNCH_AGENTS/com.quotapeek.daemon.plist"
 if [[ -f "$daemon_plist" ]]; then
     launchctl unload -w "$daemon_plist" 2>/dev/null || true

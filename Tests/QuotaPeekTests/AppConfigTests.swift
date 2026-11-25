@@ -84,6 +84,14 @@ final class AppConfigTests: XCTestCase {
         XCTAssertEqual(mode, 0o600)
     }
 
+    func testFirstRunSeedsDetectedAgentsAndSaves() throws {
+        let config = AppConfigStore(url: url).load()
+        XCTAssertEqual(config.accounts, AppConfigStore.detectedAccounts())
+        XCTAssertFalse(config.accounts.isEmpty)
+        XCTAssertTrue(config.accounts.allSatisfy { $0.id == AccountConfig.defaultID(for: $0.provider) })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+    }
+
     func testUnreadableConfigIsKeptAside() throws {
         try Data("{not json".utf8).write(to: url)
         let config = AppConfigStore(url: url).load()

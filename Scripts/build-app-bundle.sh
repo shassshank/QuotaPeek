@@ -1,13 +1,12 @@
 #!/bin/bash
 # build-app-bundle.sh — Assemble the Swift binary into a proper macOS .app
-# bundle and ad-hoc codesign both the app and the Go daemon binary.
+# bundle (with the widget extension inside) and ad-hoc codesign it.
 #
 # Usage: Scripts/build-app-bundle.sh [--version X.Y.Z] [--build N]
 #
 # Prerequisites:
 #   - .build/release/QuotaPeek   (swift build -c release output)
 #   - .build/release/QuotaPeekWidget  (same build; embedded as PlugIns/QuotaPeekWidget.appex)
-#   - .build-go/quotapeekd             (go build output)
 #   - Info.plist                      (repo root)
 #   - QuotaPeek.entitlements      (repo root)
 #   - Resources/QuotaPeekWidget-Info.plist, QuotaPeekWidget.entitlements
@@ -54,16 +53,20 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-SWIFT_BINARY="$REPO_DIR/.build/release/QuotaPeek"
-WIDGET_BINARY="$REPO_DIR/.build/release/QuotaPeekWidget"
-if [[ ! -f "$SWIFT_BINARY" && -f "$REPO_DIR/.build/apple/Products/Release/QuotaPeek" ]]; then
-    # `swift build --arch ... --arch ...` (universal binary) outputs here instead.
-    SWIFT_BINARY="$REPO_DIR/.build/apple/Products/Release/QuotaPeek"
-    WIDGET_BINARY="$REPO_DIR/.build/apple/Products/Release/QuotaPeekWidget"
+# Both executables must come from the same build. A universal build
+# (`swift build --arch arm64 --arch x86_64`) puts them under .build/apple
+# instead; BIN_DIR overrides both.
+BIN_DIR="${BIN_DIR:-}"
+if [[ -z "$BIN_DIR" ]]; then
+    BIN_DIR="$REPO_DIR/.build/release"
+    if [[ ! -f "$BIN_DIR/QuotaPeekWidget" && -f "$REPO_DIR/.build/apple/Products/Release/QuotaPeekWidget" ]]; then
+        BIN_DIR="$REPO_DIR/.build/apple/Products/Release"
+    fi
 fi
+SWIFT_BINARY="$BIN_DIR/QuotaPeek"
+WIDGET_BINARY="$BIN_DIR/QuotaPeekWidget"
 WIDGET_INFO_PLIST="$REPO_DIR/Resources/QuotaPeekWidget-Info.plist"
 WIDGET_ENTITLEMENTS="$REPO_DIR/QuotaPeekWidget.entitlements"
-GO_BINARY="$REPO_DIR/.build-go/quotapeekd"
 APP_BUNDLE="$REPO_DIR/.build/release/QuotaPeek.app"
 INFO_PLIST="$REPO_DIR/Info.plist"
 ENTITLEMENTS="$REPO_DIR/QuotaPeek.entitlements"
@@ -73,7 +76,7 @@ MENU_BAR_ICON_2X="$REPO_DIR/Resources/MenuBarIcon@2x.png"
 MENU_BAR_ICON_3X="$REPO_DIR/Resources/MenuBarIcon@3x.png"
 
 # Verify prerequisites
-for f in "$SWIFT_BINARY" "$WIDGET_BINARY" "$GO_BINARY" "$INFO_PLIST" "$ENTITLEMENTS" \
+for f in "$SWIFT_BINARY" "$WIDGET_BINARY" "$INFO_PLIST" "$ENTITLEMENTS" \
          "$WIDGET_INFO_PLIST" "$WIDGET_ENTITLEMENTS" "$APP_ICON" \
          "$MENU_BAR_ICON_1X" "$MENU_BAR_ICON_2X" "$MENU_BAR_ICON_3X"; do
     if [[ ! -f "$f" ]]; then
@@ -169,10 +172,6 @@ done
 echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 
 echo "==> Ad-hoc code signing"
-
-# Sign the Go daemon binary (standalone, not inside the bundle)
-codesign --sign - --force "$GO_BINARY"
-echo "  signed $GO_BINARY"
 
 # Sign the widget extension first with its own (sandbox) entitlements, then
 # the app around it. Never --deep here: it would re-sign the extension with
