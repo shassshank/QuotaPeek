@@ -8,12 +8,15 @@ import XCTest
 /// review without installing: `QP_PREVIEW_DIR=/tmp/qp swift test --filter WidgetPreviewRenderer`.
 @MainActor
 final class WidgetPreviewRenderer: XCTestCase {
-    /// macOS widget point sizes.
+    /// macOS 27 desktop widget sizes, measured on device via WidgetGeometryProbe
+    /// (large: 344x344 with 18 pt margins; small/medium follow the same grid).
     static let sizes: [(WidgetFamily, CGSize, String)] = [
-        (.systemSmall, CGSize(width: 170, height: 170), "small"),
-        (.systemMedium, CGSize(width: 364, height: 170), "medium"),
-        (.systemLarge, CGSize(width: 364, height: 382), "large"),
+        (.systemSmall, CGSize(width: 164, height: 164), "small"),
+        (.systemMedium, CGSize(width: 344, height: 164), "medium"),
+        (.systemLarge, CGSize(width: 344, height: 344), "large"),
     ]
+    /// System content margins on the desktop (measured).
+    static let margin: CGFloat = 18
 
     func testRenderAllStyles() throws {
         guard let dir = ProcessInfo.processInfo.environment["QP_PREVIEW_DIR"] else {
@@ -26,7 +29,7 @@ final class WidgetPreviewRenderer: XCTestCase {
             for style in DesktopWidgetStyle.allCases {
                 for (family, size, name) in Self.sizes {
                     let view = QuotaWidgetView(entry: entry, style: style, family: family)
-                        .padding(16) // stands in for the system content margins
+                        .padding(Self.margin) // stands in for the system content margins
                         .frame(width: size.width, height: size.height)
                         .background(scheme == .dark ? Color(white: 0.16) : Color(white: 0.96))
                         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -49,7 +52,7 @@ final class WidgetPreviewRenderer: XCTestCase {
                         HStack(alignment: .top, spacing: 18) {
                             ForEach(Self.sizes, id: \.2) { family, size, _ in
                                 QuotaWidgetView(entry: entry, style: style, family: family)
-                                    .padding(16)
+                                    .padding(Self.margin)
                                     .frame(width: size.width, height: size.height)
                                     .background(scheme == .dark ? Color(white: 0.16) : Color(white: 0.96))
                                     .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -71,7 +74,7 @@ final class WidgetPreviewRenderer: XCTestCase {
 
         for (state, name) in [(QuotaWidgetState.notRunning, "not-running"), (.ready(QuotaWidgetContent(rows: [], metric: .used, selection: .init())), "empty")] {
             let view = QuotaWidgetView(entry: QuotaEntry(date: Date(), state: state), style: .combinedLinear, family: .systemSmall)
-                .padding(16).frame(width: 170, height: 170).background(Color(white: 0.96))
+                .padding(Self.margin).frame(width: 164, height: 164).background(Color(white: 0.96))
             let renderer = ImageRenderer(content: view)
             renderer.scale = 2
             let tiff = try XCTUnwrap(renderer.nsImage?.tiffRepresentation)

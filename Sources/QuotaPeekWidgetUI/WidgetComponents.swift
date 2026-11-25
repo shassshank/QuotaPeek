@@ -1,9 +1,6 @@
 import QuotaPeekCore
 import SwiftUI
 
-// Building blocks for the widget styles. Visual language follows the desktop
-// panel (same gauges, colours, labels) so both surfaces read the same.
-
 /// One metric of one row, resolved for display.
 struct MetricValue: Identifiable {
     var id: WidgetMetricKind { kind }
@@ -17,8 +14,20 @@ struct MetricValue: Identifiable {
         UsageFormatting.displayPercentAndColor(forUsedPercent: used, metric: metric)
     }
 
-    func percentText(_ metric: PercentageMetric) -> String {
-        "\(Int(display(metric).value.rounded()))%" + (metric == .remaining ? "r" : "")
+    func percentString(_ metric: PercentageMetric) -> String {
+        "\(Int(display(metric).value.rounded()))%"
+    }
+
+    func metricWord(_ metric: PercentageMetric) -> String {
+        metric == .remaining ? "left" : "used"
+    }
+
+    func qualifiedLabel(_ metric: PercentageMetric) -> String {
+        "\(shortLabel) \(metricWord(metric))"
+    }
+
+    func fullQualifiedLabel(_ metric: PercentageMetric) -> String {
+        "\(title) \(metricWord(metric))"
     }
 }
 
@@ -29,81 +38,124 @@ extension QuotaWidgetContent {
         let visible = metrics(for: row)
         var out: [MetricValue] = []
         if visible.contains(.fiveHour), let p = data.usedPercent5h {
-            out.append(MetricValue(kind: .fiveHour, shortLabel: "5h", title: "5h window", used: p, resetsAt: data.resetsAt5h))
+            out.append(MetricValue(kind: .fiveHour, shortLabel: "5h", title: "5-hour", used: p, resetsAt: data.resetsAt5h))
         }
         if visible.contains(.weekly), let p = data.usedPercentWeekly {
             out.append(MetricValue(kind: .weekly, shortLabel: "Wk", title: "Weekly", used: p, resetsAt: data.resetsAtWeekly))
         }
         return out
     }
+
+    var metricWord: String {
+        metric == .remaining ? "left" : "used"
+    }
+
+    var hasStaleOrRestoredRows: Bool {
+        rows.contains { $0.state == .stale || $0.state == .restored }
+    }
+
+    func staleSyncNote(now: Date) -> String? {
+        guard hasStaleOrRestoredRows, let latest = rows.compactMap(\.asOf).max() else { return nil }
+        return "Updated \(UsageFormatting.syncAge(latest, now: now))"
+    }
 }
 
-struct StateBadge: View {
+/// Compact trust-state badge for non-fresh accounts (all text >= 11pt).
+struct StateIndicator: View {
     let state: AccountTrustState
+    var compact: Bool = false
 
     var body: some View {
         switch state {
         case .fresh:
             EmptyView()
         case .stale, .restored, .error, .unknown:
-            CapsuleBadge(text: state == .unknown ? "No data" : state.displayName, color: state.color,
-                         font: .system(size: 8, weight: .semibold), hPadding: 4, vPadding: 1)
+            if compact {
+                StatusDot(color: state.color, size: 7)
+                    .accessibilityLabel(state.displayName)
+            } else {
+                Text(state == .unknown ? "No data" : state.displayName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(state.color)
+                    .lineLimit(1)
+            }
         }
     }
 }
 
-struct IdentityRow: View {
+/// Provider SF Symbol + account name (+ optional label and non-fresh state).
+struct AccountIdentityHeader: View {
     let row: DisplayedAccount
-    var nameFont: Font = .system(size: 11, weight: .semibold)
-    var showLabel = true
+    var fontSize: CGFloat = 13
+    var showLabel: Bool = true
+    var compactState: Bool = false
+    var now: Date? = nil
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             Image(systemName: row.symbolName)
-                .font(.system(size: 10, weight: .bold))
-                .frame(width: 13)
+                .font(.system(size: max(11, fontSize - 1), weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: fontSize + 2)
             Text(row.displayName)
-                .font(nameFont)
+                .font(.system(size: fontSize, weight: .semibold))
+                .foregroundStyle(.primary)
                 .lineLimit(1)
             if showLabel, let label = row.visibleLabel {
                 Text(label)
-                    .font(.system(size: 8, weight: .medium))
+                    .font(.system(size: 11, weight: .regular))
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 3)
-                    .padding(.vertical, 1)
-                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
                     .lineLimit(1)
             }
-            Spacer(minLength: 2)
-            StateBadge(state: row.state)
+            Spacer(minLength: 4)
+            if compactState, row.state == .stale, let now, let asOf = row.asOf {
+                HStack(spacing: 4) {
+                    Text(UsageFormatting.syncAge(asOf, now: now))
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    StatusDot(color: row.state.color, size: 7)
+                }
+            } else {
+                StateIndicator(state: row.state, compact: compactState)
+            }
         }
     }
 }
 
-/// "5h ▓▓▓░░ 58% 2h 5m"
-struct MetricRow: View {
+/// Clean horizontal bar row: "5h  [====---]  58%  2h 14m"
+struct LinearMetricLine: View {
     let value: MetricValue
     let metric: PercentageMetric
     let now: Date
-    var barHeight: CGFloat = 4
-    var showCountdown = true
+    var barHeight: CGFloat = 5
+    var showCountdown: Bool = true
+    var labelWidth: CGFloat = 20
+    var spacing: CGFloat = 6
+    var percentMinWidth: CGFloat = 32
 
     var body: some View {
         let (pct, color) = value.display(metric)
-        HStack(spacing: 5) {
+        HStack(spacing: spacing) {
             Text(value.shortLabel)
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 16, alignment: .leading)
-            LinearProgressBar(percent: pct, color: color, height: barHeight)
-            Text(value.percentText(metric))
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .frame(minWidth: 30, alignment: .trailing)
+                .frame(width: labelWidth, alignment: .leading)
+
+            WidgetBarTrack(percent: pct, color: color, height: barHeight)
+
+            Text(value.percentString(metric))
+                .font(.system(size: 11, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(.primary)
+                .frame(minWidth: percentMinWidth, alignment: .trailing)
+
             if showCountdown, let reset = value.resetsAt {
                 Text(UsageFormatting.formatCountdown(reset, now: now))
-                    .font(.system(size: 8, design: .monospaced))
+                    .font(.system(size: 11, weight: .regular))
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
-                    .frame(width: 38, alignment: .trailing)
+                    .frame(width: 48, alignment: .trailing)
                     .lineLimit(1)
             }
         }
@@ -111,108 +163,106 @@ struct MetricRow: View {
     }
 }
 
-/// A ring with the percentage in the middle and an optional caption below.
-struct LabeledRing: View {
-    let value: MetricValue
-    let metric: PercentageMetric
-    var size: CGFloat = 46
-    var lineWidth: CGFloat = 5
-    var caption: String?
+/// Compact inline metric pair used in Medium/Large secondary account rows.
+struct CompactAccountRow: View {
+    let row: DisplayedAccount
+    let content: QuotaWidgetContent
 
     var body: some View {
-        let (pct, color) = value.display(metric)
-        VStack(spacing: 3) {
-            ZStack {
-                CircularRingProgress(percent: pct, color: color, lineWidth: lineWidth, size: size)
-                VStack(spacing: 0) {
-                    Text(value.percentText(metric))
-                        .font(.system(size: max(9, size * 0.24), weight: .bold, design: .rounded))
-                        .minimumScaleFactor(0.6)
-                        .lineLimit(1)
-                    if size >= 60 {
-                        Text(value.shortLabel)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(.secondary)
+        let values = content.metricValues(for: row)
+        HStack(spacing: 6) {
+            Image(systemName: row.symbolName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            Text(row.displayName)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            Spacer(minLength: 6)
+
+            if values.isEmpty || row.state == .error || row.state == .unknown {
+                RowPlaceholderText(row: row, hasMetricsSelected: !content.metrics(for: row).isEmpty)
+            } else {
+                HStack(spacing: 10) {
+                    ForEach(values) { value in
+                        let (_, color) = value.display(content.metric)
+                        HStack(spacing: 4) {
+                            StatusDot(color: color, size: 6)
+                            Text("\(value.shortLabel) \(value.percentString(content.metric))")
+                                .font(.system(size: 11, weight: .semibold))
+                                .monospacedDigit()
+                                .foregroundStyle(.primary)
+                        }
                     }
                 }
-                .frame(width: size - lineWidth * 2)
             }
-            if let caption {
-                Text(caption)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        }
-    }
-}
 
-/// Header shown on medium and large widgets.
-struct WidgetHeader: View {
-    let content: QuotaWidgetContent
-    let now: Date
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "gauge.with.dots.needle.67percent")
-                .font(.system(size: 9, weight: .semibold))
-            Text("QUOTAPEEK")
-                .font(.system(size: 9, weight: .bold, design: .rounded))
-                .tracking(0.8)
-            Spacer()
-            if let newest = content.rows.compactMap(\.asOf).max() {
-                Text(UsageFormatting.syncAge(newest, now: now))
-                    .font(.system(size: 8))
-            }
+            StateIndicator(state: row.state, compact: true)
         }
-        .foregroundStyle(.secondary)
+        .opacity(row.state == .stale ? 0.85 : 1)
     }
 }
 
 /// Shown when a row has no usable numbers.
-struct RowPlaceholder: View {
+struct RowPlaceholderText: View {
     let row: DisplayedAccount
     let hasMetricsSelected: Bool
 
     var body: some View {
-        Text(!hasMetricsSelected ? "No metrics selected" : row.state == .error ? "Polling error" : "No recent data")
-            .font(.system(size: 9))
+        Text(!hasMetricsSelected ? "No metrics" : row.state == .error ? "Error" : "No data")
+            .font(.system(size: 11, weight: .regular))
             .foregroundStyle(.secondary)
+            .lineLimit(1)
     }
 }
 
-/// "+2 more" when a size can't fit every selected account.
-struct OverflowNote: View {
-    let hidden: Int
+/// Subtle bottom line for metric mode, overflow count, or stale update timestamp.
+struct WidgetFooterBar: View {
+    let leading: String?
+    let trailing: String?
 
     var body: some View {
-        if hidden > 0 {
-            Text("+\(hidden) more")
-                .font(.system(size: 8, weight: .medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
+        if leading != nil || trailing != nil {
+            HStack(spacing: 6) {
+                if let leading {
+                    Text(leading)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                if let trailing {
+                    Text(trailing)
+                        .lineLimit(1)
+                }
+            }
+            .font(.system(size: 11, weight: .regular))
+            .foregroundStyle(.secondary)
         }
     }
 }
 
+/// Empty / app-not-running / error states.
 struct MessageView: View {
     let symbol: String
     let title: String
     let detail: String
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 6) {
             Image(systemName: symbol)
-                .font(.title3)
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 24, weight: .regular))
+                .foregroundStyle(.secondary)
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
                 .multilineTextAlignment(.center)
             Text(detail)
-                .font(.system(size: 9))
+                .font(.system(size: 11, weight: .regular))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+                .lineLimit(3)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

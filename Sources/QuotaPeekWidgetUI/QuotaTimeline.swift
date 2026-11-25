@@ -114,6 +114,7 @@ public struct QuotaTimelineProvider: TimelineProvider {
     }
 
     public func getTimeline(in context: Context, completion: @escaping (Timeline<QuotaEntry>) -> Void) {
+        WidgetLog.logger.debug("timeline family=\(String(describing: context.family), privacy: .public) size=\(Int(context.displaySize.width), privacy: .public)x\(Int(context.displaySize.height), privacy: .public)")
         completion(QuotaTimelineBuilder.timeline(for: QuotaTimelineBuilder.state(from: QuotaSnapshot.read())))
     }
 }
