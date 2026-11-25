@@ -33,7 +33,7 @@ let package = Package(
             dependencies: ["QuotaPeekCore", "QuotaPeekWidgetUI"],
             path: "Sources/QuotaPeekWidget",
             swiftSettings: [.unsafeFlags(["-application-extension"])],
-            linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", "-application-extension"])]
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", "-Xlinker", "-application_extension"])]
         ),
         .testTarget(
             name: "QuotaPeekTests",
