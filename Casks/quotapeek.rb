@@ -10,12 +10,12 @@
 # This provides a free, familiar distribution + uninstall story via:
 #   brew uninstall --cask quotapeek
 cask "quotapeek" do
-  version "1.0.2"
+  version "2.0.0"
   # Must replace :no_check with the real pinned SHA256 before publishing to any tap.
   # Once the checksums workflow publishes a release, download its tarball and run:
   #   shasum -a 256 quotapeek-macos.tar.gz
   # Use that digest (also in SHA256SUMS) for the version and URL below.
-  sha256 "d0f5f434d0542c12d9f232019454349c2f623d978ebacedfd116c8edd2d6cc55"
+  sha256 "a8c9ce6bc70c6c529659ca392d33f766b742c69c9a9e80c71e4e896e910cd663"
 
   url "https://github.com/shassshank/QuotaPeek/releases/download/v#{version}/quotapeek-macos.tar.gz"
   name "QuotaPeek"
