@@ -98,6 +98,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateDesktopWidgetVisibility()
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        store.stopLocalSources()
+    }
+
     /// Reconciles the set of open desktop widget panels against `displayPrefs.widgetConfigurations`,
     /// without touching the menu bar status item or popover. Creates/shows a panel for every
     /// enabled configuration, closes panels for configurations that were disabled or removed.

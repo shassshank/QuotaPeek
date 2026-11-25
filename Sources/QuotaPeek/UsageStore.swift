@@ -36,6 +36,24 @@ final class UsageStore: ObservableObject {
     private let client = DaemonClient()
     private var timer: Timer?
 
+    // MARK: - Local sources (daemon-free path)
+    //
+    // Readings pushed by the statusline hooks (Unix datagrams) and read from
+    // Codex session logs are overlaid on the daemon's accounts: for each
+    // account the newer of the two wins. While both paths run side by side,
+    // disagreements are written to errors.log as "compare" notices.
+    let quotaStore = QuotaStore()
+    private var daemonAccounts: [Account] = []
+    private var datagramListener: DatagramListener?
+    private var codexReaders: [String: CodexLogReader] = [:]
+    private let snapshotWriter = SnapshotWriter()
+    private var lastTimestampOnlyRecompute: [String: Date] = [:]
+    private var lastComparison: [String: String] = [:]
+    /// A timestamp-only reading (same numbers, newer time) refreshes the UI at
+    /// most this often per source, so a hook firing every few seconds does
+    /// not re-render anything.
+    private let timestampOnlyRefreshInterval: TimeInterval = 60
+
     // Polling cadence tiers:
     // - fast: popover is actively open and user is looking at live numbers (5s)
     // - desktop widget: passive always-on-screen widget, popover closed (30s)
@@ -87,11 +105,138 @@ final class UsageStore: ObservableObject {
     private var saveWaiters: [CheckedContinuation<Bool, Never>] = []
 
     func start() {
+        startLocalSources()
         Task {
             await loadConfig()
             await reload()
         }
         scheduleTimer(interval: slowPollInterval)
+    }
+
+    private func startLocalSources() {
+        guard datagramListener == nil else { return }
+        let listener = DatagramListener(path: AppPaths.socketPath) { [weak self] bytes in
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            guard let reading = LocalQuotaParser.datagram(bytes, nowMs: nowMs) else {
+                ErrorLog.warning("hook datagram ignored: unparseable (\(bytes.count) bytes)")
+                return
+            }
+            Task { @MainActor in self?.applyLocalReading(reading) }
+        }
+        do {
+            try listener.start()
+            datagramListener = listener
+        } catch {
+            ErrorLog.error("hook socket unavailable: \(error)")
+        }
+        ensureCodexReaders()
+    }
+
+    /// Stops local sources and removes the hooks' snapshot so they stop
+    /// showing numbers from a QuotaPeek that is no longer running.
+    func stopLocalSources() {
+        datagramListener?.stop()
+        datagramListener = nil
+        codexReaders.values.forEach { $0.stop() }
+        codexReaders.removeAll()
+        snapshotWriter.remove()
+    }
+
+    /// One log reader per Codex home: the CLI default plus any configured account's.
+    private func ensureCodexReaders() {
+        var dirs: Set<String> = [LocalQuotaParser.canonicalConfigDir(nil, provider: .codex)]
+        for account in daemonAccounts where account.provider == .codex {
+            if let dir = account.credentialLocation?.configDir {
+                dirs.insert(LocalQuotaParser.canonicalConfigDir(dir, provider: .codex))
+            }
+        }
+        for dir in dirs where codexReaders[dir] == nil {
+            let reader = CodexLogReader(configDir: dir) { [weak self] reading in
+                Task { @MainActor in self?.applyLocalReading(reading) }
+            }
+            codexReaders[dir] = reader
+            reader.start()
+        }
+    }
+
+    func applyLocalReading(_ reading: LocalReading) {
+        switch quotaStore.apply(reading) {
+        case .ignored:
+            return
+        case .timestampOnly:
+            if let last = lastTimestampOnlyRecompute[reading.key],
+               Date().timeIntervalSince(last) < timestampOnlyRefreshInterval {
+                return
+            }
+        case .changed:
+            break
+        }
+        lastTimestampOnlyRecompute[reading.key] = Date()
+        recomputeAccounts()
+    }
+
+    /// Rebuilds `accounts` from the daemon's view plus local readings and
+    /// republishes only if something visible changed.
+    private func recomputeAccounts() {
+        let nowSec = Int64(Date().timeIntervalSince1970)
+        let staleAfter = Int64(config?.staleAfterSeconds ?? 600)
+        let antigravityCount = daemonAccounts.filter { $0.provider == .antigravity }.count
+        let merged = daemonAccounts.map { account -> Account in
+            guard let reading = localReading(for: account, antigravityCount: antigravityCount) else { return account }
+            compare(account, with: reading)
+            return Self.overlay(account, with: reading, nowSec: nowSec, staleAfter: staleAfter)
+        }
+        if accounts != merged {
+            accounts = merged
+            NotificationManager.shared.evaluate(accounts: accounts, config: config)
+        }
+        snapshotWriter.update(accounts: accounts, showOtherAgents: config?.statuslineShowOtherAgents ?? true)
+    }
+
+    private func localReading(for account: Account, antigravityCount: Int) -> LocalReading? {
+        switch account.provider {
+        case .antigravity:
+            // The agy hook cannot say which login is active, so only a single
+            // Antigravity account can be matched (same rule as the daemon).
+            return antigravityCount == 1 ? quotaStore.reading(provider: .antigravity, configDir: "") : nil
+        case .claude, .codex:
+            let dir = LocalQuotaParser.canonicalConfigDir(account.credentialLocation?.configDir, provider: account.provider)
+            return quotaStore.reading(provider: account.provider, configDir: dir)
+        }
+    }
+
+    /// The newer of the daemon's sample and the local reading wins.
+    static func overlay(_ account: Account, with reading: LocalReading, nowSec: Int64, staleAfter: Int64) -> Account {
+        let readingSec = reading.observedAtMs / 1000
+        guard readingSec > (account.asOf ?? 0) else { return account }
+        var out = account
+        out.data = reading.data
+        out.asOf = readingSec
+        out.activeRoute = reading.source == .web ? .keychain : .injection
+        out.restoredFromDisk = false
+        out.state = nowSec - readingSec > staleAfter ? .stale : .fresh
+        return out
+    }
+
+    /// Side-by-side validation: note when the daemon and the local path
+    /// disagree by 2+ points on samples taken within 15 minutes of each other.
+    private func compare(_ account: Account, with reading: LocalReading) {
+        guard let daemonData = account.data, let asOf = account.asOf,
+              abs(reading.observedAtMs / 1000 - asOf) <= 15 * 60 else { return }
+        func differs(_ a: Double?, _ b: Double?) -> Bool {
+            guard let a, let b else { return false }
+            return abs(a - b) >= 2
+        }
+        let d = reading.data
+        guard differs(daemonData.usedPercent5h, d.usedPercent5h) || differs(daemonData.usedPercentWeekly, d.usedPercentWeekly) else {
+            lastComparison[account.id] = nil
+            return
+        }
+        func fmt(_ v: Double?) -> String { v.map { String(format: "%.0f", $0) } ?? "-" }
+        let signature = "daemon 5h \(fmt(daemonData.usedPercent5h)) wk \(fmt(daemonData.usedPercentWeekly)) vs \(reading.source.rawValue) 5h \(fmt(d.usedPercent5h)) wk \(fmt(d.usedPercentWeekly))"
+        guard lastComparison[account.id] != signature else { return }
+        lastComparison[account.id] = signature
+        ErrorLog.notice("compare \(account.provider.rawValue)/\(account.label): \(signature)")
     }
 
     /// Dynamically switches polling cadence when the popover opens/closes.
@@ -198,10 +343,9 @@ final class UsageStore: ObservableObject {
             if !isDaemonReachable {
                 isDaemonReachable = true
             }
-            if accounts != response.accounts {
-                accounts = response.accounts
-            }
-            NotificationManager.shared.evaluate(accounts: accounts, config: config)
+            daemonAccounts = response.accounts
+            ensureCodexReaders()
+            recomputeAccounts()
             return true
         case .failure(let error):
             lastDaemonError = error
@@ -262,6 +406,7 @@ final class UsageStore: ObservableObject {
             isCollectionPaused = paused
         }
         NotificationManager.shared.evaluate(accounts: accounts, config: cfg)
+        snapshotWriter.update(accounts: accounts, showOtherAgents: cfg.statuslineShowOtherAgents ?? true)
     }
 
     /// Single-flight + "coalesce trailing" save: at most one `PUT /config` is
