@@ -66,7 +66,7 @@ enum LocalQuotaParser {
               (obj["v"] as? Int) == 1,
               let providerRaw = obj["provider"] as? String,
               let provider = Provider(rawValue: providerRaw) else { return nil }
-        let observedAtMs = number(obj["observed_at_ms"]).map { Int64($0) } ?? nowMs
+        let observedAtMs = number(obj["observed_at_ms"]).flatMap(int64) ?? nowMs
         let data: ProviderData?
         switch provider {
         case .claude: data = claude(obj)
@@ -107,7 +107,10 @@ enum LocalQuotaParser {
                   let remaining = number(entry["remaining_fraction"]), (0...1).contains(remaining) else { continue }
             let used = ((1 - remaining) * 1000).rounded() / 10
             var reset = resetTime(entry["reset_time"])
-            if let seconds = number(entry["reset_in_seconds"]) { reset = observedAtSec + Int(seconds) }
+            if let seconds = number(entry["reset_in_seconds"]).flatMap(int),
+               case let (sum, overflow) = observedAtSec.addingReportingOverflow(seconds), !overflow {
+                reset = sum
+            }
             let label = key.lowercased()
             let thirdParty = label.contains("claude") || label.contains("gpt") || label.contains("3p")
             let isWeekly = label.contains("week") || label.contains("7d")
@@ -203,9 +206,21 @@ enum LocalQuotaParser {
 
     /// Unix seconds from a number, numeric string or ISO-8601 string.
     static func resetTime(_ value: Any?) -> Int? {
-        if let d = number(value) { return Int(d) }
-        if let s = value as? String, let date = parseISO8601(s) { return Int(date.timeIntervalSince1970) }
+        if let d = number(value) { return int(d) }
+        if let s = value as? String, let date = parseISO8601(s) { return int(date.timeIntervalSince1970) }
         return nil
+    }
+
+    /// Integer conversions that return nil instead of trapping on values a
+    /// malformed or hostile payload could carry (1e30, ±inf already excluded).
+    static func int(_ d: Double) -> Int? {
+        guard d.isFinite, d > -9.0e15, d < 9.0e15 else { return nil }
+        return Int(d)
+    }
+
+    static func int64(_ d: Double) -> Int64? {
+        guard d.isFinite, d > -9.0e15, d < 9.0e15 else { return nil }
+        return Int64(d)
     }
 
     static func parseISO8601(_ s: String) -> Date? {

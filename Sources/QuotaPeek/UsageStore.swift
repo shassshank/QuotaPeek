@@ -160,11 +160,17 @@ final class UsageStore: ObservableObject {
     }
 
     func applyLocalReading(_ reading: LocalReading) {
+        let previous = quotaStore.readings[reading.key]
         switch quotaStore.apply(reading) {
         case .ignored:
             return
         case .timestampOnly:
-            if let last = lastTimestampOnlyRecompute[reading.key],
+            // Same numbers, newer time: only the "updated" time would move,
+            // so throttle - unless the previous reading had gone stale, in
+            // which case the account must flip back to fresh right away.
+            let staleAfterMs = Int64(config?.staleAfterSeconds ?? 600) * 1000
+            let previousWasFresh = previous.map { reading.observedAtMs - $0.observedAtMs <= staleAfterMs } ?? false
+            if previousWasFresh, let last = lastTimestampOnlyRecompute[reading.key],
                Date().timeIntervalSince(last) < timestampOnlyRefreshInterval {
                 return
             }
@@ -205,10 +211,12 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    /// The newer of the daemon's sample and the local reading wins.
+    /// The newer of the daemon's sample and the local reading wins. The
+    /// daemon's `asOf` has one-second resolution, so a local reading within
+    /// that same second is treated as newer: it comes straight from the agent.
     static func overlay(_ account: Account, with reading: LocalReading, nowSec: Int64, staleAfter: Int64) -> Account {
         let readingSec = reading.observedAtMs / 1000
-        guard readingSec > (account.asOf ?? 0) else { return account }
+        guard reading.observedAtMs >= (account.asOf ?? 0) * 1000 else { return account }
         var out = account
         out.data = reading.data
         out.asOf = readingSec

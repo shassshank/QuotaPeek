@@ -101,6 +101,28 @@ final class QuotaStoreTests: XCTestCase {
 
         account.asOf = 300
         XCTAssertEqual(UsageStore.overlay(account, with: newer, nowSec: 310, staleAfter: 600), account)
+
+        // Same second as the daemon sample (which has 1 s resolution): local wins.
+        account.asOf = 200
+        XCTAssertEqual(UsageStore.overlay(account, with: reading(50, at: 200_900), nowSec: 210, staleAfter: 600).data?.usedPercent5h, 50)
+    }
+
+    func testStaleToFreshIsNotThrottled() {
+        let store = UsageStore()
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        // An old reading (e.g. from a Codex log at startup), then the same
+        // numbers observed just now: the second must still be applied.
+        store.applyLocalReading(reading(10, at: nowMs - 3_600_000))
+        store.applyLocalReading(reading(10, at: nowMs))
+        XCTAssertEqual(store.quotaStore.readings.values.first?.observedAtMs, nowMs)
+    }
+
+    func testHugeNumbersDoNotCrash() {
+        let msg = #"{"v":1,"provider":"antigravity","observed_at_ms":1e30,"quota":{"Gemini 5h":{"remaining_fraction":0.5,"reset_in_seconds":1e300,"reset_time":1e30}}}"#
+        let r = LocalQuotaParser.datagram(Data(msg.utf8), nowMs: 42)
+        XCTAssertEqual(r?.observedAtMs, 42)
+        XCTAssertEqual(r?.data.usedPercent5h, 50)
+        XCTAssertNil(r?.data.resetsAt5h)
     }
 }
 
@@ -119,8 +141,16 @@ final class CodexLogReaderTests: XCTestCase {
         ]
         try lines.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
 
-        let newest = try XCTUnwrap(CodexLogReader.newestRollout(in: dir.appendingPathComponent("sessions")))
-        XCTAssertEqual(URL(fileURLWithPath: newest.path).resolvingSymlinksInPath(), file.resolvingSymlinksInPath())
+        // A resumed older session filed under an earlier date must still be found.
+        let olderDay = dir.appendingPathComponent("sessions/2025/01/02")
+        try FileManager.default.createDirectory(at: olderDay, withIntermediateDirectories: true)
+        try "{}".write(to: olderDay.appendingPathComponent("rollout-old.jsonl"), atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -60)],
+                                              ofItemAtPath: file.path)
+
+        let recent = CodexLogReader.recentRollouts(in: dir.appendingPathComponent("sessions"), limit: 5)
+        XCTAssertEqual(recent.map { URL(fileURLWithPath: $0.path).lastPathComponent }, ["rollout-old.jsonl", "rollout-x.jsonl"])
+        let newest = try XCTUnwrap(recent.last)
         let (data, _) = try XCTUnwrap(CodexLogReader.latestRateLimits(inFile: newest.path))
         XCTAssertEqual(data.usedPercent5h, 20)
     }
