@@ -22,11 +22,13 @@ final class SnapshotWriter {
         }
 
         var v = 1
+        /// Lets hooks ignore a snapshot left behind by a crashed app.
+        var pid = Int(getpid())
         var statuslineShowOtherAgents: Bool
         var accounts: [Entry]
 
         enum CodingKeys: String, CodingKey {
-            case v
+            case v, pid
             case statuslineShowOtherAgents = "statusline_show_other_agents"
             case accounts
         }
