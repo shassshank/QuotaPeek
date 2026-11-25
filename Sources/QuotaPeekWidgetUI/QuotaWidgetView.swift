@@ -1080,9 +1080,10 @@ extension View {
     @ViewBuilder
     func quotaWidgetBackground() -> some View {
         if #available(macOS 14.0, *) {
-            // The system's standard widget fill (as in Xcode's widget
-            // template); Color.clear renders as a flat black panel.
-            containerBackground(.fill.tertiary, for: .widget)
+            // "WidgetBackground" from the extension's asset catalog - the same
+            // colour declared as NSWidgetBackgroundColorName, which macOS also
+            // uses to tint the widget on an unfocused desktop.
+            containerBackground(Color("WidgetBackground", bundle: .main), for: .widget)
         } else {
             padding()
         }

@@ -107,6 +107,25 @@ xcrun vtool -set-build-version macos 14.0 "$(xcrun --sdk macosx --show-sdk-versi
     -output "$WIDGET_APPEX/Contents/MacOS/QuotaPeekWidget" "$WIDGET_BINARY"
 cp "$WIDGET_INFO_PLIST" "$WIDGET_APPEX/Contents/Info.plist"
 
+# Compile the widget's asset catalog and declare its accent and background
+# colours (NSAccentColorName / NSWidgetBackgroundColorName), as Xcode does.
+# macOS uses them to tint the widget on an unfocused desktop; without them
+# it falls back to light glass and the white-tinted text disappears.
+WIDGET_ASSETS="$REPO_DIR/Resources/WidgetAssets.xcassets"
+mkdir -p "$WIDGET_APPEX/Contents/Resources"
+PARTIAL_PLIST="$(mktemp -t quotapeek-widget-assets).plist"
+if ! xcrun actool "$WIDGET_ASSETS" --compile "$WIDGET_APPEX/Contents/Resources" \
+        --platform macosx --target-device mac --minimum-deployment-target 14.0 \
+        --accent-color WidgetAccentColor --widget-background-color WidgetBackground \
+        --output-partial-info-plist "$PARTIAL_PLIST" --output-format human-readable-text \
+        --errors --warnings >/dev/null; then
+    echo "ERROR: actool failed to compile $WIDGET_ASSETS." >&2
+    echo "       If it reports a plug-in failure, run: sudo xcodebuild -runFirstLaunch" >&2
+    exit 1
+fi
+/usr/libexec/PlistBuddy -c "Merge $PARTIAL_PLIST" "$WIDGET_APPEX/Contents/Info.plist"
+rm -f "$PARTIAL_PLIST"
+
 # Generate Info.plists with stamped version/build numbers
 cp "$INFO_PLIST" "$APP_BUNDLE/Contents/Info.plist"
 for plist in "$APP_BUNDLE/Contents/Info.plist" "$WIDGET_APPEX/Contents/Info.plist"; do
