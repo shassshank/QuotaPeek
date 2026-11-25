@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "QuotaPeek",
             path: "Sources/QuotaPeek"
+        ),
+        .testTarget(
+            name: "QuotaPeekTests",
+            dependencies: ["QuotaPeek"],
+            path: "Tests/QuotaPeekTests"
         )
     ]
 )

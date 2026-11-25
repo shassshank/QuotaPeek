@@ -94,16 +94,6 @@ final class DaemonClient {
         await request(url: accountURL(id: accountId, trailingPathComponent: "reset-credentials"), method: "POST")
     }
 
-    /// Fetches usage history points for a given account and route, per P5 contract.
-    func history(accountId: String, route: Route? = nil) async -> Result<HistoryResponse, DaemonError> {
-        var queryItems = [URLQueryItem(name: "accountId", value: accountId)]
-        if let route, route != .none {
-            queryItems.append(URLQueryItem(name: "route", value: route.rawValue))
-        }
-        let url = Self.makeURL(path: "/history", queryItems: queryItems)
-        return await request(url: url, method: "GET")
-    }
-
     // MARK: - Config & Diagnostics
 
     func config() async -> Result<DaemonConfig, DaemonError> {

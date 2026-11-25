@@ -211,11 +211,6 @@ struct Account: Codable, Identifiable, Equatable {
     var restoredFromDisk: Bool
     var state: AccountTrustState
 
-    /// Convenience accessors
-    var isRestoredFromDisk: Bool {
-        restoredFromDisk || state == .restored
-    }
-
     /// `lastErrorObject` (the daemon's `last_error`) is already gated to the
     /// active sample - it's nil once a poll has succeeded more recently than
     /// the failure. `lastError` (`lastError`/health message) is a sticky
@@ -394,16 +389,8 @@ struct Account: Codable, Identifiable, Equatable {
     }
 }
 
-/// Backward compatibility alias during transition
-typealias ProviderStatus = Account
-
 struct StatusResponse: Codable {
     var accounts: [Account]
-
-    enum CodingKeys: String, CodingKey {
-        case accounts
-        case providers
-    }
 
     init(accounts: [Account] = []) {
         self.accounts = accounts
@@ -411,12 +398,7 @@ struct StatusResponse: Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.accounts = container.firstDecoded([Account].self, .accounts, .providers) ?? []
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(accounts, forKey: .accounts)
+        self.accounts = (try? container.decodeIfPresent([Account].self, forKey: .accounts)) ?? []
     }
 }
 
@@ -606,81 +588,6 @@ struct ErrorLogEntry: Codable, Identifiable {
 
 struct ErrorsResponse: Codable {
     var errors: [ErrorLogEntry]
-}
-
-// MARK: - History Models
-
-struct HistoryPoint: Codable, Identifiable {
-    var id: String { "\(at)-\(usedPercent)" }
-    var at: Int64
-    var usedPercent: Double
-
-    var date: Date {
-        Date(timeIntervalSince1970: TimeInterval(at))
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case at
-        case timestamp
-        case time
-        case usedPercentCamel = "usedPercent"
-        case usedPercentSnake = "used_percent"
-        case usedPercentage = "used_percentage"
-        case usage
-        case percent
-    }
-
-    init(at: Int64, usedPercent: Double) {
-        self.at = at
-        self.usedPercent = usedPercent
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-
-        if let at = container.firstDecoded(Int64.self, .at, .timestamp, .time) {
-            self.at = at
-        } else if let atDouble = try? container.decode(Double.self, forKey: .at) {
-            self.at = Int64(atDouble)
-        } else {
-            self.at = 0
-        }
-
-        self.usedPercent = container.firstDecoded(Double.self, .usedPercentCamel, .usedPercentSnake,
-                                                   .usedPercentage, .usage, .percent)
-            ?? 0.0
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(at, forKey: .at)
-        try container.encode(usedPercent, forKey: .usedPercentCamel)
-    }
-}
-
-struct HistoryResponse: Codable {
-    var points: [HistoryPoint]
-
-    enum CodingKeys: String, CodingKey {
-        case points
-        case data
-        case history
-    }
-
-    init(points: [HistoryPoint] = []) {
-        self.points = points
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.points = container.firstDecoded([HistoryPoint].self, .points, .data, .history)
-            ?? []
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(points, forKey: .points)
-    }
 }
 
 private extension KeyedDecodingContainer {

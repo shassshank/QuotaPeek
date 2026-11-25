@@ -86,9 +86,6 @@ struct WidgetScope: Codable, Equatable {
     var includedAccountIds: Set<String>?
 
     static let allAgents = WidgetScope(includedAccountIds: nil)
-    static func singleAgent(_ accountId: String) -> WidgetScope {
-        WidgetScope(includedAccountIds: [accountId])
-    }
 
     init(includedAccountIds: Set<String>?) {
         self.includedAccountIds = includedAccountIds

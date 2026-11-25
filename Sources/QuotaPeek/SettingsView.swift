@@ -294,7 +294,7 @@ private struct AccountsSettingsTab: View {
                 accountToDelete = nil
             }
         } message: {
-            Text("Are you sure you want to remove '\(accountToDelete?.label ?? "")'? Its stored quota history will be deleted. CLI credentials on your Mac remain untouched.")
+            Text("Are you sure you want to remove '\(accountToDelete?.label ?? "")'? Its stored quota readings will be deleted. CLI credentials on your Mac remain untouched.")
         }
     }
 

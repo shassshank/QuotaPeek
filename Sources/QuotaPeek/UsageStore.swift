@@ -6,7 +6,6 @@ import Combine
 @MainActor
 final class UsageStore: ObservableObject {
     @Published var accounts: [Account] = []
-    @Published var history: [String: [HistoryPoint]] = [:] // Keyed by accountId
     @Published var isDaemonReachable = true
     @Published var isRefreshing = false
     @Published var isCollectionPaused = false
@@ -186,9 +185,7 @@ final class UsageStore: ObservableObject {
             applyFetchResult(await client.status())
         case .refresh(let accountId):
             isRefreshing = true
-            if applyFetchResult(await client.refresh(accountId: accountId)) {
-                await loadAllHistory()
-            }
+            applyFetchResult(await client.refresh(accountId: accountId))
             isRefreshing = false
         }
     }
@@ -236,7 +233,6 @@ final class UsageStore: ObservableObject {
     func deleteAccount(id: String) async -> Result<SimpleSuccessResponse, DaemonError> {
         let result = await client.deleteAccount(id: id)
         if case .success = result {
-            history.removeValue(forKey: id)
             await reload()
         }
         return result
@@ -353,51 +349,10 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    // MARK: - History
-
-    func loadHistory(for account: Account, route: Route? = nil) async {
-        let targetRoute: Route
-        if let route, route != .none {
-            targetRoute = route
-        } else if account.activeRoute != .none {
-            targetRoute = account.activeRoute
-        } else if let firstEnabled = account.routesEnabled.first {
-            targetRoute = firstEnabled
-        } else {
-            return
-        }
-        let result = await client.history(accountId: account.id, route: targetRoute)
-        if case .success(let resp) = result {
-            history[account.id] = resp.points
-        }
-    }
-
-    func loadAllHistory() async {
-        for account in accounts where isAccountEnabled(account) {
-            await loadHistory(for: account)
-        }
-    }
-
     // MARK: - Trust-State & Status Queries
 
     func isAccountEnabled(_ account: Account) -> Bool {
         !account.routesEnabled.isEmpty
-    }
-
-    func isProviderEnabled(_ provider: Provider) -> Bool {
-        let providerAccounts = accounts.filter { $0.provider == provider }
-        if !providerAccounts.isEmpty {
-            return providerAccounts.contains { isAccountEnabled($0) }
-        }
-        if let config = config?.config(for: provider) {
-            return !config.routesEnabled.isEmpty
-        }
-        return true
-    }
-
-    /// Single source of truth: branches on server-computed `state` field per P5
-    func isAccountStale(_ account: Account) -> Bool {
-        account.state == .stale || account.state == .restored
     }
 
     /// Highest usage percent across enabled accounts.
