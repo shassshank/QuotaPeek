@@ -75,14 +75,46 @@ final class QuotaStoreTests: XCTestCase {
                      data: ProviderData(usedPercent5h: pct))
     }
 
-    func testNewestWinsAndLateOlderReadingIsIgnored() {
+    func testUsageOnlyMovesForwardWithinAWindow() {
         let store = QuotaStore()
         XCTAssertEqual(store.apply(reading(10, at: 2000)), .changed)
         XCTAssertEqual(store.apply(reading(5, at: 1000)), .ignored)
         XCTAssertEqual(store.reading(provider: .claude, configDir: "/c")?.data.usedPercent5h, 10)
         XCTAssertEqual(store.apply(reading(10, at: 3000)), .timestampOnly)
-        XCTAssertEqual(store.apply(reading(11, at: 3000)), .ignored)
         XCTAssertEqual(store.apply(reading(12, at: 4000)), .changed)
+    }
+
+    /// An idle Claude session keeps re-sending hours-old rate limits with a
+    /// fresh timestamp; it must not pull the numbers back (the flip-flop seen
+    /// in validation: "0% / 36%" vs the live "55% / 43%").
+    func testIdleSessionWithStaleNumbersCannotOverwrite() {
+        let store = QuotaStore()
+        let live = ProviderData(usedPercent5h: 55, resetsAt5h: 20_000, usedPercentWeekly: 43, resetsAtWeekly: 900_000)
+        let idle = ProviderData(usedPercent5h: 0, resetsAt5h: 2_000, usedPercentWeekly: 36, resetsAtWeekly: 900_000)
+        func r(_ d: ProviderData, _ ms: Int64) -> LocalReading {
+            LocalReading(provider: .claude, configDir: "/c", observedAtMs: ms, source: .hook, data: d)
+        }
+        XCTAssertEqual(store.apply(r(live, 1_000)), .changed)
+        for t in stride(from: Int64(2_000), through: 20_000, by: 3_000) {
+            XCTAssertEqual(store.apply(r(idle, t)), .ignored)
+            XCTAssertEqual(store.apply(r(live, t + 1)), .timestampOnly)
+        }
+        XCTAssertEqual(store.reading(provider: .claude, configDir: "/c")?.data, live)
+
+        // A genuinely new 5h window (later reset) wins even with a lower percentage.
+        let reset = ProviderData(usedPercent5h: 1, resetsAt5h: 38_000, usedPercentWeekly: 43, resetsAtWeekly: 900_000)
+        XCTAssertEqual(store.apply(r(reset, 30_000)), .changed)
+        XCTAssertEqual(store.reading(provider: .claude, configDir: "/c")?.data.usedPercent5h, 1)
+    }
+
+    func testMixedReadingTakesBestOfEachWindow() {
+        let a = ProviderData(usedPercent5h: 50, resetsAt5h: 10_000, usedPercentWeekly: 40, resetsAtWeekly: 900_000)
+        let b = ProviderData(usedPercent5h: 20, resetsAt5h: 5_000, usedPercentWeekly: 44, resetsAtWeekly: 900_000)
+        let (merged, newer, older) = QuotaWindows.merge(existing: a, incoming: b)
+        XCTAssertEqual(merged.usedPercent5h, 50)
+        XCTAssertEqual(merged.usedPercentWeekly, 44)
+        XCTAssertTrue(newer)
+        XCTAssertTrue(older)
     }
 
     func testOverlayPrefersNewerSourceAndMarksStaleness() {

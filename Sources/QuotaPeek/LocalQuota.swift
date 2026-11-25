@@ -21,36 +21,103 @@ struct LocalReading: Equatable {
     }
 }
 
-/// Latest reading per (provider, config dir). Newest `observedAtMs` wins, so a
-/// late-arriving older reading can never overwrite a newer one. Main-actor
-/// only: every source hops to the main queue before applying.
+/// Latest reading per (provider, config dir). Main-actor only: every source
+/// hops to the main queue before applying.
+///
+/// Readings are merged per quota window rather than "newest message wins":
+/// an idle Claude session keeps re-rendering its statusline with the rate
+/// limits from its last API call, hours old but sent with a fresh timestamp.
+/// Within one window usage only grows, and a new window has a later reset,
+/// so for each window the later reset wins and, within the same window, the
+/// higher percentage wins. A stale reading can then never pull numbers back.
 @MainActor
 final class QuotaStore {
     private(set) var readings: [String: LocalReading] = [:]
 
     enum ApplyResult: Equatable {
-        /// Not newer than the stored reading; nothing changed.
+        /// Older information than what is stored (or not newer); nothing changed.
         case ignored
-        /// Newer, same numbers: only the timestamp advanced.
+        /// Same numbers, newer time: only the timestamp advanced.
         case timestampOnly
-        /// Newer with different numbers (or the first reading for this key).
+        /// At least one window moved forward (or the first reading for this key).
         case changed
     }
 
-    /// Stores `reading` only if it is newer than what is held for its key.
     @discardableResult
     func apply(_ reading: LocalReading) -> ApplyResult {
         guard let existing = readings[reading.key] else {
             readings[reading.key] = reading
             return .changed
         }
-        guard reading.observedAtMs > existing.observedAtMs else { return .ignored }
-        readings[reading.key] = reading
-        return existing.data == reading.data ? .timestampOnly : .changed
+        let (merged, newer, older) = QuotaWindows.merge(existing: existing.data, incoming: reading.data)
+        if !newer {
+            // Nothing in the reading moves any window forward. Only a reading
+            // that fully agrees (not stale on any window) refreshes the time.
+            guard !older, reading.observedAtMs > existing.observedAtMs else { return .ignored }
+            readings[reading.key]?.observedAtMs = reading.observedAtMs
+            readings[reading.key]?.source = reading.source
+            return .timestampOnly
+        }
+        var stored = reading
+        stored.data = merged
+        stored.observedAtMs = max(existing.observedAtMs, reading.observedAtMs)
+        readings[reading.key] = stored
+        return merged == existing.data ? .timestampOnly : .changed
     }
 
     func reading(provider: Provider, configDir: String) -> LocalReading? {
         readings[LocalReading.key(provider: provider, configDir: configDir)]
+    }
+}
+
+// MARK: - Window merge
+
+enum QuotaWindows {
+    /// Resets this close together are the same window: Antigravity reports a
+    /// relative reset, so the absolute time jitters by a few seconds.
+    static let sameWindowTolerance = 300
+    /// Percentages this close are equal (float noise, rounding).
+    static let percentTolerance = 0.05
+
+    /// +1 if `incoming` is newer information for this window, -1 if older, 0 if the same.
+    static func rank(incoming: (pct: Double?, reset: Int?), existing: (pct: Double?, reset: Int?)) -> Int {
+        guard let newPct = incoming.pct else { return existing.pct == nil ? 0 : -1 }
+        guard let oldPct = existing.pct else { return 1 }
+        if let newReset = incoming.reset, let oldReset = existing.reset,
+           abs(newReset - oldReset) > sameWindowTolerance {
+            return newReset > oldReset ? 1 : -1
+        }
+        if newPct > oldPct + percentTolerance { return 1 }
+        if newPct < oldPct - percentTolerance { return -1 }
+        return 0
+    }
+
+    /// Per-window best of both. `newer`: some window moved forward;
+    /// `older`: the incoming reading is behind on some window.
+    static func merge(existing: ProviderData, incoming: ProviderData) -> (ProviderData, newer: Bool, older: Bool) {
+        var out = existing
+        var newer = false
+        var older = false
+        func pick(_ pct: WritableKeyPath<ProviderData, Double?>, _ reset: WritableKeyPath<ProviderData, Int?>) {
+            let r = rank(incoming: (incoming[keyPath: pct], incoming[keyPath: reset]),
+                         existing: (existing[keyPath: pct], existing[keyPath: reset]))
+            if r > 0 {
+                newer = true
+                out[keyPath: pct] = incoming[keyPath: pct]
+                out[keyPath: reset] = incoming[keyPath: reset]
+            } else if r < 0 {
+                older = true
+            } else if incoming[keyPath: reset] != nil {
+                // Same window: keep the more precise reset reported last.
+                out[keyPath: reset] = incoming[keyPath: reset]
+            }
+        }
+        pick(\.usedPercent5h, \.resetsAt5h)
+        pick(\.usedPercentWeekly, \.resetsAtWeekly)
+        pick(\.usedPercent5hThirdParty, \.resetsAt5hThirdParty)
+        pick(\.usedPercentWeeklyThirdParty, \.resetsAtWeeklyThirdParty)
+        if let ctx = incoming.contextWindowUsedPercent { out.contextWindowUsedPercent = ctx }
+        return (out, newer, older)
     }
 }
 
