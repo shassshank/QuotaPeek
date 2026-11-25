@@ -331,8 +331,7 @@ final class DisplayPreferences: ObservableObject {
         }
     }
 
-    func dotColor(for account: Account, isDaemonReachable: Bool) -> DotColor {
-        guard isDaemonReachable else { return .gray }
+    func dotColor(for account: Account) -> DotColor {
         switch account.state {
         case .error:
             return .orange
@@ -376,7 +375,7 @@ final class DisplayPreferences: ObservableObject {
 
     /// Generates a crisp multi-dot NSImage representing per-account status in the menu bar.
     /// Strictly branches on account `state` per Task B6: stale/disconnected/error accounts never render as healthy green dots.
-    func generateDotsImage(accounts: [Account], isDaemonReachable: Bool) -> NSImage {
+    func generateDotsImage(accounts: [Account]) -> NSImage {
         let dotDiameter: CGFloat = 8.0
         let dotSpacing: CGFloat = 4.0
         let totalCount = max(accounts.count, 1)
@@ -400,7 +399,7 @@ final class DisplayPreferences: ObservableObject {
                 let rect = NSRect(x: x, y: y, width: dotDiameter, height: dotDiameter)
                 let path = NSBezierPath(ovalIn: rect)
 
-                let color = dotColor(for: account, isDaemonReachable: isDaemonReachable)
+                let color = dotColor(for: account)
                 color.nsColor.setFill()
                 path.fill()
             }

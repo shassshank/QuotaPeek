@@ -283,16 +283,6 @@ extension Array where Element == Route {
     }
 }
 
-extension DaemonConfig {
-    func providerConfigOrDefault(for provider: Provider) -> ProviderConfig {
-        config(for: provider) ?? ProviderConfig(
-            routesEnabled: [.keychain],
-            keychainPollIntervalSec: provider == .codex ? 120 : 60
-        )
-    }
-}
-
-
 func noMetricsPlaceholder(font: Font, vPadding: CGFloat) -> some View {
     noRecentDataPlaceholder(font: font, text: "No metrics selected")
         .padding(.vertical, vPadding)

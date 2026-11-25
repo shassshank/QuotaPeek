@@ -35,6 +35,16 @@ final class CodexLogReader {
 
     deinit { stop() }
 
+    /// Re-reads the newest logs. If the sessions folder did not exist at
+    /// launch (Codex never run yet) and exists now, starts watching it.
+    func rescan() {
+        if stream == nil, FileManager.default.fileExists(atPath: sessionsDirectory.path) {
+            start()
+        } else {
+            queue.async { self.scanRecent() }
+        }
+    }
+
     func start() {
         guard stream == nil else { return }
         let dir = sessionsDirectory.path

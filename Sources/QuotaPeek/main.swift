@@ -41,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // delegate wasn't registered yet.
         _ = NotificationManager.shared
 
-        Self.ensureDaemonLoaded()
+        LegacyDaemon.retireIfInstalled()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
@@ -53,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateStatusItem()
 
         store.$accounts
-            .combineLatest(store.$isDaemonReachable, store.$config, store.$isCollectionPaused)
+            .combineLatest(store.$config)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updateStatusItem()
@@ -102,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        store.stopLocalSources()
+        store.stop()
     }
 
     /// `quotapeek://open` from a click on the macOS widget: show the popover
@@ -182,7 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let mode = displayPrefs.menuBarMode
         let metric = displayPrefs.percentageMetric
-        let isWarning = store.isStaleOrFailing
+        let isWarning = store.hasFailingAccount
 
         let enabledAccounts = displayPrefs.providerOrder.flatMap { provider in
             store.accounts.filter { $0.provider == provider && store.isAccountEnabled($0) }
@@ -198,7 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .coloredDots:
                 let dotColors = enabledAccounts.isEmpty
                     ? [.gray]
-                    : enabledAccounts.map { displayPrefs.dotColor(for: $0, isDaemonReachable: store.isDaemonReachable) }
+                    : enabledAccounts.map { displayPrefs.dotColor(for: $0) }
                 imageKind = .dots(dotColors)
             }
             return StatusItemRenderState(
@@ -211,8 +211,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if isWarning {
-            targetState = renderState(icon: .warning, label: "QuotaPeek: Service warning",
-                                      value: "Service unreachable or provider error")
+            targetState = renderState(icon: .warning, label: "QuotaPeek: Account warning",
+                                      value: "An account could not be read")
         } else if let maxUsage = store.highestUsagePercent {
             let displayVal = displayPrefs.displayPercent(forUsedPercent: maxUsage)
             let accessibilityDesc = "QuotaPeek: \(Int(displayVal))% \(metric.displayName.lowercased())"
@@ -247,7 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .gauge(let desc):
             button.image = logoImage(accessibilityDesc: desc)
         case .dots:
-            button.image = displayPrefs.generateDotsImage(accounts: enabledAccounts, isDaemonReachable: store.isDaemonReachable)
+            button.image = displayPrefs.generateDotsImage(accounts: enabledAccounts)
         }
     }
 
@@ -326,7 +326,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func togglePauseMenuAction() {
         let target = !store.isCollectionPaused
-        Task { _ = await store.setCollectionPaused(target) }
+        _ = store.setCollectionPaused(target)
     }
 
     @objc private func checkForUpdatesMenuAction() {
@@ -334,80 +334,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quitMenuAction() {
-        AppDelegate.quitAndStopDaemon()
-    }
-
-    /// Shells out to (re)load the daemon LaunchAgent at app launch.
-    ///
-    /// `quitAndStopDaemon()` below deliberately unloads the daemon without `-w`
-    /// so Quit only stops it for the current session, not permanently - but
-    /// launchd doesn't reload an unloaded-without-`-w` job on its own until the
-    /// next login/boot. Without this, relaunching the app after using Quit (e.g.
-    /// double-clicking it in Applications rather than logging out and back in)
-    /// leaves the daemon gone: the UI comes back but every request to it fails
-    /// with "Service unreachable" and no accounts ever populate.
-    ///
-    /// `launchctl load` on an already-loaded job just errors harmlessly (exit
-    /// status non-zero, no effect on the running daemon), so this is safe to
-    /// call unconditionally on every launch. Fire-and-forget off the main
-    /// thread so a slow/hung launchctl can't delay the rest of startup.
-    static func ensureDaemonLoaded() {
-        let plistPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/com.quotapeek.daemon.plist")
-            .path
-        guard FileManager.default.fileExists(atPath: plistPath) else { return }
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-            process.arguments = ["load", plistPath]
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            do {
-                try process.run()
-                process.waitUntilExit()
-            } catch {
-                // Ignore - if this fails, the daemon was likely already
-                // running and store.start()'s polling will confirm reachability.
-            }
-        }
-    }
-
-    /// Shells out to unload the LaunchAgent daemon plist and terminates app (Task C8)
-    ///
-    /// Deliberately `unload` without `-w`: `-w` persists a "Disabled" override
-    /// for the job, which would stop it from auto-starting again at the next
-    /// login too, not just for the rest of this session. Quitting should only
-    /// stop the daemon for now — `install.sh --daemon-stop` is the explicit,
-    /// persistent version of this if that's what's wanted instead.
-    ///
-    /// Runs the `launchctl unload` process and waits for it off the main thread
-    /// (mirroring the uninstall-script fix in SettingsView.runUninstallScript) so
-    /// Quit never blocks the UI. `NSApp.terminate(nil)` is only called once the
-    /// unload attempt has finished (or failed to launch), hopped back to the main
-    /// thread. There's no existing timeout mechanism elsewhere in this codebase to
-    /// model a hard bound on `launchctl unload` after, so this keeps the wait
-    /// unbounded but off the main thread; a hang here only delays app exit, it no
-    /// longer freezes the UI.
-    static func quitAndStopDaemon() {
-        let plistPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/com.quotapeek.daemon.plist")
-            .path
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-            process.arguments = ["unload", plistPath]
-            do {
-                try process.run()
-                process.waitUntilExit()
-            } catch {
-                // Ignore - proceed to quit regardless of whether the unload succeeded.
-            }
-            DispatchQueue.main.async {
-                NSApp.terminate(nil)
-            }
-        }
+        NSApp.terminate(nil)
     }
 
     /// Creates and attaches a fresh popover content view controller, wiring up the

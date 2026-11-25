@@ -27,9 +27,6 @@ struct PopoverView: View {
         VStack(alignment: .leading, spacing: 12) {
             header
 
-            if !store.isDaemonReachable {
-                disconnectedBanner
-            }
 
             if store.isCollectionPaused {
                 pausedBanner
@@ -86,11 +83,8 @@ struct PopoverView: View {
 
             Button {
                 let target = !store.isCollectionPaused
-                Task {
-                    let res = await store.setCollectionPaused(target)
-                    if case .failure = res {
-                        pauseErrorMessage = "Failed to update pause state. Background service may be unreachable."
-                    }
+                if case .failure(let error) = store.setCollectionPaused(target) {
+                    pauseErrorMessage = error.description
                 }
             } label: {
                 Image(systemName: store.isCollectionPaused ? "play.circle" : "pause.circle")
@@ -109,21 +103,6 @@ struct PopoverView: View {
         }
     }
 
-    private var disconnectedBanner: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-            Text("Background service not reachable")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Warning: Background service not reachable")
-    }
-
     private var pausedBanner: some View {
         HStack(spacing: 6) {
             Image(systemName: "pause.circle.fill")
@@ -133,11 +112,8 @@ struct PopoverView: View {
                 .foregroundStyle(.secondary)
             Spacer()
             Button("Resume") {
-                Task {
-                    let res = await store.setCollectionPaused(false)
-                    if case .failure = res {
-                        pauseErrorMessage = "Failed to resume data collection. Background service may be unreachable."
-                    }
+                if case .failure(let error) = store.setCollectionPaused(false) {
+                    pauseErrorMessage = error.description
                 }
             }
             .buttonStyle(.bordered)
@@ -248,7 +224,7 @@ private struct AccountCard: View {
         switch account.state {
         case .restored:
             badge(text: "Last known — stale since restart", color: .purple)
-                .help("Usage data restored from disk after daemon restart; not yet re-polled")
+                .help("Usage data restored from disk; not yet re-read")
         case .stale:
             badge(text: "Stale", color: .orange)
                 .help("Data is older than the configured freshness threshold")

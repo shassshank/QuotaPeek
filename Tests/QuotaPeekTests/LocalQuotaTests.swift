@@ -118,30 +118,36 @@ final class QuotaStoreTests: XCTestCase {
         XCTAssertTrue(older)
     }
 
-    func testOverlayPrefersNewerSourceAndMarksStaleness() {
-        var account = Account(id: "a", provider: .claude, label: "L", routesEnabled: [.keychain],
-                              activeRoute: .keychain, data: ProviderData(usedPercent5h: 1), asOf: 100,
-                              restoredFromDisk: true, state: .stale)
-        let newer = reading(50, at: 200_000)
-        let merged = UsageStore.overlay(account, with: newer, nowSec: 210, staleAfter: 600)
-        XCTAssertEqual(merged.data?.usedPercent5h, 50)
-        XCTAssertEqual(merged.asOf, 200)
-        XCTAssertEqual(merged.state, .fresh)
-        XCTAssertEqual(merged.activeRoute, .injection)
-        XCTAssertFalse(merged.restoredFromDisk)
+    func testAccountsTakeTheirReadingAndAgeToStale() {
+        let config = AppConfig(accounts: [AccountConfig.makeDefault(.claude), AccountConfig.makeDefault(.codex)])
+        let claude = reading(50, at: 200_000)
+        let build = { (now: TimeInterval, issue: [String: String]) in
+            UsageStore.buildAccounts(config: config, readings: { $0.provider == .claude ? claude : nil },
+                                     webIssue: issue, now: Date(timeIntervalSince1970: now))
+        }
+        let fresh = build(210, [:])
+        XCTAssertEqual(fresh[0].data?.usedPercent5h, 50)
+        XCTAssertEqual(fresh[0].asOf, 200)
+        XCTAssertEqual(fresh[0].state, .fresh)
+        XCTAssertEqual(fresh[0].activeRoute, .injection)
+        XCTAssertEqual(fresh[1].state, .unknown)
+        XCTAssertNil(fresh[1].data)
 
-        XCTAssertEqual(UsageStore.overlay(account, with: newer, nowSec: 1000, staleAfter: 600).state, .stale)
+        // Past the stale threshold; a web failure explains why it wasn't refreshed.
+        let stale = build(1_000, [AccountConfig.defaultID(for: .claude): "HTTP 500"])
+        XCTAssertEqual(stale[0].state, .stale)
+        XCTAssertEqual(stale[0].displayLastError, "HTTP 500")
 
-        account.asOf = 300
-        XCTAssertEqual(UsageStore.overlay(account, with: newer, nowSec: 310, staleAfter: 600), account)
-
-        // Same second as the daemon sample (which has 1 s resolution): local wins.
-        account.asOf = 200
-        XCTAssertEqual(UsageStore.overlay(account, with: reading(50, at: 200_900), nowSec: 210, staleAfter: 600).data?.usedPercent5h, 50)
+        // No reading at all plus a web failure is an error.
+        let failing = build(210, [AccountConfig.defaultID(for: .codex): "login expired"])
+        XCTAssertEqual(failing[1].state, .error)
+        XCTAssertNil(failing[0].displayLastError)
     }
 
-    func testStaleToFreshIsNotThrottled() {
-        let store = UsageStore()
+    func testStaleToFreshIsNotThrottled() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = UsageStore(configStore: AppConfigStore(url: dir.appendingPathComponent("config.json")))
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         // An old reading (e.g. from a Codex log at startup), then the same
         // numbers observed just now: the second must still be applied.

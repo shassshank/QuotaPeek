@@ -21,23 +21,18 @@ struct SettingsView: View {
                 .tabItem { Label("Advanced", systemImage: "gearshape.2") }
         }
         .frame(minWidth: 560, idealWidth: 620, maxWidth: 720, minHeight: 580, idealHeight: 720)
-        .task {
-            await store.loadConfig()
-            await store.loadErrors()
-            await store.reload()
-        }
+        .onAppear { store.loadErrors() }
     }
 }
 
 private struct RouteKey: Hashable {
     let accountId: String
-    let provider: Provider
     let route: Route
 }
 
 private struct RouteTestState {
     var isLoading: Bool
-    var result: TestRouteResponse?
+    var result: RouteCheckResult?
 }
 
 private enum LaunchAgentManager {
@@ -163,13 +158,10 @@ private struct AccountsSettingsTab: View {
     @State private var selectedAccountId: String?
     @State private var isShowingAddSheet = false
     @State private var editingLabel = ""
-    @State private var isRenaming = false
     @State private var renameError: String?
     @State private var accountToDelete: Account?
     @State private var showDeleteConfirmation = false
     @State private var testStatuses: [RouteKey: RouteTestState] = [:]
-    @State private var draftConfig: DaemonConfig = DaemonConfig()
-    @State private var hasInitializedConfig = false
 
     private var selectedAccount: Account? {
         store.accounts.first { $0.id == selectedAccountId } ?? store.accounts.first
@@ -255,23 +247,14 @@ private struct AccountsSettingsTab: View {
             if selectedAccountId == nil {
                 selectedAccountId = store.accounts.first?.id
             }
-            if let cfg = store.config {
-                initializeDraftConfig(cfg)
-                hasInitializedConfig = true
-            }
             if let acct = selectedAccount {
                 editingLabel = acct.label
             }
         }
         .onChange(of: selectedAccountId) { _ in
+            renameError = nil
             if let acct = selectedAccount {
                 editingLabel = acct.label
-            }
-        }
-        .onChange(of: store.config) { newCfg in
-            if let newCfg, !hasInitializedConfig {
-                initializeDraftConfig(newCfg)
-                hasInitializedConfig = true
             }
         }
         .sheet(isPresented: $isShowingAddSheet) {
@@ -283,11 +266,9 @@ private struct AccountsSettingsTab: View {
         .alert("Remove Account?", isPresented: $showDeleteConfirmation) {
             Button("Remove", role: .destructive) {
                 if let acct = accountToDelete {
-                    Task {
-                        _ = await store.deleteAccount(id: acct.id)
-                        if selectedAccountId == acct.id {
-                            selectedAccountId = store.accounts.first?.id
-                        }
+                    _ = store.deleteAccount(id: acct.id)
+                    if selectedAccountId == acct.id {
+                        selectedAccountId = store.accounts.first?.id
                     }
                 }
             }
@@ -295,7 +276,7 @@ private struct AccountsSettingsTab: View {
                 accountToDelete = nil
             }
         } message: {
-            Text("Are you sure you want to remove '\(accountToDelete?.label ?? "")'? Its stored quota readings will be deleted. CLI credentials on your Mac remain untouched.")
+            Text("Are you sure you want to remove '\(accountToDelete?.label ?? "")'? QuotaPeek stops showing it. CLI logins on your Mac remain untouched.")
         }
     }
 
@@ -310,8 +291,8 @@ private struct AccountsSettingsTab: View {
                     Text(shortenPath(dir))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                } else if account.credentialLocation?.kind == "daemon_token" {
-                    Text("daemon token")
+                } else if account.provider == .antigravity {
+                    Text("statusline hook")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -345,15 +326,8 @@ private struct AccountsSettingsTab: View {
                     Text("Config Dir:").font(.caption).foregroundStyle(.secondary)
                     Text(dir).font(.caption.monospaced()).textSelection(.enabled)
                 }
-            } else if account.credentialLocation?.kind == "daemon_token" {
-                Text("Credential: Managed by daemon (OAuth token)").font(.caption).foregroundStyle(.secondary)
-            }
-
-            if let effective = account.effectiveAccount, !effective.isEmpty {
-                HStack {
-                    Text("Logged in as:").font(.caption).foregroundStyle(.secondary)
-                    Text(effective).font(.caption.bold())
-                }
+            } else if account.provider == .antigravity {
+                Text("Read from agy's statusline hook").font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -368,16 +342,13 @@ private struct AccountsSettingsTab: View {
                 Button("Save Label") {
                     let newLabel = editingLabel.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !newLabel.isEmpty, newLabel != account.label else { return }
-                    isRenaming = true
-                    Task {
-                        let res = await store.updateAccount(id: account.id, label: newLabel)
-                        isRenaming = false
-                        if case .failure(let err) = res {
-                            renameError = "Failed to rename: \(err)"
-                        }
+                    if case .failure(let err) = store.renameAccount(id: account.id, label: newLabel) {
+                        renameError = err.description
+                    } else {
+                        renameError = nil
                     }
                 }
-                .disabled(isRenaming || editingLabel.trimmingCharacters(in: .whitespacesAndNewlines) == account.label || editingLabel.isEmpty)
+                .disabled(editingLabel.trimmingCharacters(in: .whitespacesAndNewlines) == account.label || editingLabel.isEmpty)
             }
             if let err = renameError {
                 Text(err).font(.caption).foregroundStyle(.red)
@@ -387,71 +358,29 @@ private struct AccountsSettingsTab: View {
 
     private func accountRouteConfigSection(_ account: Account) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Routes & Polling for \(account.provider.displayName)")
+            Text("Sources for \(account.provider.displayName)")
                 .font(.headline)
 
             let binding = configBinding(for: account.provider)
 
-            if account.provider == .claude {
-                // For Claude, "inference polling" and the Keychain route are the same thing
-                // (inference mode is what actually drives the Keychain-credentialed poll), so
-                // this reuses routeToggleRow (Test button included) with an overridden isOn
-                // binding that keeps claudePollingMode and routesEnabled in lockstep instead
-                // of two checkboxes that could disagree.
-                routeToggleRow(
-                    for: account,
-                    route: .keychain,
-                    label: "Enable inference polling (Keychain route)",
-                    binding: binding,
-                    isOnOverride: Binding(
-                        get: { draftConfig.claudePollingMode == "inference" && binding.wrappedValue.routesEnabled.contains(.keychain) },
-                        set: { isOn in
-                            draftConfig.claudePollingMode = isOn ? "inference" : "disabled"
-                            var routes = binding.wrappedValue.routesEnabled
-                            routes.setRouteEnabled(.keychain, enabled: isOn)
-                            binding.wrappedValue.routesEnabled = routes
-                            Task { _ = await store.saveConfig(mergedConfigPayload()) }
-                        }
-                    )
-                )
-                Text("Off by default: sends a real one-token inference request every \(binding.wrappedValue.keychainPollIntervalSec)s (~\(requestsPerDay(intervalSec: binding.wrappedValue.keychainPollIntervalSec))/day) to read live rate-limit headers.")
+            routeToggleRow(for: account, route: .injection, label: liveRouteLabel(account.provider), binding: binding)
+
+            if account.provider.supportsWebFallback {
+                routeToggleRow(for: account, route: .keychain, label: "Web fallback when local data is stale", binding: binding)
+                Text("Uses the CLI's saved login, read-only, only while QuotaPeek is on screen and the agent hasn't reported for 15 minutes (at most every 10 minutes).")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-            } else {
-                routeToggleRow(for: account, route: .keychain, label: "Keychain (poll CLI credentials)", binding: binding)
+                    .padding(.leading, 18)
             }
-
-            // Codex has no push hook; it's polled only over the web.
-            if account.provider != .codex {
-                routeToggleRow(for: account, route: .injection, label: "Injection (real-time CLI hook push)", binding: binding)
-            }
-
-            Stepper(
-                "Poll interval: \(binding.wrappedValue.keychainPollIntervalSec)s",
-                value: Binding(
-                    get: { binding.wrappedValue.keychainPollIntervalSec },
-                    set: {
-                        binding.wrappedValue.keychainPollIntervalSec = $0
-                        Task { _ = await store.saveConfig(mergedConfigPayload()) }
-                    }
-                ),
-                in: 30...600,
-                step: 30
-            )
-            .font(.caption)
 
             Toggle("Notify near limit", isOn: Binding(
                 get: { binding.wrappedValue.notifyThresholdPercent != nil },
                 set: { isOn in
                     if isOn {
                         binding.wrappedValue.notifyThresholdPercent = binding.wrappedValue.notifyThresholdPercent ?? 90
-                        Task {
-                            await NotificationManager.shared.requestAuthorization()
-                            _ = await store.saveConfig(mergedConfigPayload())
-                        }
+                        Task { await NotificationManager.shared.requestAuthorization() }
                     } else {
                         binding.wrappedValue.notifyThresholdPercent = nil
-                        Task { _ = await store.saveConfig(mergedConfigPayload()) }
                     }
                 }
             ))
@@ -462,10 +391,7 @@ private struct AccountsSettingsTab: View {
                     "Threshold: \(threshold)%",
                     value: Binding(
                         get: { binding.wrappedValue.notifyThresholdPercent ?? 90 },
-                        set: {
-                            binding.wrappedValue.notifyThresholdPercent = $0
-                            Task { _ = await store.saveConfig(mergedConfigPayload()) }
-                        }
+                        set: { binding.wrappedValue.notifyThresholdPercent = $0 }
                     ),
                     in: 1...100,
                     step: 5
@@ -486,29 +412,29 @@ private struct AccountsSettingsTab: View {
         }
     }
 
-    private func requestsPerDay(intervalSec: Int) -> String {
-        guard intervalSec > 0 else { return "0" }
-        let perDay = 86_400 / intervalSec
-        return NumberFormatter.localizedString(from: NSNumber(value: perDay), number: .decimal)
+    private func liveRouteLabel(_ provider: Provider) -> String {
+        switch provider {
+        case .claude: return "Live from Claude Code's statusline"
+        case .codex: return "Live from Codex session logs"
+        case .antigravity: return "Live from agy's statusline"
+        }
     }
 
     private func routeToggleRow(
         for account: Account,
         route: Route,
         label: String,
-        binding: Binding<ProviderConfig>,
-        isOnOverride: Binding<Bool>? = nil
+        binding: Binding<ProviderConfig>
     ) -> some View {
-        let key = RouteKey(accountId: account.id, provider: account.provider, route: route)
+        let key = RouteKey(accountId: account.id, route: route)
         let testState = testStatuses[key]
 
-        let isOnBinding = isOnOverride ?? Binding(
+        let isOnBinding = Binding(
             get: { binding.wrappedValue.routesEnabled.contains(route) },
             set: { isOn in
                 var routes = binding.wrappedValue.routesEnabled
                 routes.setRouteEnabled(route, enabled: isOn)
                 binding.wrappedValue.routesEnabled = routes
-                Task { _ = await store.saveConfig(mergedConfigPayload()) }
             }
         )
 
@@ -534,8 +460,8 @@ private struct AccountsSettingsTab: View {
                 .disabled(testState?.isLoading == true)
             }
 
-            if let result = testState?.result, let msg = result.message, !msg.isEmpty {
-                Text(msg)
+            if let result = testState?.result, !result.message.isEmpty {
+                Text(result.message)
                     .font(.caption2)
                     .foregroundStyle(result.ok ? Color.secondary : Color.red)
                     .padding(.leading, 18)
@@ -544,23 +470,10 @@ private struct AccountsSettingsTab: View {
     }
 
     private func testRoute(account: Account, route: Route) {
-        let key = RouteKey(accountId: account.id, provider: account.provider, route: route)
+        let key = RouteKey(accountId: account.id, route: route)
         testStatuses[key] = RouteTestState(isLoading: true, result: nil)
         Task {
-            let res = await store.testRoute(accountId: account.id, provider: account.provider, route: route)
-            let result: TestRouteResponse
-            switch res {
-            case .success(let response):
-                result = response
-            case .failure(let error):
-                let msg: String
-                switch error {
-                case .unreachable: msg = "Daemon unreachable"
-                case .badResponse(let code): msg = "Daemon error (\(code))"
-                case .decodeFailed: msg = "Failed to parse response"
-                }
-                result = TestRouteResponse(ok: false, provider: account.provider, route: route, message: msg)
-            }
+            let result = await store.checkRoute(accountId: account.id, route: route)
             testStatuses[key] = RouteTestState(isLoading: false, result: result)
 
             try? await Task.sleep(nanoseconds: 6_000_000_000)
@@ -571,76 +484,28 @@ private struct AccountsSettingsTab: View {
     }
 
     private func accountActionsSection(_ account: Account) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Account Actions").font(.headline)
-
-            HStack(spacing: 12) {
-                Button {
-                    Task {
-                        _ = await store.resetCredentials(accountId: account.id)
-                    }
-                } label: {
-                    Label("Reset Credentials", systemImage: "arrow.counterclockwise.circle")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-
-                Spacer()
-
-                Button(role: .destructive) {
-                    accountToDelete = account
-                    showDeleteConfirmation = true
-                } label: {
-                    Label("Remove Account", systemImage: "trash")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+        HStack {
+            Spacer()
+            Button(role: .destructive) {
+                accountToDelete = account
+                showDeleteConfirmation = true
+            } label: {
+                Label("Remove Account", systemImage: "trash")
             }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
     }
 
-    /// Builds the config payload to actually send to the daemon: starts from the
-    /// *latest known-good* config (`store.config`, refreshed just before we save)
-    /// rather than this tab's own `draftConfig`, and layers only the fields this
-    /// tab owns (per-provider route/polling settings + `claudePollingMode`) on
-    /// top. This is what prevents a stale full-object round-trip in this tab from
-    /// clobbering edits the General tab already saved (and vice versa) - see the
-    /// draftConfig staleness fix.
-    private func mergedConfigPayload() -> DaemonConfig {
-        var payload = store.config ?? draftConfig
-        payload.claude = draftConfig.claude
-        payload.codex = draftConfig.codex
-        payload.antigravity = draftConfig.antigravity
-        payload.claudePollingMode = draftConfig.claudePollingMode
-        return payload
-    }
-
-    private func initializeDraftConfig(_ config: DaemonConfig) {
-        var normalized = config
-        var claude = config.providerConfigOrDefault(for: .claude)
-        // Polling mode is authoritative: repair the route without enabling disabled inference.
-        if config.claudePollingMode == "inference", !claude.routesEnabled.contains(.keychain) {
-            claude.routesEnabled.append(.keychain)
-            normalized.claude = claude
-        } else if config.claudePollingMode == "disabled", claude.routesEnabled.contains(.keychain) {
-            claude.routesEnabled.removeAll { $0 == .keychain }
-            normalized.claude = claude
-        }
-        draftConfig = normalized
-        if normalized != config {
-            Task { _ = await store.saveConfig(normalized) }
-        }
-    }
-
+    /// Reads and writes one provider's settings straight through the store,
+    /// which saves config.json immediately.
     private func configBinding(for provider: Provider) -> Binding<ProviderConfig> {
         Binding(
-            get: { draftConfig.providerConfigOrDefault(for: provider) },
+            get: { store.config.config(for: provider) },
             set: { newValue in
-                switch provider {
-                case .claude: draftConfig.claude = newValue
-                case .codex: draftConfig.codex = newValue
-                case .antigravity: draftConfig.antigravity = newValue
-                }
+                var next = store.config
+                next.setConfig(newValue, for: provider)
+                store.saveConfig(next)
             }
         )
     }
@@ -658,16 +523,12 @@ private struct AccountsSettingsTab: View {
 
 private struct AddAccountSheet: View {
     @ObservedObject var store: UsageStore
-    var onCreated: (Account) -> Void
+    var onCreated: (AccountConfig) -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedProvider: Provider = .claude
     @State private var label: String = ""
     @State private var configDir: String = "~/.claude"
-    @State private var antigravityManualEntry = false
-    @State private var antigravityRefreshToken: String = ""
-    @State private var antigravityEmail: String = ""
-    @State private var isCreating = false
     @State private var errorMessage: String?
 
     var body: some View {
@@ -682,65 +543,31 @@ private struct AddAccountSheet: View {
             }
             .pickerStyle(.segmented)
             .onChange(of: selectedProvider) { prov in
+                errorMessage = nil
                 switch prov {
-                case .claude:
-                    configDir = "~/.claude"
-                    if label.isEmpty || label == "Codex" || label == "Antigravity" { label = "Claude Work" }
-                case .codex:
-                    configDir = "~/.codex"
-                    if label.isEmpty || label == "Claude" || label == "Antigravity" { label = "Codex Work" }
-                case .antigravity:
-                    if label.isEmpty || label == "Claude" || label == "Codex" { label = "Personal Gmail" }
+                case .claude: configDir = "~/.claude"
+                case .codex: configDir = "~/.codex"
+                case .antigravity: break
                 }
             }
 
             TextField("Account Label (e.g. Work, Personal)", text: $label)
                 .textFieldStyle(.roundedBorder)
 
-            if selectedProvider == .claude || selectedProvider == .codex {
+            if selectedProvider.supportsWebFallback {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Configuration Directory")
                         .font(.caption).bold()
                     TextField("Config Dir (e.g. ~/.claude-work)", text: $configDir)
                         .textFieldStyle(.roundedBorder)
-                    Text("The daemon isolates credentials per account by targeting this directory (\(selectedProvider == .claude ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME")).")
+                    Text("The folder this login lives in (\(selectedProvider == .claude ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME")). Readings from that folder are shown under this account.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             } else {
-                // Antigravity: detect the login from Keychain by default —
-                // no end user can reasonably obtain their own refresh token
-                // by hand. Manual entry stays available as an advanced
-                // fallback (e.g. no local `agy` CLI login found).
-                VStack(alignment: .leading, spacing: 8) {
-                    if !antigravityManualEntry {
-                        Text("Detect from Antigravity login")
-                            .font(.caption).bold()
-                        Text("QuotaPeek will read the credential the `agy` CLI is currently signed in with from the Keychain — nothing to paste in.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        Button("Enter refresh token manually instead") {
-                            antigravityManualEntry = true
-                        }
-                        .font(.caption)
-                        .buttonStyle(.link)
-                    } else {
-                        Text("Google OAuth Token (Advanced/Manual)")
-                            .font(.caption).bold()
-                        SecureField("OAuth Refresh Token", text: $antigravityRefreshToken)
-                            .textFieldStyle(.roundedBorder)
-                        TextField("Account Email", text: $antigravityEmail)
-                            .textFieldStyle(.roundedBorder)
-                        Text("Enter your OAuth refresh token and associated email address. The daemon will securely store and refresh this token directly.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        Button("Detect from Keychain instead") {
-                            antigravityManualEntry = false
-                        }
-                        .font(.caption)
-                        .buttonStyle(.link)
-                    }
-                }
+                Text("Antigravity reports through the QuotaPeek statusline hook for agy; nothing else to set up.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
 
             if let err = errorMessage {
@@ -776,68 +603,22 @@ private struct AddAccountSheet: View {
     }
 
     private var isSubmitDisabled: Bool {
-        if isCreating { return true }
         if label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
-        if selectedProvider == .claude || selectedProvider == .codex {
+        if selectedProvider.supportsWebFallback {
             return configDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        } else if antigravityManualEntry {
-            return antigravityRefreshToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || antigravityEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        } else {
-            return false
         }
+        return false
     }
 
     private func createAccount() {
-        isCreating = true
-        errorMessage = nil
-
         let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let req: CreateAccountRequest
-        if selectedProvider == .claude || selectedProvider == .codex {
-            let expanded = (configDir.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath
-            req = CreateAccountRequest(
-                provider: selectedProvider,
-                label: trimmedLabel,
-                credentialLocation: CredentialLocation(kind: "config_dir", configDir: expanded)
-            )
-        } else {
-            req = CreateAccountRequest(
-                provider: .antigravity,
-                label: trimmedLabel,
-                credentialLocation: CredentialLocation(kind: "daemon_token"),
-                oauthBootstrap: antigravityManualEntry ? OAuthBootstrap(
-                    refreshToken: antigravityRefreshToken.trimmingCharacters(in: .whitespacesAndNewlines),
-                    email: antigravityEmail.trimmingCharacters(in: .whitespacesAndNewlines)
-                ) : nil,
-                autoDetect: antigravityManualEntry ? nil : true
-            )
-        }
-
-        Task {
-            let result = await store.createAccount(req)
-            isCreating = false
-            switch result {
-            case .success(let account):
-                onCreated(account)
-                dismiss()
-            case .failure(let error):
-                switch error {
-                case .badResponse(let code):
-                    if code == 409 {
-                        errorMessage = "An account with this configuration directory or email already exists."
-                    } else if code == 422 && !antigravityManualEntry && selectedProvider == .antigravity {
-                        errorMessage = "No Antigravity login found in Keychain. Sign in with the agy CLI first, or enter a refresh token manually."
-                    } else {
-                        errorMessage = "Server error (\(code)). Check daemon logs."
-                    }
-                case .unreachable:
-                    errorMessage = "Background service is not reachable."
-                case .decodeFailed:
-                    errorMessage = "Failed to parse daemon response."
-                }
-            }
+        let dir = selectedProvider.supportsWebFallback ? configDir.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        switch store.createAccount(provider: selectedProvider, label: trimmedLabel, configDir: dir) {
+        case .success(let account):
+            onCreated(account)
+            dismiss()
+        case .failure(let error):
+            errorMessage = error.description
         }
     }
 }
@@ -847,15 +628,10 @@ private struct AddAccountSheet: View {
 private struct GeneralSettingsTab: View {
     @ObservedObject var store: UsageStore
     @ObservedObject var displayPrefs: DisplayPreferences
-    @State private var draftConfig: DaemonConfig = DaemonConfig()
-    @State private var saveStatus: String?
-    @State private var isSaving: Bool = false
-    @State private var hasInitialized: Bool = false
-    @State private var saveTask: Task<Void, Never>?
+    @State private var saveError: String?
     @State private var isLaunchAgentInstalled: Bool = false
     @State private var isLaunchAtLoginEnabled: Bool = false
     @State private var launchAtLoginError: String?
-    @State private var pauseError: String?
 
     var body: some View {
         Form {
@@ -889,41 +665,26 @@ private struct GeneralSettingsTab: View {
             Section("Data Collection") {
                 Toggle("Pause data collection", isOn: Binding(
                     get: { store.isCollectionPaused },
-                    set: { paused in
-                        Task {
-                            let res = await store.setCollectionPaused(paused)
-                            if case .failure(let err) = res {
-                                pauseError = "Failed to update pause state: \(err)"
-                            } else {
-                                pauseError = nil
-                            }
-                        }
-                    }
+                    set: { paused in update { $0.collectionPaused = paused } }
                 ))
                 .accessibilityLabel("Pause data collection")
 
-                if let err = pauseError {
-                    Text(err)
-                        .font(.caption2)
-                        .foregroundStyle(.red)
-                }
-
-                Text("Temporarily halts background polling and quota requests without stopping the daemon or quitting the app.")
+                Text("Stops listening to the agents and makes no web requests until resumed.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 Stepper(
-                    "Mark data stale after: \(formatDuration(draftConfig.staleAfterSeconds ?? 600))",
+                    "Mark data stale after: \(formatDuration(store.config.staleAfterSeconds))",
                     value: Binding(
-                        get: { draftConfig.staleAfterSeconds ?? 600 },
-                        set: { draftConfig.staleAfterSeconds = max(60, $0) }
+                        get: { store.config.staleAfterSeconds },
+                        set: { value in update { $0.staleAfterSeconds = max(60, value) } }
                     ),
                     in: 60...3600,
                     step: 60
                 )
                 .accessibilityLabel("Freshness policy threshold")
 
-                Text("Controls when cached provider usage data is shown as \"stale\" with a warning indicator. Minimum threshold is 60 seconds.")
+                Text("Readings older than this are shown as \"stale\". Minimum 60 seconds.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -946,8 +707,8 @@ private struct GeneralSettingsTab: View {
                 .accessibilityLabel("Percentage metric style")
 
                 Toggle("Show Codex/Antigravity data in Claude Code's statusline", isOn: Binding(
-                    get: { draftConfig.statuslineShowOtherAgents ?? true },
-                    set: { draftConfig.statuslineShowOtherAgents = $0 }
+                    get: { store.config.statuslineShowOtherAgents },
+                    set: { show in update { $0.statuslineShowOtherAgents = show } }
                 ))
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -987,89 +748,28 @@ private struct GeneralSettingsTab: View {
                 .padding(.top, 4)
             }
 
-            Section {
-                HStack(spacing: 6) {
-                    if isSaving {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Saving changes...")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else if let saveStatus {
-                        Image(systemName: saveStatus.contains("Could not") ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                            .foregroundStyle(saveStatus.contains("Could not") ? .orange : .green)
-                        Text(saveStatus)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Image(systemName: "checkmark.circle")
-                            .foregroundStyle(.secondary)
-                        Text("All changes saved automatically")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+            if let saveError {
+                Section {
+                    Label(saveError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
             }
         }
         .formStyle(.grouped)
         .onAppear {
-            if let config = store.config {
-                draftConfig = config
-                hasInitialized = true
-            }
             isLaunchAgentInstalled = LaunchAgentManager.isPlistInstalled
             LaunchAgentManager.isLoadedAsync { isLoaded in
                 isLaunchAtLoginEnabled = isLoaded
             }
         }
-        .onChange(of: store.config) { newConfig in
-            if let newConfig {
-                if !hasInitialized {
-                    draftConfig = newConfig
-                    hasInitialized = true
-                } else if !isSaving {
-                    // Adopt every field from the latest known-good config (e.g. an
-                    // account/route change just saved from the Accounts tab), but
-                    // keep this tab's own in-flight edits to the fields it owns so
-                    // an external update can't clobber what the user is mid-typing
-                    // here before this tab's own debounce has had a chance to save.
-                    var merged = newConfig
-                    merged.staleAfterSeconds = draftConfig.staleAfterSeconds
-                    merged.statuslineShowOtherAgents = draftConfig.statuslineShowOtherAgents
-                    if merged != draftConfig {
-                        draftConfig = merged
-                    }
-                }
-            }
-        }
-        .onChange(of: draftConfig) { newDraft in
-            guard hasInitialized else { return }
-            guard newDraft != store.config else { return }
+    }
 
-            saveTask?.cancel()
-            saveTask = Task {
-                try? await Task.sleep(nanoseconds: 300_000_000)
-                guard !Task.isCancelled else { return }
-                isSaving = true
-                // Re-base onto the latest known-good config right before saving
-                // (not the possibly-stale `newDraft` snapshot captured when this
-                // task was scheduled) and layer on only the two fields this tab
-                // owns, so a save here can't revert changes another tab made to
-                // fields it owns (e.g. Accounts tab route/polling settings).
-                var payload = store.config ?? draftConfig
-                payload.staleAfterSeconds = draftConfig.staleAfterSeconds
-                payload.statuslineShowOtherAgents = draftConfig.statuslineShowOtherAgents
-                let ok = await store.saveConfig(payload)
-                isSaving = false
-                if ok {
-                    saveStatus = "Saved automatically"
-                } else if store.isDaemonIncompatible {
-                    saveStatus = "Could not save - background service returned an unexpected response (it may need an update)"
-                } else {
-                    saveStatus = "Could not save - background service unreachable"
-                }
-            }
-        }
+    /// Applies one change to the configuration and saves it right away.
+    private func update(_ change: (inout AppConfig) -> Void) {
+        var next = store.config
+        change(&next)
+        saveError = store.saveConfig(next) ? nil : "Could not save settings; see Advanced → Recent errors."
     }
 
     private func formatDuration(_ seconds: Int) -> String {
@@ -1320,10 +1020,6 @@ private struct WidgetAccountScopeRow<Nested: View>: View {
 
 private struct ProviderHealthTab: View {
     @ObservedObject var store: UsageStore
-    @State private var accountToReset: Account?
-    @State private var showResetConfirmation: Bool = false
-    @State private var isResetting: Bool = false
-    @State private var resetResultAlert: String?
 
     var body: some View {
         ScrollView {
@@ -1341,23 +1037,13 @@ private struct ProviderHealthTab: View {
             }
             .padding()
         }
-        .alert("Reset \(accountToReset?.label ?? "") (\(accountToReset?.provider.displayName ?? "")) Credentials?", isPresented: $showResetConfirmation) {
-            Button("Reset Credentials", role: .destructive) {
-                if let account = accountToReset {
-                    performReset(for: account)
-                }
-            }
-            Button("Cancel", role: .cancel) {
-                accountToReset = nil
-            }
-        } message: {
-            Text("This will clear daemon credential discovery caches and daemon-owned tokens for \(accountToReset?.label ?? ""). CLI credentials and Keychain items are not deleted.")
-        }
-        .alert(resetResultAlert ?? "Notice", isPresented: Binding(
-            get: { resetResultAlert != nil },
-            set: { if !$0 { resetResultAlert = nil } }
-        )) {
-            Button("OK", role: .cancel) { }
+    }
+
+    private func sourceName(_ account: Account) -> String {
+        switch account.activeRoute {
+        case .keychain: return "Web (CLI login)"
+        case .injection: return account.provider == .codex ? "Codex session log" : "Statusline hook"
+        case .none: return "No reading yet"
         }
     }
 
@@ -1375,37 +1061,20 @@ private struct ProviderHealthTab: View {
             Divider()
 
             VStack(spacing: 6) {
-                healthRow(
-                    title: "Credential Source",
-                    value: account.credentialSource ?? "Discovered on poll",
-                    icon: "key.fill"
-                )
+                healthRow(title: "Source", value: sourceName(account), icon: "antenna.radiowaves.left.and.right")
 
                 if let loc = account.credentialLocation?.configDir {
                     healthRow(title: "Config Directory", value: loc, icon: "folder.fill")
                 }
 
-                if let email = account.effectiveAccount, !email.isEmpty {
-                    healthRow(title: "Effective Account", value: email, icon: "person.crop.circle")
-                }
-
                 healthRow(
-                    title: "Last Success",
-                    value: account.lastSuccessAt.map(RelativeDateFormatting.format) ?? "No recorded success",
+                    title: "Last Reading",
+                    value: account.asOf.map(RelativeDateFormatting.format) ?? "None yet",
                     icon: "checkmark.circle",
-                    tint: account.lastSuccessAt != nil ? .green : .secondary
+                    tint: account.asOf != nil ? .green : .secondary
                 )
 
-                if let failureAt = account.lastFailureAt {
-                    healthRow(
-                        title: "Last Failure",
-                        value: RelativeDateFormatting.format(failureAt),
-                        icon: "xmark.circle",
-                        tint: .orange
-                    )
-                }
-
-                if let error = account.displayLastError, !error.isEmpty {
+                if let error = account.displayLastError {
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
@@ -1426,23 +1095,6 @@ private struct ProviderHealthTab: View {
                     .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
                 }
             }
-
-            HStack {
-                Spacer()
-                Button(role: .destructive) {
-                    accountToReset = account
-                    showResetConfirmation = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.counterclockwise.circle")
-                        Text("Reset Credentials")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(isResetting)
-            }
-            .padding(.top, 4)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1466,20 +1118,6 @@ private struct ProviderHealthTab: View {
                 .truncationMode(.middle)
         }
     }
-
-    private func performReset(for account: Account) {
-        isResetting = true
-        Task {
-            let result = await store.resetCredentials(accountId: account.id)
-            isResetting = false
-            switch result {
-            case .success(let response):
-                resetResultAlert = response.message ?? "Credentials for \(account.label) have been reset."
-            case .failure(let error):
-                resetResultAlert = "Failed to reset credentials: \(error)"
-            }
-        }
-    }
 }
 
 // MARK: - Advanced Tab
@@ -1499,7 +1137,7 @@ private struct AdvancedSettingsTab: View {
     }
 
     private var logFilePath: String {
-        (appSupportPath as NSString).appendingPathComponent("daemon.log")
+        ErrorLog.fileURL.path
     }
 
     var body: some View {
@@ -1510,7 +1148,7 @@ private struct AdvancedSettingsTab: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Uninstall QuotaPeek")
                             .font(.body)
-                        Text("Stops the background service, removes launch agents, and clears installed hooks.")
+                        Text("Removes the launch agent, the statusline hooks and the installed files.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1542,31 +1180,21 @@ private struct AdvancedSettingsTab: View {
                 HStack {
                     Text("Recent errors").font(.headline)
                     Spacer()
-                    Button("Refresh") { Task { await store.loadErrors() } }
+                    Button("Refresh") { store.loadErrors() }
                         .accessibilityLabel("Refresh error log")
                 }
 
-                if store.errors.isEmpty {
+                if store.errorLines.isEmpty {
                     Text("No errors recorded.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    List(store.errors) { entry in
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack {
-                                Text(entry.provider.displayName).bold()
-                                Text("(\(entry.route.rawValue))")
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text(RelativeDateFormatting.format(entry.at))
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                            }
-                            Text(entry.message)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                    List(Array(store.errorLines.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
                     }
                     .frame(minHeight: 180)
                 }
@@ -1579,7 +1207,7 @@ private struct AdvancedSettingsTab: View {
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("This will invoke the official uninstaller to remove the background daemon LaunchAgent, clear statusLine hooks, and remove installed binaries.")
+            Text("This runs the uninstaller: it removes the launch agent, the statusline hooks and the installed files.")
         }
         .alert("Uninstall Result", isPresented: Binding(
             get: { uninstallResultAlert != nil },

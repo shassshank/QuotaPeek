@@ -28,7 +28,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     /// Evaluates current account usage against configured notification thresholds.
     /// Fires local notifications when a threshold is crossed and prevents duplicate spam.
-    func evaluate(accounts: [Account], config: DaemonConfig?) {
+    func evaluate(accounts: [Account], config: AppConfig?) {
         for account in accounts {
             guard let providerConfig = config?.config(for: account.provider),
                   let threshold = providerConfig.notifyThresholdPercent,

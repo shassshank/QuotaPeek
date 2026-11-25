@@ -1,545 +1,279 @@
 import Foundation
 import QuotaPeekCore
 
-/// Types mirror API_CONTRACT.md - the Go daemon is the source of truth for these shapes.
-/// Provider, AccountTrustState and ProviderData live in QuotaPeekCore.
+// Provider, AccountTrustState and ProviderData live in QuotaPeekCore.
 
+/// Where a reading may come from. The raw values match the config.json the
+/// old daemon wrote, so existing settings carry over unchanged.
 enum Route: String, Codable, Equatable {
-    case keychain
+    /// Readings pushed by the agent itself: statusline hooks (Claude,
+    /// Antigravity) and session logs (Codex).
     case injection
+    /// The web fallback, using the CLI's stored login (Claude, Codex).
+    case keychain
     case none
 }
 
 struct CredentialLocation: Codable, Equatable {
-    var kind: String // "config_dir" | "daemon_token"
-    var configDir: String? // required when kind == "config_dir"
+    static let configDirKind = "config_dir"
+    /// Antigravity: identified only through its statusline hook.
+    static let hookKind = "hook"
 
-    enum CodingKeys: String, CodingKey {
-        case kind
-        case configDir = "configDir"
-        case configDirSnake = "config_dir"
-    }
+    var kind: String
+    var configDir: String?
 
     init(kind: String, configDir: String? = nil) {
         self.kind = kind
         self.configDir = configDir
     }
 
+    enum CodingKeys: String, CodingKey { case kind, configDir, config_dir }
+
     init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.kind = try container.decode(String.self, forKey: .kind)
-        self.configDir = container.firstPresent(String.self, .configDir, .configDirSnake)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = (try? c.decode(String.self, forKey: .kind)) ?? Self.configDirKind
+        // The daemon's own OAuth token store is gone; those accounts are hook-only now.
+        self.kind = kind == "daemon_token" ? Self.hookKind : kind
+        self.configDir = (try? c.decodeIfPresent(String.self, forKey: .configDir))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .config_dir))
     }
 
     func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(kind, forKey: .kind)
-        try container.encodeIfPresent(configDir, forKey: .configDir)
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(kind, forKey: .kind)
+        try c.encodeIfPresent(configDir, forKey: .configDir)
     }
 }
 
-struct OAuthBootstrap: Codable, Equatable {
-    var refreshToken: String
-    var email: String
-
-    enum CodingKeys: String, CodingKey {
-        case refreshToken = "refreshToken"
-        case refreshTokenSnake = "refresh_token"
-        case email
-    }
-
-    init(refreshToken: String, email: String) {
-        self.refreshToken = refreshToken
-        self.email = email
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.refreshToken = container.firstDecoded(String.self, .refreshToken, .refreshTokenSnake)
-            ?? ""
-        self.email = (try? container.decode(String.self, forKey: .email)) ?? ""
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(refreshToken, forKey: .refreshToken)
-        try container.encode(email, forKey: .email)
-    }
-}
-
-struct CreateAccountRequest: Codable {
-    var provider: Provider
-    var label: String
-    var credentialLocation: CredentialLocation
-    var oauthBootstrap: OAuthBootstrap?
-    /// Asks the daemon to read the Antigravity refresh token itself from the
-    /// local `agy` CLI's Keychain entry, instead of the caller supplying
-    /// oauthBootstrap directly — no end user can reasonably obtain their own
-    /// refresh token by hand.
-    var autoDetect: Bool?
-
-    enum CodingKeys: String, CodingKey {
-        case provider
-        case label
-        case credentialLocation = "credentialLocation"
-        case credentialLocationSnake = "credential_location"
-        case oauthBootstrap = "oauthBootstrap"
-        case oauthBootstrapSnake = "oauth_bootstrap"
-        case autoDetect
-    }
-
-    init(
-        provider: Provider,
-        label: String,
-        credentialLocation: CredentialLocation,
-        oauthBootstrap: OAuthBootstrap? = nil,
-        autoDetect: Bool? = nil
-    ) {
-        self.provider = provider
-        self.label = label
-        self.credentialLocation = credentialLocation
-        self.oauthBootstrap = oauthBootstrap
-        self.autoDetect = autoDetect
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.provider = try container.decode(Provider.self, forKey: .provider)
-        self.label = try container.decode(String.self, forKey: .label)
-        self.credentialLocation = try (container.decodeIfPresent(CredentialLocation.self, forKey: .credentialLocation)
-            ?? container.decode(CredentialLocation.self, forKey: .credentialLocationSnake))
-        self.oauthBootstrap = container.firstPresent(OAuthBootstrap.self, .oauthBootstrap, .oauthBootstrapSnake)
-        self.autoDetect = try container.decodeIfPresent(Bool.self, forKey: .autoDetect)
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(provider, forKey: .provider)
-        try container.encode(label, forKey: .label)
-        try container.encode(credentialLocation, forKey: .credentialLocation)
-        try container.encodeIfPresent(oauthBootstrap, forKey: .oauthBootstrap)
-        try container.encodeIfPresent(autoDetect, forKey: .autoDetect)
-    }
-}
-
-struct UpdateAccountRequest: Codable {
-    var label: String
-}
-
-struct ProviderError: Codable, Equatable {
-    var route: Route
-    var message: String
-    var at: Int
-}
-
-struct Account: Codable, Identifiable, Equatable {
+/// An account as stored in config.json.
+struct AccountConfig: Codable, Equatable, Identifiable {
     var id: String
     var provider: Provider
     var label: String
-    var credentialLocation: CredentialLocation?
-    var credentialSource: String?
-    var effectiveAccount: String?
-    var lastSuccessAt: Int64?
-    var lastFailureAt: Int64?
-    var lastError: String?
-    var routesEnabled: [Route]
-    var activeRoute: Route
-    var data: ProviderData?
-    var asOf: Int64?
-    var lastErrorObject: ProviderError?
-    var restoredFromDisk: Bool
-    var state: AccountTrustState
+    var credentialLocation: CredentialLocation
 
-    /// `lastErrorObject` (the daemon's `last_error`) is already gated to the
-    /// active sample - it's nil once a poll has succeeded more recently than
-    /// the failure. `lastError` (`lastError`/health message) is a sticky
-    /// historical record that is never cleared on success, so only fall back
-    /// to it when there hasn't actually been a more recent success.
-    var displayLastError: String? {
-        if let errObj = lastErrorObject, !errObj.message.isEmpty {
-            return errObj.message
+    static func defaultID(for provider: Provider) -> String { "acct_\(provider.rawValue)_default" }
+
+    static func newID() -> String {
+        var bytes = [UInt8](repeating: 0, count: 16)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        return "acct_" + bytes.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The account a fresh install starts with for each provider (same as the old daemon).
+    static func makeDefault(_ provider: Provider) -> AccountConfig {
+        let location: CredentialLocation
+        switch provider {
+        case .antigravity:
+            location = CredentialLocation(kind: CredentialLocation.hookKind)
+        case .claude, .codex:
+            location = CredentialLocation(kind: CredentialLocation.configDirKind,
+                                          configDir: LocalQuotaParser.canonicalConfigDir(nil, provider: provider))
         }
-        if let errStr = lastError, !errStr.isEmpty {
-            if let successAt = lastSuccessAt, let failureAt = lastFailureAt, successAt >= failureAt {
-                return nil
-            }
-            return errStr
-        }
-        return nil
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case provider
-        case label
-        case credentialLocation = "credentialLocation"
-        case credentialLocationSnake = "credential_location"
-        case credentialSource = "credentialSource"
-        case credentialSourceSnake = "credential_source"
-        case effectiveAccount = "effectiveAccount"
-        case effectiveAccountSnake = "effective_account"
-        case lastSuccessAt = "lastSuccessAt"
-        case lastSuccessAtSnake = "last_success_at"
-        case lastFailureAt = "lastFailureAt"
-        case lastFailureAtSnake = "last_failure_at"
-        case lastError = "lastError"
-        case lastErrorSnake = "last_error"
-        case routesEnabled = "routes_enabled"
-        case routesEnabledCamel = "routesEnabled"
-        case activeRoute = "active_route"
-        case activeRouteCamel = "activeRoute"
-        case data
-        case asOf = "as_of"
-        case asOfCamel = "asOf"
-        case restoredFromDisk = "restoredFromDisk"
-        case restoredFromDiskSnake = "restored_from_disk"
-        case state
-    }
-
-    init(
-        id: String,
-        provider: Provider,
-        label: String = "Default",
-        credentialLocation: CredentialLocation? = nil,
-        credentialSource: String? = nil,
-        effectiveAccount: String? = nil,
-        lastSuccessAt: Int64? = nil,
-        lastFailureAt: Int64? = nil,
-        lastError: String? = nil,
-        routesEnabled: [Route] = [],
-        activeRoute: Route = .none,
-        data: ProviderData? = nil,
-        asOf: Int64? = nil,
-        lastErrorObject: ProviderError? = nil,
-        restoredFromDisk: Bool = false,
-        state: AccountTrustState = .unknown
-    ) {
-        self.id = id
-        self.provider = provider
-        self.label = label
-        self.credentialLocation = credentialLocation
-        self.credentialSource = credentialSource
-        self.effectiveAccount = effectiveAccount
-        self.lastSuccessAt = lastSuccessAt
-        self.lastFailureAt = lastFailureAt
-        self.lastError = lastError
-        self.routesEnabled = routesEnabled
-        self.activeRoute = activeRoute
-        self.data = data
-        self.asOf = asOf
-        self.lastErrorObject = lastErrorObject
-        self.restoredFromDisk = restoredFromDisk
-        self.state = state
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-
-        // Decode id (or fallback to provider rawValue if legacy)
-        let rawId = (try? container.decode(String.self, forKey: .id)) ?? "unknown"
-        self.id = rawId
-
-        // Decode provider (or derive from id if legacy)
-        if let prov = try? container.decode(Provider.self, forKey: .provider) {
-            self.provider = prov
-        } else if let prov = Provider(rawValue: rawId) {
-            self.provider = prov
-        } else {
-            self.provider = .claude
-        }
-
-        self.label = (try? container.decode(String.self, forKey: .label)) ?? "Default"
-
-        self.credentialLocation = container.firstPresent(CredentialLocation.self, .credentialLocation, .credentialLocationSnake)
-
-        self.credentialSource = container.firstPresent(String.self, .credentialSource, .credentialSourceSnake)
-
-        self.effectiveAccount = container.firstPresent(String.self, .effectiveAccount, .effectiveAccountSnake)
-
-        self.lastSuccessAt = container.firstPresent(Int64.self, .lastSuccessAt, .lastSuccessAtSnake)
-
-        self.lastFailureAt = container.firstPresent(Int64.self, .lastFailureAt, .lastFailureAtSnake)
-
-        // Decode last_error: can be a String or a ProviderError object
-        if let errObj = try? container.decodeIfPresent(ProviderError.self, forKey: .lastErrorSnake) {
-            self.lastErrorObject = errObj
-            self.lastError = errObj.message
-        } else if let errObj = try? container.decodeIfPresent(ProviderError.self, forKey: .lastError) {
-            self.lastErrorObject = errObj
-            self.lastError = errObj.message
-        } else if let errStr = try? container.decodeIfPresent(String.self, forKey: .lastError) {
-            self.lastError = errStr
-            self.lastErrorObject = nil
-        } else if let errStr = try? container.decodeIfPresent(String.self, forKey: .lastErrorSnake) {
-            self.lastError = errStr
-            self.lastErrorObject = nil
-        } else {
-            self.lastError = nil
-            self.lastErrorObject = nil
-        }
-
-        self.routesEnabled = container.firstDecoded([Route].self, .routesEnabled, .routesEnabledCamel)
-            ?? []
-
-        self.activeRoute = container.firstDecoded(Route.self, .activeRoute, .activeRouteCamel)
-            ?? .none
-
-        self.data = try? container.decodeIfPresent(ProviderData.self, forKey: .data)
-
-        if let asOfInt64 = try? container.decodeIfPresent(Int64.self, forKey: .asOf) {
-            self.asOf = asOfInt64
-        } else if let asOfInt = try? container.decodeIfPresent(Int.self, forKey: .asOf) {
-            self.asOf = Int64(asOfInt)
-        } else if let asOfInt64 = try? container.decodeIfPresent(Int64.self, forKey: .asOfCamel) {
-            self.asOf = asOfInt64
-        } else if let asOfInt = try? container.decodeIfPresent(Int.self, forKey: .asOfCamel) {
-            self.asOf = Int64(asOfInt)
-        } else {
-            self.asOf = nil
-        }
-
-        self.restoredFromDisk = container.firstPresent(Bool.self, .restoredFromDisk, .restoredFromDiskSnake)
-            ?? false
-
-        if let st = try? container.decodeIfPresent(AccountTrustState.self, forKey: .state) {
-            self.state = st
-        } else {
-            self.state = .unknown
-        }
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id, forKey: .id)
-        try container.encode(provider, forKey: .provider)
-        try container.encode(label, forKey: .label)
-        try container.encodeIfPresent(credentialLocation, forKey: .credentialLocation)
-        try container.encodeIfPresent(credentialSource, forKey: .credentialSource)
-        try container.encodeIfPresent(effectiveAccount, forKey: .effectiveAccount)
-        try container.encodeIfPresent(lastSuccessAt, forKey: .lastSuccessAt)
-        try container.encodeIfPresent(lastFailureAt, forKey: .lastFailureAt)
-        try container.encodeIfPresent(lastError, forKey: .lastError)
-        try container.encode(routesEnabled, forKey: .routesEnabled)
-        try container.encode(activeRoute, forKey: .activeRoute)
-        try container.encodeIfPresent(data, forKey: .data)
-        try container.encodeIfPresent(asOf, forKey: .asOf)
-        try container.encode(restoredFromDisk, forKey: .restoredFromDisk)
-        try container.encode(state, forKey: .state)
-    }
-}
-
-struct StatusResponse: Codable {
-    var accounts: [Account]
-
-    init(accounts: [Account] = []) {
-        self.accounts = accounts
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.accounts = (try? container.decodeIfPresent([Account].self, forKey: .accounts)) ?? []
-    }
-}
-
-struct AccountsResponse: Codable {
-    var accounts: [Account]
-
-    enum CodingKeys: String, CodingKey {
-        case accounts
-    }
-
-    init(accounts: [Account] = []) {
-        self.accounts = accounts
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.accounts = (try? container.decode([Account].self, forKey: .accounts)) ?? []
+        return AccountConfig(id: defaultID(for: provider), provider: provider, label: "Default", credentialLocation: location)
     }
 }
 
 struct ProviderConfig: Codable, Equatable {
     var routesEnabled: [Route]
-    var keychainPollIntervalSec: Int
     var notifyThresholdPercent: Int?
 
-    enum CodingKeys: String, CodingKey {
-        case routesEnabled = "routes_enabled"
-        case routesEnabledCamel = "routesEnabled"
-        case keychainPollIntervalSec = "keychain_poll_interval_sec"
-        case keychainPollIntervalSecCamel = "keychainPollIntervalSec"
-        case notifyThresholdPercent = "notify_threshold_percent"
-        case notifyThresholdPercentCamel = "notifyThresholdPercent"
-    }
-
-    init(routesEnabled: [Route], keychainPollIntervalSec: Int, notifyThresholdPercent: Int? = nil) {
+    init(routesEnabled: [Route], notifyThresholdPercent: Int? = nil) {
         self.routesEnabled = routesEnabled
-        self.keychainPollIntervalSec = keychainPollIntervalSec
         self.notifyThresholdPercent = notifyThresholdPercent
     }
 
+    static func defaults(for provider: Provider) -> ProviderConfig {
+        ProviderConfig(routesEnabled: provider.supportsWebFallback ? [.injection, .keychain] : [.injection])
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case routes_enabled, routesEnabled, notify_threshold_percent, notifyThresholdPercent
+    }
+
     init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.routesEnabled = container.firstDecoded([Route].self, .routesEnabled, .routesEnabledCamel)
-            ?? []
-        self.keychainPollIntervalSec = container.firstDecoded(Int.self, .keychainPollIntervalSec, .keychainPollIntervalSecCamel)
-            ?? 60
-        self.notifyThresholdPercent = container.firstPresent(Int.self, .notifyThresholdPercent, .notifyThresholdPercentCamel)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // Decode each route on its own so one unknown value doesn't drop the rest.
+        let raw = (try? c.decode([String].self, forKey: .routes_enabled))
+            ?? (try? c.decode([String].self, forKey: .routesEnabled)) ?? []
+        self.routesEnabled = raw.compactMap(Route.init(rawValue:)).filter { $0 != .none }
+        self.notifyThresholdPercent = (try? c.decodeIfPresent(Int.self, forKey: .notify_threshold_percent))
+            ?? (try? c.decodeIfPresent(Int.self, forKey: .notifyThresholdPercent))
     }
 
     func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(routesEnabled, forKey: .routesEnabled)
-        try container.encode(keychainPollIntervalSec, forKey: .keychainPollIntervalSec)
-        try container.encodeIfPresent(notifyThresholdPercent, forKey: .notifyThresholdPercent)
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(routesEnabled, forKey: .routes_enabled)
+        try c.encodeIfPresent(notifyThresholdPercent, forKey: .notify_threshold_percent)
     }
 }
 
-struct DaemonConfig: Codable, Equatable {
-    var claudePollingMode: String?
-    var claude: ProviderConfig?
-    var codex: ProviderConfig?
-    var antigravity: ProviderConfig?
-    var staleAfterSeconds: Int?
-    var collectionPaused: Bool?
-    var statuslineShowOtherAgents: Bool?
+/// Everything QuotaPeek persists apart from UI preferences. Stored as
+/// config.json in the support folder, in the same shape the old daemon used,
+/// so upgrading keeps the user's accounts and settings.
+struct AppConfig: Codable, Equatable {
+    static let currentVersion = 2
 
-    enum CodingKeys: String, CodingKey {
-        case claudePollingMode = "claude_polling_mode"
-        case claudePollingModeCamel = "claudePollingMode"
-        case claude
-        case codex
-        case antigravity
-        case staleAfterSecondsSnake = "stale_after_seconds"
-        case staleAfterSecondsCamel = "staleAfterSeconds"
-        case collectionPausedSnake = "collection_paused"
-        case collectionPausedCamel = "collectionPaused"
-        case statuslineShowOtherAgentsSnake = "statusline_show_other_agents"
-        case statuslineShowOtherAgentsCamel = "statuslineShowOtherAgents"
-    }
+    var version: Int
+    var accounts: [AccountConfig]
+    var staleAfterSeconds: Int
+    var collectionPaused: Bool
+    var statuslineShowOtherAgents: Bool
+    var claude: ProviderConfig
+    var codex: ProviderConfig
+    var antigravity: ProviderConfig
 
     init(
-        claudePollingMode: String? = nil,
-        claude: ProviderConfig? = nil,
-        codex: ProviderConfig? = nil,
-        antigravity: ProviderConfig? = nil,
-        staleAfterSeconds: Int? = nil,
-        collectionPaused: Bool? = nil,
-        statuslineShowOtherAgents: Bool? = nil
+        accounts: [AccountConfig] = Provider.allCases.map(AccountConfig.makeDefault),
+        staleAfterSeconds: Int = 600,
+        collectionPaused: Bool = false,
+        statuslineShowOtherAgents: Bool = true,
+        claude: ProviderConfig = .defaults(for: .claude),
+        codex: ProviderConfig = .defaults(for: .codex),
+        antigravity: ProviderConfig = .defaults(for: .antigravity)
     ) {
-        self.claudePollingMode = claudePollingMode
-        self.claude = claude
-        self.codex = codex
-        self.antigravity = antigravity
+        self.version = Self.currentVersion
+        self.accounts = accounts
         self.staleAfterSeconds = staleAfterSeconds
         self.collectionPaused = collectionPaused
         self.statuslineShowOtherAgents = statuslineShowOtherAgents
+        self.claude = claude
+        self.codex = codex
+        self.antigravity = antigravity
     }
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.claudePollingMode = container.firstPresent(String.self, .claudePollingMode, .claudePollingModeCamel)
-        self.claude = try? container.decodeIfPresent(ProviderConfig.self, forKey: .claude)
-        self.codex = try? container.decodeIfPresent(ProviderConfig.self, forKey: .codex)
-        self.antigravity = try? container.decodeIfPresent(ProviderConfig.self, forKey: .antigravity)
-        self.staleAfterSeconds = container.firstPresent(Int.self, .staleAfterSecondsSnake, .staleAfterSecondsCamel)
-        self.collectionPaused = container.firstPresent(Bool.self, .collectionPausedSnake, .collectionPausedCamel)
-        self.statuslineShowOtherAgents = container.firstPresent(Bool.self, .statuslineShowOtherAgentsSnake, .statuslineShowOtherAgentsCamel)
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encodeIfPresent(claudePollingMode, forKey: .claudePollingMode)
-        try container.encodeIfPresent(claude, forKey: .claude)
-        try container.encodeIfPresent(codex, forKey: .codex)
-        try container.encodeIfPresent(antigravity, forKey: .antigravity)
-        try container.encodeIfPresent(staleAfterSeconds, forKey: .staleAfterSecondsCamel)
-        try container.encodeIfPresent(collectionPaused, forKey: .collectionPausedCamel)
-        try container.encodeIfPresent(statuslineShowOtherAgents, forKey: .statuslineShowOtherAgentsSnake)
-    }
-
-    func config(for provider: Provider) -> ProviderConfig? {
+    func config(for provider: Provider) -> ProviderConfig {
         switch provider {
         case .claude: return claude
         case .codex: return codex
         case .antigravity: return antigravity
         }
     }
-}
 
-struct TestRouteRequest: Codable {
-    var accountId: String
-    var provider: Provider
-    var route: Route
-}
-
-struct TestRouteResponse: Codable {
-    var ok: Bool
-    var provider: Provider?
-    var route: Route?
-    var message: String?
-}
-
-struct ResetCredentialsResponse: Codable {
-    var ok: Bool?
-    var provider: String?
-    var message: String?
-}
-
-struct SimpleSuccessResponse: Codable {
-    var ok: Bool
-    var message: String?
-}
-
-struct ErrorLogEntry: Codable, Identifiable {
-    var id: String { "\(provider.rawValue)-\(at)-\(message.hashValue)" }
-    var provider: Provider
-    var route: Route
-    var message: String
-    var at: Int
+    mutating func setConfig(_ value: ProviderConfig, for provider: Provider) {
+        switch provider {
+        case .claude: claude = value
+        case .codex: codex = value
+        case .antigravity: antigravity = value
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
-        case provider
-        case route
-        case message
-        case at
+        case version, accounts, claude, codex, antigravity
+        case staleAfterSeconds, stale_after_seconds
+        case collectionPaused, collection_paused
+        case statusline_show_other_agents, statuslineShowOtherAgents
     }
 
-    init(provider: Provider, route: Route, message: String, at: Int) {
-        self.provider = provider
-        self.route = route
-        self.message = message
-        self.at = at
-    }
-
-    /// Tolerant like `Account.init(from:)`: an unrecognized `provider` or
-    /// `route` value must degrade this single entry rather than fail the
-    /// entire batch decode in `ErrorsResponse` (which would blank the whole
-    /// Advanced tab's error log because of one unmapped enum case).
     init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.provider = (try? container.decode(Provider.self, forKey: .provider)) ?? .claude
-        self.route = (try? container.decode(Route.self, forKey: .route)) ?? .none
-        self.message = (try? container.decode(String.self, forKey: .message)) ?? ""
-        self.at = (try? container.decode(Int.self, forKey: .at)) ?? 0
-    }
-}
-
-struct ErrorsResponse: Codable {
-    var errors: [ErrorLogEntry]
-}
-
-private extension KeyedDecodingContainer {
-    // Preserve alias priority and swallow each key's decoding error independently.
-    func firstPresent<T: Decodable>(_ type: T.Type, _ first: Key, _ second: Key) -> T? {
-        (try? decodeIfPresent(type, forKey: first))
-            ?? (try? decodeIfPresent(type, forKey: second))
-    }
-
-    func firstDecoded<T: Decodable>(_ type: T.Type, _ keys: Key...) -> T? {
-        for key in keys {
-            if let value = try? decode(type, forKey: key) { return value }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let fileVersion = (try? c.decodeIfPresent(Int.self, forKey: .version)) ?? 1
+        self.version = Self.currentVersion
+        self.accounts = ((try? c.decodeIfPresent([LossyAccount].self, forKey: .accounts)) ?? nil)?
+            .compactMap(\.value) ?? Provider.allCases.map(AccountConfig.makeDefault)
+        self.staleAfterSeconds = max(60, (try? c.decodeIfPresent(Int.self, forKey: .staleAfterSeconds))
+            ?? (try? c.decodeIfPresent(Int.self, forKey: .stale_after_seconds)) ?? 600)
+        self.collectionPaused = (try? c.decodeIfPresent(Bool.self, forKey: .collectionPaused))
+            ?? (try? c.decodeIfPresent(Bool.self, forKey: .collection_paused)) ?? false
+        self.statuslineShowOtherAgents = (try? c.decodeIfPresent(Bool.self, forKey: .statusline_show_other_agents))
+            ?? (try? c.decodeIfPresent(Bool.self, forKey: .statuslineShowOtherAgents)) ?? true
+        func provider(_ key: CodingKeys, _ p: Provider) -> ProviderConfig {
+            ((try? c.decodeIfPresent(ProviderConfig.self, forKey: key)) ?? nil) ?? .defaults(for: p)
         }
-        return nil
+        self.claude = provider(.claude, .claude)
+        self.codex = provider(.codex, .codex)
+        self.antigravity = provider(.antigravity, .antigravity)
+        if fileVersion < 2 { migrateFromDaemon() }
     }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(version, forKey: .version)
+        try c.encode(accounts, forKey: .accounts)
+        try c.encode(staleAfterSeconds, forKey: .staleAfterSeconds)
+        try c.encode(collectionPaused, forKey: .collectionPaused)
+        try c.encode(statuslineShowOtherAgents, forKey: .statusline_show_other_agents)
+        try c.encode(claude, forKey: .claude)
+        try c.encode(codex, forKey: .codex)
+        try c.encode(antigravity, forKey: .antigravity)
+    }
+
+    /// The daemon's routes meant something slightly different: Codex had no
+    /// local route (session logs are read now), and Antigravity's web route
+    /// used a token the daemon kept itself, which no longer exists. A provider
+    /// the user had switched off entirely stays off.
+    private mutating func migrateFromDaemon() {
+        for p in Provider.allCases {
+            var cfg = config(for: p)
+            guard !cfg.routesEnabled.isEmpty else { continue }
+            if !p.supportsWebFallback { cfg.routesEnabled.removeAll { $0 == .keychain } }
+            if p == .codex || cfg.routesEnabled.isEmpty, !cfg.routesEnabled.contains(.injection) {
+                cfg.routesEnabled.insert(.injection, at: 0)
+            }
+            setConfig(cfg, for: p)
+        }
+    }
+
+    /// Skips account entries this version can't read instead of losing them all.
+    private struct LossyAccount: Decodable {
+        let value: AccountConfig?
+        init(from decoder: Decoder) throws { value = try? AccountConfig(from: decoder) }
+    }
+}
+
+extension Provider {
+    /// Claude and Codex expose a usage endpoint the CLI's own login can read.
+    var supportsWebFallback: Bool { self != .antigravity }
+}
+
+/// What the UI shows for one account: its configuration plus the latest reading.
+struct Account: Identifiable, Equatable {
+    var id: String
+    var provider: Provider
+    var label: String
+    var credentialLocation: CredentialLocation?
+    var routesEnabled: [Route]
+    /// Where the current numbers came from.
+    var activeRoute: Route
+    var data: ProviderData?
+    /// Unix seconds of the reading in `data`.
+    var asOf: Int64?
+    /// Why the latest attempt to get numbers failed, if it did.
+    var lastError: String?
+    var state: AccountTrustState
+
+    init(
+        id: String,
+        provider: Provider,
+        label: String = "Default",
+        credentialLocation: CredentialLocation? = nil,
+        routesEnabled: [Route] = [],
+        activeRoute: Route = .none,
+        data: ProviderData? = nil,
+        asOf: Int64? = nil,
+        lastError: String? = nil,
+        state: AccountTrustState = .unknown
+    ) {
+        self.id = id
+        self.provider = provider
+        self.label = label
+        self.credentialLocation = credentialLocation
+        self.routesEnabled = routesEnabled
+        self.activeRoute = activeRoute
+        self.data = data
+        self.asOf = asOf
+        self.lastError = lastError
+        self.state = state
+    }
+
+    var displayLastError: String? {
+        guard let lastError, !lastError.isEmpty else { return nil }
+        return lastError
+    }
+}
+
+/// Result of checking one route from Settings.
+struct RouteCheckResult: Equatable {
+    var ok: Bool
+    var message: String
 }

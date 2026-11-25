@@ -60,9 +60,6 @@ struct WidgetPanelView: View {
         VStack(spacing: 10) {
             headerBar
 
-            if !store.isDaemonReachable {
-                disconnectedBanner
-            }
 
             if store.isCollectionPaused {
                 pausedBanner
@@ -172,22 +169,6 @@ struct WidgetPanelView: View {
 
     // MARK: - Status Banners
 
-    private var disconnectedBanner: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-                .font(.caption2)
-            Text("Service unreachable")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
-            Spacer()
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-        .accessibilityLabel("Background service unreachable")
-    }
-
     private var pausedBanner: some View {
         HStack(spacing: 6) {
             Image(systemName: "pause.circle.fill")
@@ -198,7 +179,7 @@ struct WidgetPanelView: View {
                 .foregroundStyle(.secondary)
             Spacer()
             Button("Resume") {
-                Task { _ = await store.setCollectionPaused(false) }
+                _ = store.setCollectionPaused(false)
             }
             .buttonStyle(.bordered)
             .controlSize(.mini)
