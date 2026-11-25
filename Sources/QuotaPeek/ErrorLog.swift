@@ -17,6 +17,9 @@ enum ErrorLog {
 
     static var fileURL: URL { AppPaths.supportDirectory.appendingPathComponent("errors.log") }
 
+    /// Tests exercise error paths on purpose; keep them out of the user's errors.log.
+    private static let isRunningTests = NSClassFromString("XCTestCase") != nil
+
     static func info(_ message: String) { log(.info, message) }
     static func notice(_ message: String) { log(.notice, message) }
     static func warning(_ message: String) { log(.warning, message) }
@@ -30,7 +33,7 @@ enum ErrorLog {
         case .warning: logger.warning("\(text, privacy: .public)")
         case .error: logger.error("\(text, privacy: .public)")
         }
-        guard level != .info else { return }
+        guard level != .info, !isRunningTests else { return }
         let line = "\(timestampFormatter.string(from: Date())) \(level.rawValue.uppercased()) \(text)\n"
         queue.async { append(line, to: fileURL) }
     }
