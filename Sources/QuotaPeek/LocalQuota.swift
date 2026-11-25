@@ -1,3 +1,4 @@
+import QuotaPeekCore
 import Foundation
 
 /// One quota reading observed on this Mac: pushed by a statusline hook, read

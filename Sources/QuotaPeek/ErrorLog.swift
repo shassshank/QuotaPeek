@@ -1,3 +1,4 @@
+import QuotaPeekCore
 import Foundation
 import os
 
@@ -97,7 +98,4 @@ enum AppPaths {
         if preferred.utf8.count <= 103 { return preferred }
         return "/tmp/quotapeek-\(getuid()).sock"
     }
-
-    /// Latest readings for the statusline hooks' "other agents" segment.
-    static var snapshotURL: URL { supportDirectory.appendingPathComponent("snapshot.json") }
 }

@@ -1,3 +1,4 @@
+import QuotaPeekCore
 import Foundation
 
 /// Talks to the local Go daemon over loopback HTTP, per API_CONTRACT.md. The Swift app never

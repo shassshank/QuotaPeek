@@ -1,3 +1,4 @@
+import QuotaPeekCore
 import AppKit
 import Combine
 import SwiftUI
@@ -17,47 +18,8 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
-/// Layout style for the floating desktop widget.
-enum DesktopWidgetStyle: String, CaseIterable, Identifiable, Codable {
-    case combinedLinear = "combined_linear"
-    case combinedCircular = "combined_circular"
-    case perAgentLinear = "per_agent_linear"
-    case perAgentCircular = "per_agent_circular"
-    case concentricRings = "concentric_rings"
-    case singleAgentFocus = "single_agent_focus"
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .combinedLinear: return "Combined (linear bars)"
-        case .combinedCircular: return "Combined (circular rings)"
-        case .perAgentLinear: return "Per-agent (linear bars)"
-        case .perAgentCircular: return "Per-agent (circular rings)"
-        case .concentricRings: return "Concentric rings (5h / weekly)"
-        case .singleAgentFocus: return "Single agent focus"
-        }
-    }
-}
-
-enum WidgetMetricKind: String, CaseIterable, Identifiable, Codable {
-    case fiveHour = "5h"
-    case weekly = "weekly"
-    case context = "context"
-    case claudeGptWeekly = "claude_gpt_weekly"
-
-    static let offerable: [WidgetMetricKind] = [.fiveHour, .weekly]
-
-    var id: String { rawValue }
-    var displayName: String {
-        switch self {
-        case .fiveHour: return "5-hour window"
-        case .weekly: return "Weekly window"
-        case .context: return "Context window"
-        case .claudeGptWeekly: return "Claude/GPT quota"
-        }
-    }
-}
+// DesktopWidgetStyle, WidgetMetricKind and PercentageMetric live in QuotaPeekCore,
+// shared with the native widget extension.
 
 /// Window stacking level for a desktop widget, selectable per-widget.
 enum WidgetLayerLevel: String, CaseIterable, Identifiable, Codable {
@@ -184,21 +146,6 @@ private struct FailableWidgetConfiguration: Decodable {
     }
 }
 
-/// Whether percentages represent used quota or remaining quota.
-enum PercentageMetric: String, CaseIterable, Identifiable {
-    case used = "used"
-    case remaining = "remaining"
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .used: return "Used"
-        case .remaining: return "Remaining"
-        }
-    }
-}
-
 /// Stores local UI preferences in UserDefaults (no daemon round-trip required).
 @MainActor
 final class DisplayPreferences: ObservableObject {
@@ -210,6 +157,7 @@ final class DisplayPreferences: ObservableObject {
         static let percentageMetric = "display_percentage_metric"
         static let providerOrder = "display_provider_order"
         static let widgetConfigurations = "display_widget_configurations"
+        static let nativeWidget = "display_native_widget"
         static let isDesktopWidgetEnabled = "display_desktop_widget_enabled"
         static let desktopWidgetStyle = "display_desktop_widget_style"
     }
@@ -245,6 +193,27 @@ final class DisplayPreferences: ObservableObject {
         }
     }
 
+    /// Accounts and metrics shown by the native (WidgetKit) widget. Reuses the
+    /// desktop panel's configuration type for its scope and metric choices;
+    /// style, layer and name don't apply (style is picked per widget in the
+    /// macOS widget gallery).
+    @Published var nativeWidget: WidgetConfiguration {
+        didSet {
+            if let data = try? JSONEncoder().encode(nativeWidget) {
+                UserDefaults.standard.set(data, forKey: Keys.nativeWidget)
+            }
+        }
+    }
+
+    /// Native-widget selection in the snapshot's form.
+    var nativeWidgetSnapshot: QuotaSnapshot.NativeWidget {
+        QuotaSnapshot.NativeWidget(
+            includedAccountIds: nativeWidget.scope.includedAccountIds.map { $0.sorted() },
+            visibleMetrics: WidgetMetricKind.allCases.filter { nativeWidget.visibleMetrics.contains($0) },
+            accountMetrics: nativeWidget.accountMetrics.mapValues { set in WidgetMetricKind.allCases.filter { set.contains($0) } }
+        )
+    }
+
     /// Coalesces the UserDefaults write for `widgetConfigurations` so rapid-fire
     /// changes (e.g. every keystroke while typing a widget name in a bound
     /// TextField) don't each do a synchronous JSON encode + disk write. Only the
@@ -265,6 +234,9 @@ final class DisplayPreferences: ObservableObject {
 
     private init() {
         let defaults = UserDefaults.standard
+        self.nativeWidget = defaults.data(forKey: Keys.nativeWidget)
+            .flatMap { try? JSONDecoder().decode(WidgetConfiguration.self, from: $0) }
+            ?? WidgetConfiguration(name: "Native Widget", isEnabled: true)
         self.showAntigravityModelBreakdown = defaults.object(forKey: Keys.showAntigravityModelBreakdown) == nil
             ? true : defaults.bool(forKey: Keys.showAntigravityModelBreakdown)
         if let data = defaults.data(forKey: Keys.widgetConfigurations),

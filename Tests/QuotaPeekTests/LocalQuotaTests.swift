@@ -1,3 +1,4 @@
+import QuotaPeekCore
 import XCTest
 @testable import QuotaPeek
 

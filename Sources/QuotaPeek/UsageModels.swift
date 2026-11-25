@@ -1,50 +1,13 @@
 import Foundation
+import QuotaPeekCore
 
 /// Types mirror API_CONTRACT.md - the Go daemon is the source of truth for these shapes.
-
-enum Provider: String, CaseIterable, Identifiable, Codable, Equatable {
-    case claude, codex, antigravity
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .claude: return "Claude"
-        case .codex: return "Codex"
-        case .antigravity: return "Antigravity"
-        }
-    }
-
-    var symbolName: String {
-        switch self {
-        case .claude: return "sparkle"
-        case .codex: return "chevron.left.forwardslash.chevron.right"
-        case .antigravity: return "atom"
-        }
-    }
-}
+/// Provider, AccountTrustState and ProviderData live in QuotaPeekCore.
 
 enum Route: String, Codable, Equatable {
     case keychain
     case injection
     case none
-}
-
-enum AccountTrustState: String, Codable, Equatable, CaseIterable {
-    case unknown
-    case fresh
-    case stale
-    case restored
-    case error
-
-    var displayName: String {
-        switch self {
-        case .unknown: return "Unknown"
-        case .fresh: return "Fresh"
-        case .stale: return "Stale"
-        case .restored: return "Restored"
-        case .error: return "Error"
-        }
-    }
 }
 
 struct CredentialLocation: Codable, Equatable {
@@ -161,30 +124,6 @@ struct CreateAccountRequest: Codable {
 
 struct UpdateAccountRequest: Codable {
     var label: String
-}
-
-struct ProviderData: Codable, Equatable {
-    var usedPercent5h: Double?
-    var resetsAt5h: Int?
-    var usedPercentWeekly: Double?
-    var resetsAtWeekly: Int?
-    var usedPercent5hThirdParty: Double?
-    var resetsAt5hThirdParty: Int?
-    var usedPercentWeeklyThirdParty: Double?
-    var resetsAtWeeklyThirdParty: Int?
-    var contextWindowUsedPercent: Double?
-
-    enum CodingKeys: String, CodingKey {
-        case usedPercent5h = "used_percent_5h"
-        case resetsAt5h = "resets_at_5h"
-        case usedPercentWeekly = "used_percent_weekly"
-        case resetsAtWeekly = "resets_at_weekly"
-        case usedPercent5hThirdParty = "used_percent_5h_third_party"
-        case resetsAt5hThirdParty = "resets_at_5h_third_party"
-        case usedPercentWeeklyThirdParty = "used_percent_weekly_third_party"
-        case resetsAtWeeklyThirdParty = "resets_at_weekly_third_party"
-        case contextWindowUsedPercent = "context_window_used_percent"
-    }
 }
 
 struct ProviderError: Codable, Equatable {

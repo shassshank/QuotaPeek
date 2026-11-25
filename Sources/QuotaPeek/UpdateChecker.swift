@@ -1,3 +1,4 @@
+import QuotaPeekCore
 import AppKit
 
 /// "Check for Updates..." in the status item's right-click menu: asks GitHub

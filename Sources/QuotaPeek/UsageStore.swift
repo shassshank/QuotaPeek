@@ -1,3 +1,4 @@
+import QuotaPeekCore
 import AppKit
 import Combine
 import Foundation
@@ -276,7 +277,23 @@ final class UsageStore: ObservableObject {
             accounts = merged
             NotificationManager.shared.evaluate(accounts: accounts, config: config)
         }
-        snapshotWriter.update(accounts: accounts, showOtherAgents: config?.statuslineShowOtherAgents ?? true)
+        publishSnapshot()
+    }
+
+    /// Display preferences readers of the snapshot (the native widget) must
+    /// honour; kept in sync by the app delegate.
+    var snapshotDisplay = QuotaSnapshot.Display() {
+        didSet { if snapshotDisplay != oldValue { publishSnapshot() } }
+    }
+
+    /// The native widget's account/metric selection; kept in sync by the app delegate.
+    var snapshotNativeWidget = QuotaSnapshot.NativeWidget() {
+        didSet { if snapshotNativeWidget != oldValue { publishSnapshot() } }
+    }
+
+    private func publishSnapshot() {
+        snapshotWriter.update(accounts: accounts, showOtherAgents: config?.statuslineShowOtherAgents ?? true,
+                              display: snapshotDisplay, nativeWidget: snapshotNativeWidget)
     }
 
     private func localReading(for account: Account, antigravityCount: Int) -> LocalReading? {
@@ -495,7 +512,7 @@ final class UsageStore: ObservableObject {
             isCollectionPaused = paused
         }
         NotificationManager.shared.evaluate(accounts: accounts, config: cfg)
-        snapshotWriter.update(accounts: accounts, showOtherAgents: cfg.statuslineShowOtherAgents ?? true)
+        publishSnapshot()
     }
 
     /// Single-flight + "coalesce trailing" save: at most one `PUT /config` is

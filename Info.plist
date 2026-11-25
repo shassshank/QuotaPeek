@@ -35,5 +35,17 @@
     <false/>
     <key>NSSupportsSuddenTermination</key>
     <false/>
+    <!-- quotapeek://open - clicking the macOS widget opens the popover and refreshes. -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.quotapeek.app</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>quotapeek</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>

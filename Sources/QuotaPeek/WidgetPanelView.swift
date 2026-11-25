@@ -1,3 +1,4 @@
+import QuotaPeekCore
 import SwiftUI
 
 /// Floating desktop widget panel view that displays AI provider quota usage.

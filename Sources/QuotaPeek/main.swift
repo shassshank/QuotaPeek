@@ -1,3 +1,4 @@
+import QuotaPeekCore
 import AppKit
 import Combine
 import Darwin
@@ -71,8 +72,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in
                 self?.updateStatusItem()
                 self?.updateDesktopWidgetVisibility()
+                self?.syncSnapshotDisplay()
             }
             .store(in: &cancellables)
+        syncSnapshotDisplay()
 
 
         popover = NSPopover()
@@ -100,6 +103,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         store.stopLocalSources()
+    }
+
+    /// `quotapeek://open` from a click on the macOS widget: show the popover
+    /// (which also makes QuotaPeek the active app, so widget reloads requested
+    /// now don't count against WidgetKit's budget) and refresh.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard urls.contains(where: { $0.scheme == "quotapeek" }) else { return }
+        if !popover.isShown { togglePopover() }
+        Task { await store.refresh() }
+    }
+
+    /// Mirrors the display preferences the native widget must honour into the snapshot.
+    private func syncSnapshotDisplay() {
+        store.snapshotDisplay = QuotaSnapshot.Display(
+            percentageMetric: displayPrefs.percentageMetric,
+            providerOrder: displayPrefs.providerOrder,
+            showAntigravityModelBreakdown: displayPrefs.showAntigravityModelBreakdown
+        )
+        store.snapshotNativeWidget = displayPrefs.nativeWidgetSnapshot
     }
 
     /// Reconciles the set of open desktop widget panels against `displayPrefs.widgetConfigurations`,

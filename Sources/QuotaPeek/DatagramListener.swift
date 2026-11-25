@@ -1,3 +1,4 @@
+import QuotaPeekCore
 import Foundation
 
 /// Receives readings from the statusline hooks over a Unix datagram socket.

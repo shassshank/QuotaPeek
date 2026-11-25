@@ -1,75 +1,8 @@
+import QuotaPeekCore
 import SwiftUI
 
-// MARK: - Reusable Visual Badges & Gauges
-
-/// A capsule badge with custom or default styling.
-struct CapsuleBadge: View {
-    let text: String
-    let color: Color
-    var font: Font = .caption2.weight(.medium)
-    var hPadding: CGFloat = 6
-    var vPadding: CGFloat = 2
-
-    var body: some View {
-        Text(text)
-            .font(font)
-            .padding(.horizontal, hPadding)
-            .padding(.vertical, vPadding)
-            .background(color.opacity(0.15), in: Capsule())
-            .foregroundStyle(color)
-    }
-}
-
-/// A compact linear progress bar with rounded ends and animated fill.
-struct LinearProgressBar: View {
-    let percent: Double
-    let color: Color
-    var height: CGFloat = 5
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.primary.opacity(0.08))
-                    .frame(height: height)
-
-                Capsule()
-                    .fill(color)
-                    .frame(
-                        width: max(0, min(geo.size.width, geo.size.width * CGFloat(min(max(percent, 0), 100) / 100.0))),
-                        height: height
-                    )
-                    .animation(.easeInOut(duration: 0.3), value: percent)
-            }
-        }
-        .frame(height: height)
-    }
-}
-
-/// A circular progress ring rendered using SwiftUI `Circle().trim`.
-struct CircularRingProgress: View {
-    let percent: Double
-    let color: Color
-    var lineWidth: CGFloat = 5
-    var size: CGFloat = 46
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(color.opacity(0.16), lineWidth: lineWidth)
-
-            Circle()
-                .trim(from: 0, to: CGFloat(min(max(percent / 100.0, 0), 1)))
-                .stroke(
-                    color,
-                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                )
-                .rotationEffect(.degrees(-90))
-                .animation(.easeInOut(duration: 0.35), value: percent)
-        }
-        .frame(width: size, height: size)
-    }
-}
+// CapsuleBadge, LinearProgressBar and CircularRingProgress live in QuotaPeekCore,
+// shared with the native widget extension.
 
 // MARK: - Widget Account Models & Identity
 
@@ -183,8 +116,7 @@ struct FocusAccountHeader: View {
 // MARK: - Shared Metric Calculation & Display Helpers
 
 func displayPercentAndColor(forUsedPercent used: Double, metric: PercentageMetric) -> (value: Double, color: Color) {
-    let val = UsageFormatting.displayPercent(forUsedPercent: used, metric: metric)
-    return (val, UsageFormatting.colorForPercent(val, metric: metric))
+    UsageFormatting.displayPercentAndColor(forUsedPercent: used, metric: metric)
 }
 
 struct WidgetMetricItem: Identifiable {

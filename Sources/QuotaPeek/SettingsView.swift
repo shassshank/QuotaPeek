@@ -1,3 +1,4 @@
+import QuotaPeekCore
 import AppKit
 import Darwin
 import SwiftUI
@@ -1112,6 +1113,8 @@ private struct WidgetSettingsTab: View {
                 }
                 .buttonStyle(.borderless)
             }
+
+            NativeWidgetSection(store: store, displayPrefs: displayPrefs)
         }
         .formStyle(.grouped)
     }
@@ -1146,45 +1149,75 @@ private struct WidgetSettingsTab: View {
             .pickerStyle(.menu)
             .help("Where this widget sits relative to other windows. Each widget can have its own layer.")
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Included accounts")
-                    .font(.subheadline)
-                let enabledAccounts = store.accounts.filter { store.isAccountEnabled($0) }
-                // Includes each Antigravity account's synthetic Claude/GPT sub-entry id
-                // (when the breakdown is on) so materializing scope.includedAccountIds
-                // from "all" (nil) to an explicit set - triggered by toggling any single
-                // row below - doesn't silently drop entries it doesn't know about yet.
-                let allScopeIds: Set<String> = Set(enabledAccounts.map(\.id)).union(
-                    displayPrefs.showAntigravityModelBreakdown
-                        ? Set(enabledAccounts.filter { $0.provider == .antigravity }.map { "\($0.id):claude_gpt" })
-                        : []
-                )
-                ForEach(enabledAccounts) { account in
-                    WidgetAccountScopeRow(
-                        title: "\(account.provider.displayName) — \(account.label)",
-                        entryId: account.id,
-                        configuration: configuration,
-                        allScopeIds: allScopeIds
-                    ) {
-                        if account.provider == .antigravity && displayPrefs.showAntigravityModelBreakdown {
-                            WidgetAccountScopeRow(
-                                title: "Claude/GPT",
-                                entryId: "\(account.id):claude_gpt",
-                                configuration: configuration,
-                                allScopeIds: allScopeIds
-                            ) { EmptyView() }
-                        }
-                    }
-                }
-                Text(enabledAccounts.isEmpty
-                     ? "Enable accounts in the Accounts tab to select them here."
-                     : "All checked includes all enabled accounts, including accounts added later.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
+            WidgetScopeEditor(store: store, displayPrefs: displayPrefs, configuration: configuration)
         }
         .padding(.vertical, 4)
+    }
+}
+
+/// macOS (WidgetKit) widget settings: which accounts and metrics it shows.
+/// The style is chosen per widget in the macOS widget gallery.
+private struct NativeWidgetSection: View {
+    @ObservedObject var store: UsageStore
+    @ObservedObject var displayPrefs: DisplayPreferences
+
+    var body: some View {
+        Section {
+            WidgetScopeEditor(store: store, displayPrefs: displayPrefs, configuration: $displayPrefs.nativeWidget)
+        } header: {
+            Text("macOS Widget")
+        } footer: {
+            Text("Add it from the desktop or Notification Center: right-click the desktop → Edit Widgets… → QuotaPeek. Each style is its own widget. Clicking a widget opens QuotaPeek and refreshes it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// "Included accounts" list with per-account metric choices, shared by the
+/// floating desktop panels and the macOS widget.
+private struct WidgetScopeEditor: View {
+    @ObservedObject var store: UsageStore
+    @ObservedObject var displayPrefs: DisplayPreferences
+    @Binding var configuration: WidgetConfiguration
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Included accounts")
+                .font(.subheadline)
+            let enabledAccounts = store.accounts.filter { store.isAccountEnabled($0) }
+            // Includes each Antigravity account's synthetic Claude/GPT sub-entry id
+            // (when the breakdown is on) so materializing scope.includedAccountIds
+            // from "all" (nil) to an explicit set - triggered by toggling any single
+            // row below - doesn't silently drop entries it doesn't know about yet.
+            let allScopeIds: Set<String> = Set(enabledAccounts.map(\.id)).union(
+                displayPrefs.showAntigravityModelBreakdown
+                    ? Set(enabledAccounts.filter { $0.provider == .antigravity }.map { "\($0.id):claude_gpt" })
+                    : []
+            )
+            ForEach(enabledAccounts) { account in
+                WidgetAccountScopeRow(
+                    title: "\(account.provider.displayName) — \(account.label)",
+                    entryId: account.id,
+                    configuration: $configuration,
+                    allScopeIds: allScopeIds
+                ) {
+                    if account.provider == .antigravity && displayPrefs.showAntigravityModelBreakdown {
+                        WidgetAccountScopeRow(
+                            title: "Claude/GPT",
+                            entryId: "\(account.id):claude_gpt",
+                            configuration: $configuration,
+                            allScopeIds: allScopeIds
+                        ) { EmptyView() }
+                    }
+                }
+            }
+            Text(enabledAccounts.isEmpty
+                 ? "Enable accounts in the Accounts tab to select them here."
+                 : "All checked includes all enabled accounts, including accounts added later.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 

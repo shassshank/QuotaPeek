@@ -1,9 +1,10 @@
 import SwiftUI
 
-// MARK: - Shared Metric and Formatting Helpers
+// Formatting and colour rules shared by every QuotaPeek surface (menu bar,
+// popover, desktop panel, native widget) so they always agree.
 
 extension AccountTrustState {
-    var color: Color {
+    public var color: Color {
         switch self {
         case .fresh: return .green
         case .stale: return .orange
@@ -14,8 +15,8 @@ extension AccountTrustState {
     }
 }
 
-enum UsageFormatting {
-    static func displayPercent(forUsedPercent used: Double, metric: PercentageMetric) -> Double {
+public enum UsageFormatting {
+    public static func displayPercent(forUsedPercent used: Double, metric: PercentageMetric) -> Double {
         switch metric {
         case .used:
             return min(max(used, 0), 100)
@@ -24,7 +25,7 @@ enum UsageFormatting {
         }
     }
 
-    static func colorForPercent(_ percent: Double, metric: PercentageMetric) -> Color {
+    public static func colorForPercent(_ percent: Double, metric: PercentageMetric) -> Color {
         switch metric {
         case .used:
             switch percent {
@@ -43,6 +44,11 @@ enum UsageFormatting {
         }
     }
 
+    public static func displayPercentAndColor(forUsedPercent used: Double, metric: PercentageMetric) -> (value: Double, color: Color) {
+        let value = displayPercent(forUsedPercent: used, metric: metric)
+        return (value, colorForPercent(value, metric: metric))
+    }
+
     private static let countdownFormatter: DateComponentsFormatter = {
         let f = DateComponentsFormatter()
         f.allowedUnits = [.day, .hour, .minute]
@@ -52,9 +58,9 @@ enum UsageFormatting {
     }()
 
     /// "now", "<1m" or e.g. "2h 5m"; with `inPrefix`, future values read "in <1m" / "in 2h 5m".
-    static func formatCountdown(_ unixSeconds: Int, inPrefix: Bool = false) -> String {
+    public static func formatCountdown(_ unixSeconds: Int, inPrefix: Bool = false, now: Date = Date()) -> String {
         let resetDate = Date(timeIntervalSince1970: TimeInterval(unixSeconds))
-        let interval = resetDate.timeIntervalSinceNow
+        let interval = resetDate.timeIntervalSince(now)
         if interval <= 0 { return "now" }
         let prefix = inPrefix ? "in " : ""
         if interval < 60 { return prefix + "<1m" }
@@ -62,8 +68,8 @@ enum UsageFormatting {
     }
 
     /// "42s ago", "5m ago", "2h ago"; with `detailed`, "5m12s ago" / "2h5m ago".
-    static func syncAge(_ unixSeconds: Int64, detailed: Bool = false) -> String {
-        let seconds = max(0, Int(Date().timeIntervalSince1970) - Int(unixSeconds))
+    public static func syncAge(_ unixSeconds: Int64, detailed: Bool = false, now: Date = Date()) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince1970) - Int(unixSeconds))
         if seconds < 60 {
             return "\(seconds)s ago"
         }
