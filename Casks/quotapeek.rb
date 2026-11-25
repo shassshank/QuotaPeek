@@ -25,7 +25,7 @@ cask "quotapeek" do
   # The tarball is not a .app directly — it contains the app plus supporting
   # files. The `app` stanza installs QuotaPeek.app into /Applications
   # (matching install.sh's behavior), and a postflight sets up the
-  # statusline hooks and the login item, and removes the pre-2.0 daemon.
+  # statusline hooks and the login item.
   app "QuotaPeek.app"
 
   postflight do
@@ -49,19 +49,7 @@ cask "quotapeek" do
     Dir.glob(File.join(bin_dir, "*.py")).each { |f| FileUtils.chmod(0o755, f) }
     Dir.glob(File.join(bin_dir, "*.sh")).each { |f| FileUtils.chmod(0o755, f) }
 
-    # Versions before 2.0 ran a separate daemon; the app does its job now.
-    # Stop it and remove its LaunchAgent, binary and token caches.
     app_support = "#{Dir.home}/Library/Application Support/QuotaPeek"
-    uid = Process.uid
-    system_command "launchctl", args: ["bootout", "gui/#{uid}/com.quotapeek.daemon"], must_succeed: false
-    legacy = [
-      "#{Dir.home}/Library/LaunchAgents/com.quotapeek.daemon.plist",
-      File.join(bin_dir, "quotapeekd"),
-      *%w[auth-token samples.json daemon.log daemon.log.1 antigravity-oauth-cache.json].map { |f| File.join(app_support, f) },
-      *Dir.glob(File.join(app_support, "oauth-*.json")),
-    ]
-    FileUtils.rm_f(legacy)
-    FileUtils.rm_rf(File.join(app_support, "cli-workdir"))
 
     # Install the app's LaunchAgent from its template
     la_dir = "#{Dir.home}/Library/LaunchAgents"
@@ -154,14 +142,8 @@ cask "quotapeek" do
     end
   end
 
-  uninstall launchctl: [
-              "com.quotapeek.daemon",
-              "com.quotapeek.app",
-            ],
-            delete:    [
-              "#{Dir.home}/Library/LaunchAgents/com.quotapeek.daemon.plist",
-              "#{Dir.home}/Library/LaunchAgents/com.quotapeek.app.plist",
-            ]
+  uninstall launchctl: "com.quotapeek.app",
+            delete:    "#{Dir.home}/Library/LaunchAgents/com.quotapeek.app.plist"
 
   zap script: {
         executable: "/bin/bash",

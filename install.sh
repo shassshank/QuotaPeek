@@ -8,7 +8,6 @@
 #   - registers the statusLine hook in ~/.claude/settings.json and
 #     ~/.gemini/antigravity-cli/settings.json (merged in, existing settings
 #     preserved); the hooks send each reading to the running app
-#   - removes the background daemon that versions before 2.0 installed
 #
 # There is no background service: the app reads the agents' hooks and
 # Codex's session logs itself, and on first launch adds an account for each
@@ -102,22 +101,6 @@ if [[ "$MODE" == "fromdir" && ! -d "$FROM_DIR/QuotaPeek.app" ]]; then
     echo "ERROR: --from-dir $FROM_DIR does not look like an extracted QuotaPeek release (no QuotaPeek.app found)" >&2
     exit 1
 fi
-
-# Versions before 2.0 ran a separate daemon; the app does its job now.
-# Stop it and remove its LaunchAgent, binary and token caches. config.json
-# is kept: the app reads the same file.
-retire_legacy_daemon() {
-    local plist="$LAUNCH_AGENTS/com.quotapeek.daemon.plist"
-    if [[ -f "$plist" ]] || launchctl print "gui/$(id -u)/com.quotapeek.daemon" >/dev/null 2>&1; then
-        echo "==> Removing the old background daemon"
-        launchctl bootout "gui/$(id -u)/com.quotapeek.daemon" >/dev/null 2>&1 || true
-        rm -f "$plist"
-    fi
-    rm -f "$BIN_DIR/quotapeekd" "$APP_SUPPORT/auth-token" "$APP_SUPPORT/samples.json" \
-        "$APP_SUPPORT/daemon.log" "$APP_SUPPORT/daemon.log.1" "$APP_SUPPORT/antigravity-oauth-cache.json" \
-        "$APP_SUPPORT"/oauth-*.json
-    rm -rf "$APP_SUPPORT/cli-workdir"
-}
 
 if [[ "$MODE" == "local" ]]; then
     echo "==> Building Swift menu bar app"
@@ -230,7 +213,6 @@ if [[ "$MODE" == "remote" || "$MODE" == "fromdir" ]]; then
     chmod +x "$BIN_DIR"/*.py "$BIN_DIR/run-with-log-rotation.sh" "$BIN_DIR/uninstall.sh"
 fi
 
-retire_legacy_daemon
 
 echo "==> Installing LaunchAgent"
 mkdir -p "$LAUNCH_AGENTS"

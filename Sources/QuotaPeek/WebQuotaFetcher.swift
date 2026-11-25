@@ -177,8 +177,8 @@ struct WebQuotaFetcher {
     }
 }
 
-/// Reads Keychain items through /usr/bin/security - the same tool the old
-/// daemon used - so an "Always Allow" the user already granted keeps working.
+/// Reads Keychain items through /usr/bin/security, so an "Always Allow"
+/// granted to it once keeps working across app updates.
 /// Bounded by a timeout because `security` has been seen to hang.
 enum SecurityCLI {
     static func findGenericPassword(service: String, account: String?) async -> Data? {

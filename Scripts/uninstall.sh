@@ -6,19 +6,17 @@
 # The Swift UI's Settings "Uninstall" button shells out to exactly that path.
 #
 # Actions (in this order — see note below on why):
-#   1. Stop and remove the pre-2.0 daemon LaunchAgent if one is left over
-#      (launchctl unload -w, delete the plist, pkill fallback).
-#   2. Reverse the statusLine hook injection in settings files:
+#   1. Reverse the statusLine hook injection in settings files:
 #      - ~/.claude/settings.json
 #      - ~/.gemini/antigravity-cli/settings.json
 #      Restores from .bak.<timestamp> backup ONLY if the current statusLine
 #      value still matches what the installer wrote.  If the user has since
 #      changed statusLine to something else, we leave the file alone (don't
 #      clobber user changes) but still remove the key if it equals ours.
-#   3. Remove ~/Library/Application Support/QuotaPeek entirely
-#   4. Remove QuotaPeek.app from /Applications or ~/Applications
-#   5. Clean up the temp re-exec script
-#   6. Stop and remove app LaunchAgent (launchctl unload -w, then delete
+#   2. Remove ~/Library/Application Support/QuotaPeek entirely
+#   3. Remove QuotaPeek.app from /Applications or ~/Applications
+#   4. Clean up the temp re-exec script
+#   5. Stop and remove app LaunchAgent (launchctl unload -w, then delete
 #      the plist) deliberately LAST.
 #
 # The Swift UI's Settings "Uninstall" button shells out to this exact path
@@ -48,7 +46,6 @@ fi
 PYTHON3="${PYTHON3:-$(command -v python3 || echo python3)}"
 APP_SUPPORT="$HOME/Library/Application Support/QuotaPeek"
 LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
-DAEMON_BIN="$APP_SUPPORT/bin/quotapeekd"
 
 echo "==> Reversing statusLine hook injection"
 
@@ -134,24 +131,6 @@ PY
 reverse_statusline "$HOME/.claude/settings.json"
 reverse_statusline "$HOME/.gemini/antigravity-cli/settings.json"
 
-echo "==> Removing the pre-2.0 background daemon, if present"
-daemon_plist="$LAUNCH_AGENTS/com.quotapeek.daemon.plist"
-if [[ -f "$daemon_plist" ]]; then
-    launchctl unload -w "$daemon_plist" 2>/dev/null || true
-    # -w persists a "disabled" override in launchd independent of the plist
-    # file. A full uninstall should leave no trace of that, so a future
-    # fresh install doesn't mistake this uninstall's unload for a user's
-    # deliberate "keep this disabled" choice and refuse to start it back up.
-    launchctl enable "gui/$(id -u)/com.quotapeek.daemon" 2>/dev/null || true
-    rm -f "$daemon_plist"
-    echo "  removed $daemon_plist"
-fi
-
-# Belt-and-suspenders: if the daemon was started outside launchd, is hung, or
-# launchctl unload silently failed to stop it, make sure no orphaned
-# quotapeekd process is left holding the local port.
-pkill -f "^${DAEMON_BIN}($|[[:space:]])" 2>/dev/null || true
-
 echo "==> Removing application support directory"
 if [[ -d "$APP_SUPPORT" ]]; then
     rm -rf "$APP_SUPPORT"
@@ -182,7 +161,7 @@ echo "==> Stopping and removing app LaunchAgent"
 app_plist="$LAUNCH_AGENTS/com.quotapeek.app.plist"
 if [[ -f "$app_plist" ]]; then
     launchctl unload -w "$app_plist" 2>/dev/null || true
-    # See the matching comment above for the daemon: clear the persisted
+    # unload -w persists a "disabled" override in launchd; clear the persisted
     # disabled override so a future fresh install isn't silently skipped.
     launchctl enable "gui/$(id -u)/com.quotapeek.app" 2>/dev/null || true
     rm -f "$app_plist"

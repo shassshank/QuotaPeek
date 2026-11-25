@@ -44,13 +44,6 @@ Each provider supports multiple accounts (e.g. two Claude subscriptions in
 different config folders), managed in Settings → Accounts. Antigravity's hook
 can't tell logins apart, so only one Antigravity account is tracked.
 
-### Upgrading from 1.x
-
-Versions before 2.0 ran a separate Go daemon (`quotapeekd`). The first launch
-of 2.x (and `install.sh` or the Homebrew cask) stops it and removes its
-LaunchAgent, binary and token caches. `config.json` is kept, so accounts and
-settings carry over.
-
 ## Install manually
 
 ### From source

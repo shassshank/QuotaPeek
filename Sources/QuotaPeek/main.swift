@@ -41,7 +41,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // delegate wasn't registered yet.
         _ = NotificationManager.shared
 
-        LegacyDaemon.retireIfInstalled()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {

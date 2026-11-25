@@ -11,10 +11,8 @@ struct AppConfigStore {
         self.url = url
     }
 
-    /// The saved configuration, or the defaults on first run. A config left
-    /// by the old daemon is migrated and written back in the current format.
-    /// An unreadable file is kept aside as `config.json.unreadable` rather
-    /// than overwritten.
+    /// The saved configuration, or the defaults on first run. An unreadable
+    /// file is kept aside as `config.json.unreadable` rather than overwritten.
     func load() -> AppConfig {
         guard let data = try? Data(contentsOf: url) else {
             let config = AppConfig(accounts: Self.detectedAccounts())
@@ -22,12 +20,7 @@ struct AppConfigStore {
             return config
         }
         do {
-            let config = try JSONDecoder().decode(AppConfig.self, from: data)
-            if Self.fileVersion(of: data) != AppConfig.currentVersion {
-                ErrorLog.notice("config: migrated to version \(AppConfig.currentVersion)")
-                try? save(config)
-            }
-            return config
+            return try JSONDecoder().decode(AppConfig.self, from: data)
         } catch {
             let aside = url.appendingPathExtension("unreadable")
             try? FileManager.default.removeItem(at: aside)
@@ -63,9 +56,5 @@ struct AppConfigStore {
             return fm.fileExists(atPath: path)
         }
         return (found.isEmpty ? Provider.allCases : found).map(AccountConfig.makeDefault)
-    }
-
-    private static func fileVersion(of data: Data) -> Int? {
-        (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["version"] as? Int
     }
 }
