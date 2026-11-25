@@ -9,10 +9,14 @@ HOOK="${HOOK:-$APP_SUPPORT/bin/claude-statusline-hook.py}"
 PYTHON="${PYTHON:-/opt/homebrew/bin/python3}"
 RUNS="${RUNS:-10}"
 
-echo "== processes (rss MB, cpu time, uptime)"
+echo "== processes (rss MB, private footprint, cpu time, uptime)"
+# RSS includes shared system frameworks; `footprint` is the process's own
+# memory (what Activity Monitor calls Memory) and the fairer comparison.
 for name in quotapeekd QuotaPeek.app/Contents/MacOS/QuotaPeek; do
-    ps -axo rss=,time=,etime=,comm= | grep -E "/$name\$" |
-        awk -v n="$(basename "$name")" '{printf "%-12s %6.1f MB  cpu %s  up %s\n", n, $1/1024, $2, $3}'
+    ps -axo pid=,rss=,time=,etime=,comm= | grep -E "/$name\$" | while read -r pid rss cpu up _; do
+        fp=$(footprint "$pid" 2>/dev/null | awk '/Footprint:/ {for (i = 1; i < NF; i++) if ($i == "Footprint:") {print $(i+1), $(i+2); exit}}')
+        printf "%-12s %6.1f MB  footprint %-7s  cpu %s  up %s\n" "$(basename "$name")" "$(echo "$rss/1024" | bc -l)" "${fp:-?}" "$cpu" "$up"
+    done
 done
 
 if [ -f "$HOOK" ]; then
