@@ -1,5 +1,6 @@
-import Foundation
+import AppKit
 import Combine
+import Foundation
 
 /// Holds the latest state fetched from the Go daemon. This replaces the old file-watching cache
 /// reader entirely - the daemon is the single source of truth and the only thing this app talks to.
@@ -53,6 +54,24 @@ final class UsageStore: ObservableObject {
     /// most this often per source, so a hook firing every few seconds does
     /// not re-render anything.
     private let timestampOnlyRefreshInterval: TimeInterval = 60
+
+    // MARK: - Web fallback
+    //
+    // Only when someone is looking (popover or widget visible, or just after
+    // wake) and an account's local data is older than `webFallbackStaleAfter`,
+    // and at most once per `webFallbackMinInterval` per account. Nothing runs
+    // in the background otherwise. Claude and Codex only.
+    private let webFetcher = WebQuotaFetcher()
+    private let webFallbackStaleAfter: TimeInterval = 15 * 60
+    private let webFallbackMinInterval: TimeInterval = 10 * 60
+    private var lastWebAttempt: [String: Date] = [:]
+    private var webFetchInFlight: Set<String> = []
+    private var lastWebIssue: [String: String] = [:]
+    private var justWoke = false
+    private var wakeObserver: NSObjectProtocol?
+    /// Accounts whose stored CLI login has expired: shown so the user can run
+    /// the CLI once. Keyed by account id.
+    @Published var expiredLogins: [String: String] = [:]
 
     // Polling cadence tiers:
     // - fast: popover is actively open and user is looking at live numbers (5s)
@@ -130,11 +149,72 @@ final class UsageStore: ObservableObject {
             ErrorLog.error("hook socket unavailable: \(error)")
         }
         ensureCodexReaders()
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.justWoke = true
+                self?.runWebFallbackIfNeeded()
+            }
+        }
+    }
+
+    /// Fetches from the web for accounts whose local data has gone stale,
+    /// subject to the visibility and rate rules above.
+    func runWebFallbackIfNeeded(now: Date = Date()) {
+        guard isPopoverVisible || isWidgetVisible || justWoke else { return }
+        justWoke = false
+        for account in daemonAccounts where account.provider != .antigravity && isAccountEnabled(account) {
+            let configDir = account.credentialLocation?.configDir
+            let canonical = LocalQuotaParser.canonicalConfigDir(configDir, provider: account.provider)
+            let local = quotaStore.reading(provider: account.provider, configDir: canonical)
+            let ageSec = local.map { now.timeIntervalSince1970 - Double($0.observedAtMs) / 1000 } ?? .infinity
+            guard ageSec > webFallbackStaleAfter,
+                  !webFetchInFlight.contains(account.id),
+                  now.timeIntervalSince(lastWebAttempt[account.id] ?? .distantPast) > webFallbackMinInterval else { continue }
+            lastWebAttempt[account.id] = now
+            webFetchInFlight.insert(account.id)
+            let provider = account.provider
+            let id = account.id
+            let label = "\(provider.rawValue)/\(account.label)"
+            Task { [webFetcher] in
+                let result: Result<ProviderData, Error>
+                do { result = .success(try await webFetcher.fetch(provider: provider, configDir: configDir)) }
+                catch { result = .failure(error) }
+                await MainActor.run {
+                    self.webFetchInFlight.remove(id)
+                    self.handleWebResult(result, accountId: id, provider: provider, configDir: canonical, label: label)
+                }
+            }
+        }
+    }
+
+    private func handleWebResult(_ result: Result<ProviderData, Error>, accountId: String, provider: Provider,
+                                 configDir: String, label: String) {
+        switch result {
+        case .success(let data):
+            lastWebIssue[accountId] = nil
+            expiredLogins[accountId] = nil
+            ErrorLog.info("web fallback \(label): ok")
+            applyLocalReading(LocalReading(provider: provider, configDir: configDir,
+                                           observedAtMs: Int64(Date().timeIntervalSince1970 * 1000),
+                                           source: .web, data: data))
+        case .failure(let error):
+            let message = (error as? WebQuotaFetcher.FetchError)?.description ?? error.localizedDescription
+            if case WebQuotaFetcher.FetchError.tokenExpired = error {
+                expiredLogins[accountId] = message
+            }
+            guard lastWebIssue[accountId] != message else { return }
+            lastWebIssue[accountId] = message
+            ErrorLog.warning("web fallback \(label): \(message)")
+        }
     }
 
     /// Stops local sources and removes the hooks' snapshot so they stop
     /// showing numbers from a QuotaPeek that is no longer running.
     func stopLocalSources() {
+        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
+        wakeObserver = nil
         datagramListener?.stop()
         datagramListener = nil
         codexReaders.values.forEach { $0.stop() }
@@ -336,6 +416,7 @@ final class UsageStore: ObservableObject {
         switch kind {
         case .reload:
             applyFetchResult(await client.status())
+            runWebFallbackIfNeeded()
         case .refresh(let accountId):
             isRefreshing = true
             applyFetchResult(await client.refresh(accountId: accountId))
