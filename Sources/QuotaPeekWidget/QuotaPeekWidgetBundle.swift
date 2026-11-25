@@ -22,10 +22,16 @@ struct QuotaPeekWidgetBundle: WidgetBundle {
 
 /// Shared configuration for every style.
 private func quotaConfiguration(_ style: DesktopWidgetStyle, description: String) -> some WidgetConfiguration {
-    StaticConfiguration(kind: "com.quotapeek.app.widget.\(style.rawValue)", provider: QuotaTimelineProvider()) { entry in
+    // Pass plain Strings: an interpolated literal becomes a *formatted*
+    // LocalizedStringKey, which WidgetKit rejects at runtime with "Formatted
+    // text for `configurationDisplayName` is not supported" (crashing the
+    // extension, so the widget never appears in the gallery).
+    let displayName: String = "QuotaPeek · " + style.galleryName
+    let kind: String = "com.quotapeek.app.widget." + style.rawValue
+    return StaticConfiguration(kind: kind, provider: QuotaTimelineProvider()) { entry in
         QuotaWidgetFamilyReader(entry: entry, style: style)
     }
-    .configurationDisplayName("QuotaPeek · \(style.galleryName)")
+    .configurationDisplayName(displayName)
     .description(description)
     .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
 }
