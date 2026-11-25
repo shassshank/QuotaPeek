@@ -28,8 +28,22 @@ final class WidgetFitTests: XCTestCase {
     func testEveryStyleFitsEverySize() {
         var single = QuotaWidgetContent.sample
         single.rows = Array(single.rows.prefix(1))
+        // Real-world variants: "remaining" wording, stale/restored rows with
+        // an old sync time (adds the "updated …" note), full and empty usage.
+        var remaining = QuotaWidgetContent.sample
+        remaining.metric = .remaining
+        var stale = remaining
+        stale.rows = stale.rows.enumerated().map { i, row in
+            var r = row
+            r.state = i % 2 == 0 ? .restored : .stale
+            r.asOf = Int64(Date().timeIntervalSince1970) - 3 * 3600
+            r.data?.usedPercent5h = i % 2 == 0 ? 100 : 0
+            return r
+        }
+        var staleSingle = stale
+        staleSingle.rows = Array(stale.rows.prefix(1))
         var overflow: [String] = []
-        for content in [QuotaWidgetContent.sample, single] {
+        for content in [QuotaWidgetContent.sample, single, remaining, stale, staleSingle] {
             for style in DesktopWidgetStyle.allCases {
                 for (family, size) in Self.contentSizes {
                     let h = idealHeight(style, family, width: size.width, content: content)

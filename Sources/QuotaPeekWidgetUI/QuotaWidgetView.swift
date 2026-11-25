@@ -439,9 +439,8 @@ private struct PerAgentLinearStyle: View {
                 }
                 .fixedSize(horizontal: false, vertical: true)
             }
-            if let note = content.staleSyncNote(now: now) {
-                WidgetFooterBar(leading: note, trailing: nil)
-            }
+            // No "Updated …" footer at this size: the header's state
+            // indicator already flags stale data and 128 pt has no room.
         }
         .opacity(row.state == .stale ? 0.85 : 1)
     }
@@ -992,9 +991,8 @@ private struct SingleAgentFocusStyle: View {
                 RowPlaceholderText(row: row, hasMetricsSelected: !content.metrics(for: row).isEmpty)
             }
             Spacer(minLength: 0)
-            if let note = content.staleSyncNote(now: now) {
-                WidgetFooterBar(leading: note, trailing: nil)
-            }
+            // No "Updated …" footer at this size: the header's state
+            // indicator already flags stale data and 128 pt has no room.
         }
     }
 
